@@ -1,7 +1,7 @@
 // @ts-nocheck
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator, ScrollView, Text, TouchableOpacity, View,
+  ScrollView, Text, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -12,16 +12,16 @@ import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { useColours } from '../../context/ThemeContext';
-import { useToast } from '../../components/common/Toast';
 import { StockEntrySheet, EquipEntrySheet } from './components/OnHandEntrySheet';
 import type { OnHandLocation } from './components/OnHandEntrySheet';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 function formatQty(qtyUnits: number, packSize: number) {
-  if (packSize > 1) {
-    const cases = Math.floor(qtyUnits / packSize);
-    const units = qtyUnits % packSize;
+  const ps = packSize || 1;
+  if (ps > 1) {
+    const cases = Math.floor(qtyUnits / ps);
+    const units = qtyUnits % ps;
     if (cases > 0 && units > 0) return `${cases} cases + ${units} units`;
     if (cases > 0) return `${cases} cases`;
     return `${units} units`;
@@ -39,18 +39,27 @@ function fmtDate(ts: any) {
   } catch { return ''; }
 }
 
+// Display labels with legacy normalization for reads
 const SOURCE_LABELS: Record<string, string> = {
-  leftover: 'Leftover',
-  pre_ordered: 'Pre-ordered',
-  supplier_loan: 'Supplier loan',
-  other: 'Other',
+  owned:          'Owned',
+  sor:            'Sale or return',
+  sponsor:        'Sponsor',
+  venue_transfer: 'From our venues',
+  // legacy
+  leftover:    'Owned',
+  pre_ordered: 'Owned',
+  other:       'Owned',
+  supplier_loan: 'Sale or return',
 };
 
 const OWNERSHIP_LABELS: Record<string, string> = {
-  venue: 'Ours',
-  supplier: 'Supplier',
-  hired: 'Hired',
-  other: 'Other',
+  owned:         'Ours',
+  hired:         'Hired',
+  supplier_loan: 'Supplier loan',
+  // legacy
+  venue:    'Ours',
+  supplier: 'Supplier loan',
+  other:    'Ours',
 };
 
 function Chip({ label, color, bg }: { label: string; color: string; bg: string }) {
@@ -68,7 +77,6 @@ export default function FestivalOnHandScreen() {
   const insets = useSafeAreaInsets();
   const venueId = useVenueId();
   const c = useColours();
-  const { showError } = useToast();
   const uid = auth.currentUser?.uid;
 
   const [tab, setTab] = useState<'stock' | 'equipment'>('stock');
@@ -76,7 +84,6 @@ export default function FestivalOnHandScreen() {
   const [locations, setLocations] = useState<OnHandLocation[]>([]);
   const [stockItems, setStockItems] = useState<any[]>([]);
   const [equipItems, setEquipItems] = useState<any[]>([]);
-  const [loadingLocations, setLoadingLocations] = useState(true);
 
   // Sheet state
   const [stockSheetOpen, setStockSheetOpen] = useState(false);
@@ -93,24 +100,20 @@ export default function FestivalOnHandScreen() {
     return () => unsub();
   }, [venueId, uid]);
 
-  // Load locations once
+  // Load locations on focus (fix #1: hq dept id IS 'hq', no key field)
   useFocusEffect(useCallback(() => {
     if (!venueId) return;
     let cancelled = false;
     (async () => {
-      setLoadingLocations(true);
       try {
         const locs: OnHandLocation[] = [{ id: null, name: 'Not placed' }];
 
-        // Storage spaces from departments/hq/areas
+        // Storage spaces — hq department id is 'hq' directly
         try {
-          const hqDept = await getDocs(query(collection(db, 'venues', venueId, 'departments'), where('key', '==', 'hq')));
-          for (const deptDoc of hqDept.docs) {
-            const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
-            for (const areaDoc of areasSnap.docs) {
-              const data = areaDoc.data() as any;
-              locs.push({ id: areaDoc.id, name: data.name || areaDoc.id });
-            }
+          const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', 'hq', 'areas'));
+          for (const areaDoc of areasSnap.docs) {
+            const data = areaDoc.data() as any;
+            locs.push({ id: areaDoc.id, name: data.name || areaDoc.id });
           }
         } catch {}
 
@@ -127,37 +130,33 @@ export default function FestivalOnHandScreen() {
         } catch {}
 
         if (!cancelled) setLocations(locs);
-      } finally {
-        if (!cancelled) setLoadingLocations(false);
-      }
+      } catch {}
     })();
     return () => { cancelled = true; };
   }, [venueId]));
 
-  // Stock onSnapshot
+  // Stock onSnapshot (includeMetadataChanges for Syncing tag)
   useEffect(() => {
     if (!venueId) return;
     const unsub = onSnapshot(
       collection(db, 'venues', venueId, 'onHand'),
       { includeMetadataChanges: true },
       snap => {
-        const items = snap.docs.map(d => ({ id: d.id, _pending: d.metadata.hasPendingWrites, ...d.data() }));
-        setStockItems(items);
+        setStockItems(snap.docs.map(d => ({ id: d.id, _pending: d.metadata.hasPendingWrites, ...d.data() })));
       },
       () => {},
     );
     return () => unsub();
   }, [venueId]);
 
-  // Equipment onSnapshot
+  // Equipment onSnapshot (includeMetadataChanges for Syncing tag)
   useEffect(() => {
     if (!venueId) return;
     const unsub = onSnapshot(
       collection(db, 'venues', venueId, 'equipment'),
       { includeMetadataChanges: true },
       snap => {
-        const items = snap.docs.map(d => ({ id: d.id, _pending: d.metadata.hasPendingWrites, ...d.data() }));
-        setEquipItems(items);
+        setEquipItems(snap.docs.map(d => ({ id: d.id, _pending: d.metadata.hasPendingWrites, ...d.data() })));
       },
       () => {},
     );
@@ -182,9 +181,8 @@ export default function FestivalOnHandScreen() {
     return found ? found.name : id;
   }
 
-  // ── Stock tab ─────────────────────────────────────────────────────────────
+  // ── Stock tab grouping ────────────────────────────────────────────────────
 
-  // Group by location; "Not placed" (null) last
   const stockByLocation: Record<string, any[]> = {};
   stockItems.forEach(item => {
     const key = item.locationId ?? '__none__';
@@ -199,12 +197,12 @@ export default function FestivalOnHandScreen() {
 
   // ── Equipment tab ─────────────────────────────────────────────────────────
 
-  const hasShortfall = equipItems.some(e => {
+  const shortfallItems = equipItems.filter(e => {
     const q = Number(e.qty) || 0;
     const n = Number(e.need) || 0;
     return n > 0 && q < n;
   });
-  const existingEquipNames = [...new Set(equipItems.map(e => e.name).filter(Boolean))] as string[];
+  const hasShortfall = shortfallItems.length > 0;
 
   // ─── render ───────────────────────────────────────────────────────────────
 
@@ -216,13 +214,14 @@ export default function FestivalOnHandScreen() {
         visible={stockSheetOpen}
         editItem={editStockItem}
         locations={locations}
+        onHandItems={stockItems}
         onClose={() => { setStockSheetOpen(false); setEditStockItem(null); }}
       />
       <EquipEntrySheet
         visible={equipSheetOpen}
         editItem={editEquipItem}
         locations={locations}
-        existingNames={existingEquipNames}
+        equipItems={equipItems}
         onClose={() => { setEquipSheetOpen(false); setEditEquipItem(null); }}
       />
 
@@ -267,7 +266,7 @@ export default function FestivalOnHandScreen() {
           )}
           {locationKeys.map(key => {
             const group = stockByLocation[key];
-            const label = key === '__none__' ? 'Not placed' : locName(key === '__none__' ? null : key);
+            const label = key === '__none__' ? 'Not placed' : locName(key);
             return (
               <View key={key} style={{ marginBottom: 20 }}>
                 <Text style={{ fontSize: 12, fontWeight: '700', color: c.slateMid, letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>
@@ -276,16 +275,9 @@ export default function FestivalOnHandScreen() {
                 {group.map(item => (
                   <TouchableOpacity
                     key={item.id}
-                    onPress={() => {
-                      if (!canEdit) return;
-                      setEditStockItem(item);
-                      setStockSheetOpen(true);
-                    }}
+                    onPress={() => { if (!canEdit) return; setEditStockItem(item); setStockSheetOpen(true); }}
                     activeOpacity={canEdit ? 0.7 : 1}
-                    style={{
-                      backgroundColor: c.surface, borderRadius: 10, padding: 14,
-                      marginBottom: 8, borderWidth: 1, borderColor: c.border,
-                    }}
+                    style={{ backgroundColor: c.surface, borderRadius: 10, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: c.border }}
                   >
                     <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
                       <View style={{ flex: 1 }}>
@@ -304,13 +296,16 @@ export default function FestivalOnHandScreen() {
                           {item.source && (
                             <Chip label={SOURCE_LABELS[item.source] || item.source} color={c.deepBlue} bg={c.deepBlue + '18'} />
                           )}
-                          {item.inTransit && (
+                          {/* status field (new) or legacy inTransit bool */}
+                          {(item.status === 'in_transit' || item.inTransit) && (
                             <Chip label="In transit" color={c.amber} bg={c.amber + '22'} />
                           )}
                         </View>
                         {item.updatedAt && (
                           <Text style={{ fontSize: 12, color: c.slateMid, marginTop: 4 }}>
-                            Updated {fmtDate(item.updatedAt)}{item.updatedBy ? ` · ${item.updatedBy.slice(0, 8)}` : ''}
+                            {item.updatedByName
+                              ? `Updated by ${item.updatedByName} · ${fmtDate(item.updatedAt)}`
+                              : `Updated ${fmtDate(item.updatedAt)}`}
                           </Text>
                         )}
                       </View>
@@ -330,13 +325,10 @@ export default function FestivalOnHandScreen() {
 
           {/* Shortfall card */}
           {hasShortfall && (
-            <View style={{
-              backgroundColor: c.amber + '22', borderLeftWidth: 3, borderLeftColor: c.amber,
-              borderRadius: 8, padding: 14, marginBottom: 16,
-            }}>
+            <View style={{ backgroundColor: c.amber + '22', borderLeftWidth: 3, borderLeftColor: c.amber, borderRadius: 8, padding: 14, marginBottom: 16 }}>
               <Text style={{ fontSize: 14, fontWeight: '700', color: c.navy, marginBottom: 4 }}>Equipment shortfall</Text>
               <Text style={{ fontSize: 13, color: c.navy }}>
-                {equipItems.filter(e => (Number(e.need) || 0) > (Number(e.qty) || 0)).map(e => e.name).join(', ')} need{equipItems.filter(e => (Number(e.need) || 0) > (Number(e.qty) || 0)).length === 1 ? 's' : ''} more than available.
+                {shortfallItems.map(e => e.name).join(', ')} need{shortfallItems.length === 1 ? 's' : ''} more than available.
               </Text>
             </View>
           )}
@@ -358,17 +350,9 @@ export default function FestivalOnHandScreen() {
             return (
               <TouchableOpacity
                 key={item.id}
-                onPress={() => {
-                  if (!canEdit) return;
-                  setEditEquipItem(item);
-                  setEquipSheetOpen(true);
-                }}
+                onPress={() => { if (!canEdit) return; setEditEquipItem(item); setEquipSheetOpen(true); }}
                 activeOpacity={canEdit ? 0.7 : 1}
-                style={{
-                  backgroundColor: c.surface, borderRadius: 10, padding: 14,
-                  marginBottom: 8, borderWidth: 1,
-                  borderColor: short ? c.amber : c.border,
-                }}
+                style={{ backgroundColor: c.surface, borderRadius: 10, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: short ? c.amber : c.border }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
                   <View style={{ flex: 1 }}>
