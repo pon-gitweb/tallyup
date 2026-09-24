@@ -5,8 +5,12 @@ import {
   ScrollView, TextInput,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import NetInfo from '@react-native-community/netinfo';
 import { collection, doc, getDoc, onSnapshot, updateDoc, serverTimestamp, query, where, orderBy, writeBatch, increment } from 'firebase/firestore';
 import { isFestivalEventClosed } from '../../services/festival/eventStatus';
+import {
+  enqueuePayload, enqueueOperation, registerOperation,
+} from '../../services/offlineOutbox';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -42,6 +46,83 @@ function isTodayTs(ts: any): boolean {
     && d.getDate() === now.getDate();
 }
 
+// ─── Outbox operations: delivery tasks ───────────────────────────────────────
+// Both batches use batch.set(..., { merge: true }) + increment(), which is safe
+// for both new and existing docs — no existence-check reads needed here.
+
+registerOperation('deliveryCollect', async (p: any) => {
+  const { venueId, reqId, sourceLocationId, products } = p;
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  batch.update(doc(db, 'venues', venueId, 'requests', reqId), {
+    status: 'collected', collectedAt: now, updatedAt: now,
+  });
+
+  if (sourceLocationId && products?.length) {
+    for (const prod of products) {
+      if (!prod.productId) continue;
+      batch.set(
+        doc(db, 'venues', venueId, 'departments', 'hq', 'areas', sourceLocationId, 'items', prod.productId),
+        { lastCount: increment(-(prod.quantity ?? 0)), updatedAt: now },
+        { merge: true },
+      );
+    }
+  }
+
+  await batch.commit();
+
+  // Advisory: warn if any HQ items went negative (cannot showInfo from here)
+  if (sourceLocationId && products?.length) {
+    try {
+      const hqSnaps = await Promise.all(
+        products
+          .filter((prod: any) => prod.productId)
+          .map((prod: any) =>
+            getDoc(doc(db, 'venues', venueId, 'departments', 'hq', 'areas', sourceLocationId, 'items', prod.productId))
+          )
+      );
+      if (hqSnaps.some((s: any) => s.exists() && (s.data()?.lastCount ?? 0) < 0)) {
+        console.warn('[deliveryCollect] One or more HQ source items went below zero after collection');
+      }
+    } catch {}
+  }
+});
+
+registerOperation('deliveryConfirmReceipt', async (p: any) => {
+  const { venueId, reqId, uid, barId, products } = p;
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  const updatedProducts = (products || []).map((prod: any) => ({
+    ...prod,
+    sentQty:     prod.quantity ?? 0,
+    receivedQty: prod.confirmedQty,
+  }));
+
+  batch.update(doc(db, 'venues', venueId, 'requests', reqId), {
+    status:                  'delivered',
+    completedAt:             now,
+    receivingConfirmedAt:    now,
+    receivingConfirmedByUid: uid,
+    products:                updatedProducts,
+    updatedAt:               now,
+  });
+
+  if (barId && products?.length) {
+    for (const prod of products) {
+      if (!prod.productId) continue;
+      batch.set(
+        doc(db, 'venues', venueId, 'departments', barId, 'areas', 'back-of-house', 'items', prod.productId),
+        { lastCount: increment(prod.confirmedQty), lastCountAt: now, updatedAt: now },
+        { merge: true },
+      );
+    }
+  }
+
+  await batch.commit();
+});
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function FestivalDeliveryTasksScreen() {
@@ -59,6 +140,7 @@ export default function FestivalDeliveryTasksScreen() {
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   // confirmedQtys: productId → quantity the receiver is confirming
   const [confirmedQtys, setConfirmedQtys] = useState<Record<string, number>>({});
+  const [isOffline, setIsOffline] = useState(false);
 
   // ── Phase 4a — delivery verification ─────────────────────────────────────
   // verificationMode: read from venues/{venueId}/event/details; defaults 'off'.
@@ -89,6 +171,13 @@ export default function FestivalDeliveryTasksScreen() {
   const [liveQRDisplayName,   setLiveQRDisplayName]   = useState('');
 
   const uid = auth.currentUser?.uid ?? '';
+
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+    return unsub;
+  }, []);
 
   // Live listener on event/details for deliveryVerificationMode (Phase 4a)
   useEffect(() => {
@@ -174,13 +263,14 @@ export default function FestivalDeliveryTasksScreen() {
     }
     setActing(reqId);
     try {
-      await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
-        status: 'accepted',
-        assignedTo: uid,
+      enqueuePayload('updateDoc', `venues/${venueId}/requests/${reqId}`, {
+        status:         'accepted',
+        assignedTo:     uid,
         assignedToName: auth.currentUser?.displayName ?? 'Unknown',
-        acceptedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        acceptedAt:     serverTimestamp(),
+        updatedAt:      serverTimestamp(),
       });
+      if (isOffline) showInfo('Task accepted — will sync when back online');
     } catch (e: any) {
       showError(e?.message || 'Could not accept task.');
     } finally {
@@ -188,8 +278,10 @@ export default function FestivalDeliveryTasksScreen() {
     }
   }
 
-  // markCollected: now a writeBatch — decrements HQ source stock at the moment
-  // the runner physically takes the items (stock has left HQ storage).
+  // markCollected: decrements HQ source stock at the moment the runner physically
+  // takes the items. Rider requests (no sourceLocationId) skip the stock write.
+  // The post-commit negative-stock advisory check runs inside the operation at
+  // flush time (console.warn — operations have no showInfo access).
   async function markCollected(reqId: string) {
     if (!venueId || acting) return;
     if (await isFestivalEventClosed(venueId)) {
@@ -199,48 +291,18 @@ export default function FestivalDeliveryTasksScreen() {
     const req = requests.find(r => r.id === reqId);
     setActing(reqId);
     try {
-      const batch = writeBatch(db);
-      const now = serverTimestamp();
-
-      batch.update(doc(db, 'venues', venueId, 'requests', reqId), {
-        status: 'collected',
-        collectedAt: now,
-        updatedAt: now,
+      enqueueOperation('deliveryCollect', {
+        venueId,
+        reqId,
+        sourceLocationId: req?.sourceLocationId ?? null,
+        products: (req?.products || [])
+          .filter((p: any) => p.productId)
+          .map((p: any) => ({ productId: p.productId, quantity: p.quantity ?? 0 })),
       });
-
-      // Decrement HQ source stock — stock has physically left the storage area.
-      // Rider requests (stockSource:'central', barId:null, no sourceLocationId) skip this.
-      if (req?.sourceLocationId && Array.isArray(req?.products)) {
-        for (const p of req.products) {
-          if (!p.productId) continue;
-          batch.set(
-            doc(db, 'venues', venueId, 'departments', 'hq', 'areas', req.sourceLocationId, 'items', p.productId),
-            { lastCount: increment(-(p.quantity ?? 0)), updatedAt: now },
-            { merge: true },
-          );
-        }
-      }
-
-      await batch.commit();
-      showSuccess('✓ Stock collected — HQ inventory updated');
-
-      // Post-commit soft check: warn if any HQ source items went negative.
-      // Never blocks or reverts the collection — this documents something that already happened.
-      if (req?.sourceLocationId && Array.isArray(req?.products)) {
-        try {
-          const hqSnaps = await Promise.all(
-            req.products
-              .filter((p: any) => p.productId)
-              .map((p: any) =>
-                getDoc(doc(db, 'venues', venueId, 'departments', 'hq', 'areas', req.sourceLocationId, 'items', p.productId))
-              )
-          );
-          if (hqSnaps.some(s => s.exists() && (s.data()?.lastCount ?? 0) < 0)) {
-            showInfo('Some HQ source items may now be below zero — worth checking HQ stock.');
-          }
-        } catch {
-          // Silent — advisory check only; read failures never surface to the user
-        }
+      if (isOffline) {
+        showInfo('Collected — will sync when back online');
+      } else {
+        showSuccess('✓ Stock collected — HQ inventory updated');
       }
     } catch (e: any) {
       showError(e?.message || 'Could not update task.');
@@ -249,8 +311,7 @@ export default function FestivalDeliveryTasksScreen() {
     }
   }
 
-  // markArrived: plain tap — no stock movement. Records that the runner is
-  // physically at the destination. Triggers the awaiting-receipt section.
+  // markArrived: no stock movement — records that the runner is at the destination.
   async function markArrived(reqId: string) {
     if (!venueId || acting) return;
     if (await isFestivalEventClosed(venueId)) {
@@ -259,11 +320,12 @@ export default function FestivalDeliveryTasksScreen() {
     }
     setActing(reqId);
     try {
-      await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
-        status: 'arrived',
+      enqueuePayload('updateDoc', `venues/${venueId}/requests/${reqId}`, {
+        status:    'arrived',
         arrivedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      if (isOffline) showInfo('Marked arrived — will sync when back online');
     } catch (e: any) {
       showError(e?.message || 'Could not update task.');
     } finally {
@@ -282,10 +344,11 @@ export default function FestivalDeliveryTasksScreen() {
     setConfirmingId(req.id);
   }
 
-  // doConfirmReceipt: final step. Increments destination bar stock using the
-  // CONFIRMED quantities (not originals), stamps sentQty/receivedQty on each
-  // product line, and marks the request delivered.
+  // doConfirmReceipt: increments bar back-of-house using CONFIRMED quantities,
+  // stamps sentQty/receivedQty on each product line, marks request delivered.
   // Rider requests (barId:null) skip the destination stock write.
+  // confirmedQtys are captured now (user's intent at tap time) and passed as
+  // plain numbers in params — no Timestamp serialization needed.
   async function doConfirmReceipt(reqId: string) {
     if (!venueId || acting) return;
     if (await isFestivalEventClosed(venueId)) {
@@ -296,42 +359,31 @@ export default function FestivalDeliveryTasksScreen() {
     if (!req) return;
     setActing(reqId);
     try {
-      const now = serverTimestamp();
-      const batch = writeBatch(db);
+      const products = (req.products || [])
+        .filter((p: any) => p.productId)
+        .map((p: any) => ({
+          productId:    p.productId,
+          productName:  p.productName ?? '',
+          unit:         p.unit ?? 'unit',
+          quantity:     p.quantity ?? 0,
+          confirmedQty: confirmedQtys[p.productId] ?? p.quantity ?? 0,
+        }));
 
-      // Build updated products array stamping sentQty (original) and receivedQty (confirmed)
-      const updatedProducts = (req.products || []).map((p: any) => ({
-        ...p,
-        sentQty:     p.quantity ?? 0,
-        receivedQty: confirmedQtys[p.productId] ?? p.quantity ?? 0,
-      }));
-
-      batch.update(doc(db, 'venues', venueId, 'requests', reqId), {
-        status:                  'delivered',
-        completedAt:             now,
-        receivingConfirmedAt:    now,
-        receivingConfirmedByUid: uid,
-        products:                updatedProducts,
-        updatedAt:               now,
+      enqueueOperation('deliveryConfirmReceipt', {
+        venueId,
+        reqId,
+        uid,
+        barId:    req.barId ?? null,
+        products,
       });
 
-      // Increment destination bar back-of-house using CONFIRMED quantities.
-      if (req.barId && Array.isArray(req.products)) {
-        for (const p of req.products) {
-          if (!p.productId) continue;
-          const confirmedQty = confirmedQtys[p.productId] ?? p.quantity ?? 0;
-          batch.set(
-            doc(db, 'venues', venueId, 'departments', req.barId, 'areas', 'back-of-house', 'items', p.productId),
-            { lastCount: increment(confirmedQty), lastCountAt: now, updatedAt: now },
-            { merge: true },
-          );
-        }
-      }
-
-      await batch.commit();
       setConfirmingId(null);
       setConfirmedQtys({});
-      showSuccess('✓ Receipt confirmed — bar stock updated');
+      if (isOffline) {
+        showInfo('Receipt queued — bar stock will update when back online');
+      } else {
+        showSuccess('✓ Receipt confirmed — bar stock updated');
+      }
     } catch (e: any) {
       showError(e?.message || 'Could not confirm receipt.');
     } finally {
@@ -638,6 +690,12 @@ export default function FestivalDeliveryTasksScreen() {
 
       <ScrollView contentContainerStyle={S.scroll}>
 
+        {isOffline && (
+          <View style={S.offlineBanner}>
+            <Text style={S.offlineBannerText}>📶 Offline — changes will sync when you reconnect</Text>
+          </View>
+        )}
+
         {/* Header */}
         <View style={S.headerRow}>
           <Text style={S.screenTitle}>Delivery tasks</Text>
@@ -711,6 +769,9 @@ function makeStyles(c: any) {
     csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
     scroll: { padding: 16, paddingBottom: 40 },
+
+    offlineBanner:     { backgroundColor: '#fef9c3', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fde68a' },
+    offlineBannerText: { fontSize: 13, color: '#92400e', fontWeight: '600' },
 
     headerRow:   { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 10 },
     screenTitle: { fontSize: 22, fontWeight: '800', color: c.navy },
