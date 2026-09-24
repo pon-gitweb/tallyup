@@ -5,8 +5,10 @@ import {
   ScrollView, TextInput,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import NetInfo from '@react-native-community/netinfo';
 import { collection, doc, getDoc, getDocs, query, where, setDoc, serverTimestamp } from 'firebase/firestore';
 import { isFestivalEventClosed } from '../../services/festival/eventStatus';
+import { enqueuePayload } from '../../services/offlineOutbox';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -58,6 +60,7 @@ export default function FestivalTopUpRequestScreen() {
   const [sourceLocationId,  setSourceLocationId]  = useState<string | null>(null);
   const [sourceLocationName,setSourceLocationName]= useState<string>('Central Store');
   const [excessSuggestion,  setExcessSuggestion]  = useState<{barId:string;barName:string;excessQty:number;hoursRemaining:number;productId:string}|null>(null);
+  const [isOffline,         setIsOffline]         = useState(false);
 
   // Load products from all areas under this bar's department
   useEffect(() => {
@@ -75,6 +78,13 @@ export default function FestivalTopUpRequestScreen() {
       setLoading(false);
     })();
   }, [venueId, barId]);
+
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+    return unsub;
+  }, []);
 
   // Load HQ areas to determine default source location for this bar
   useEffect(() => {
@@ -121,9 +131,11 @@ export default function FestivalTopUpRequestScreen() {
   if (sent) {
     return (
       <View style={SS.comingSoon}>
-        <Text style={{ fontSize: 52, marginBottom: 16 }}>✅</Text>
-        <Text style={SS.csTitle}>Request sent</Text>
-        <Text style={SS.csBody}>Ops team has been notified.</Text>
+        <Text style={{ fontSize: 52, marginBottom: 16 }}>{isOffline ? '📶' : '✅'}</Text>
+        <Text style={SS.csTitle}>{isOffline ? 'Request queued' : 'Request sent'}</Text>
+        <Text style={SS.csBody}>
+          {isOffline ? 'Will send automatically when you reconnect.' : 'Ops team has been notified.'}
+        </Text>
         <TouchableOpacity style={SS.primaryBtn} onPress={() => nav.goBack()}>
           <Text style={SS.primaryBtnText}>Back to bar</Text>
         </TouchableOpacity>
@@ -163,7 +175,7 @@ export default function FestivalTopUpRequestScreen() {
       const uid = auth.currentUser?.uid ?? 'unknown';
       const displayName = auth.currentUser?.displayName ?? 'Unknown';
       const reqId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      await setDoc(doc(db, 'venues', venueId, 'requests', reqId), {
+      enqueuePayload('setDoc', `venues/${venueId}/requests/${reqId}`, {
         barId,
         barName: barName || '',
         requestedBy: uid,
@@ -177,7 +189,11 @@ export default function FestivalTopUpRequestScreen() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      showSuccess('✓ Request sent');
+      if (isOffline) {
+        showInfo('Request queued — will send when back online');
+      } else {
+        showSuccess('✓ Request sent');
+      }
       setSent(true);
     } catch (e: any) {
       showError(e?.message || 'Could not send request. Please try again.');
@@ -353,6 +369,11 @@ export default function FestivalTopUpRequestScreen() {
       {modal}
       <ScrollView contentContainerStyle={SS.scroll}>
         {stepBar}
+        {isOffline && (
+          <View style={SS.offlineBanner}>
+            <Text style={SS.offlineBannerText}>📶 Offline — request will send when you reconnect</Text>
+          </View>
+        )}
         <Text style={SS.stepTitle}>Confirm request</Text>
 
         <View style={SS.summaryCard}>
@@ -423,6 +444,9 @@ function makeStyles(c: any) {
     csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
     scroll: { padding: 16, paddingBottom: 40 },
+
+    offlineBanner:     { backgroundColor: '#fef9c3', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fde68a' },
+    offlineBannerText: { fontSize: 13, color: '#92400e', fontWeight: '600' },
 
     stepBar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
     dot:          { width: 28, height: 28, borderRadius: 14, backgroundColor: c.border, alignItems: 'center', justifyContent: 'center' },
