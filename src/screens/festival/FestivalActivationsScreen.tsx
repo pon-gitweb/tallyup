@@ -1,12 +1,16 @@
 // @ts-nocheck
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   ScrollView, TextInput, Modal, Switch,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, doc, onSnapshot, setDoc, updateDoc, getDocs, serverTimestamp, query, where } from 'firebase/firestore';
+import NetInfo from '@react-native-community/netinfo';
+import { collection, doc, onSnapshot, setDoc, getDocs, serverTimestamp, query, where, Timestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
+import {
+  enqueuePayload, enqueueOperation, registerOperation,
+} from '../../services/offlineOutbox';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { useToast } from '../../components/common/Toast';
@@ -37,6 +41,30 @@ function formatTs(ts: any): string {
 
 type ProductRow = { productId: string; productName: string; quantity: string };
 
+// ─── Outbox operation: activationCreate ──────────────────────────────────────
+// Timestamp.fromDate() values can't survive JSON serialisation (they become
+// {seconds, nanoseconds} plain objects, which Firestore stores as a map, not a
+// Timestamp). The operation takes ms integers and reconstructs them at flush time.
+
+registerOperation('activationCreate', async (p: any) => {
+  const {
+    venueId, activationId, brandName, barId, barName,
+    startMs, endMs, prods, expectedAttendance, description, displayRequirements,
+  } = p;
+  const startTime = startMs != null ? Timestamp.fromMillis(startMs) : null;
+  const endTime   = endMs   != null ? Timestamp.fromMillis(endMs)   : null;
+  await setDoc(doc(db, 'venues', venueId, 'activations', activationId), {
+    brandName, barId, barName, startTime, endTime,
+    expectedAttendance,
+    description,
+    productsRequired:    prods,
+    displayRequirements,
+    status:              'planned',
+    prepTaskId:          null,
+    createdAt:           serverTimestamp(),
+  });
+});
+
 // ─── Add Activation Modal ─────────────────────────────────────────────────────
 
 function AddActivationModal({ visible, onClose, venueId }: any) {
@@ -54,7 +82,16 @@ function AddActivationModal({ visible, onClose, venueId }: any) {
   const [displayNote,  setDisplayNote]  = useState('');
   const [saving,       setSaving]       = useState(false);
   const [bars,         setBars]         = useState<any[]>([]);
-  const { showError } = useToast();
+  const [isOffline,    setIsOffline]    = useState(false);
+  const savingRef = useRef(false);
+  const { showError, showInfo } = useToast();
+
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     if (!venueId) return;
@@ -72,11 +109,13 @@ function AddActivationModal({ visible, onClose, venueId }: any) {
     return isNaN(d.getTime()) ? null : d;
   }
 
-  async function save() {
+  function save() {
+    if (savingRef.current) return;
     if (!brandName.trim()) { showError('Brand name is required.'); return; }
     if (!barId) { showError('Please select a bar.'); return; }
     if (!venueId) return;
 
+    savingRef.current = true;
     setSaving(true);
     try {
       const activationId = `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -89,35 +128,29 @@ function AddActivationModal({ visible, onClose, venueId }: any) {
         quantity:    parseFloat(p.quantity) || 1,
       }));
 
-      await setDoc(doc(db, 'venues', venueId, 'activations', activationId), {
+      enqueueOperation('activationCreate', {
+        venueId,
+        activationId,
         brandName:           brandName.trim(),
         barId,
         barName,
-        startTime:           startDt ? serverTimestamp() : null,  // placeholder — real TS set below
-        endTime:             endDt   ? serverTimestamp() : null,
+        startMs:             startDt ? startDt.getTime() : null,
+        endMs:               endDt   ? endDt.getTime()   : null,
         expectedAttendance:  parseInt(attendance) || null,
         description:         description.trim() || null,
-        productsRequired:    prods,
+        prods,
         displayRequirements: displayReq ? (displayNote.trim() || 'Yes') : null,
-        status:              'planned',
-        prepTaskId:          null,
-        createdAt:           serverTimestamp(),
       });
 
-      // Now update with actual timestamps (serverTimestamp() inside setDoc can't be used in arrays)
-      if (startDt) {
-        const { Timestamp } = require('firebase/firestore');
-        await updateDoc(doc(db, 'venues', venueId, 'activations', activationId), {
-          startTime: Timestamp.fromDate(startDt),
-          endTime:   endDt ? Timestamp.fromDate(endDt) : null,
-        });
+      if (isOffline) {
+        showInfo('Activation queued — will sync when back online');
       }
-
       onClose();
     } catch (e: any) {
       showError(e?.message || 'Could not save activation.');
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   }
 
@@ -129,6 +162,11 @@ function AddActivationModal({ visible, onClose, venueId }: any) {
             <Text style={A.modalTitle}>Add activation</Text>
             <TouchableOpacity onPress={onClose}><Text style={A.closeBtn}>✕</Text></TouchableOpacity>
           </View>
+          {isOffline && (
+            <View style={A.offlineBanner}>
+              <Text style={A.offlineBannerText}>📶 Offline — activation will sync when you reconnect</Text>
+            </View>
+          )}
 
           <Text style={A.label}>Brand / sponsor name *</Text>
           <TextInput value={brandName} onChangeText={setBrandName} placeholder="e.g. Hendricks Gin" placeholderTextColor="#9ca3af" style={A.input} />
@@ -245,7 +283,15 @@ export default function FestivalActivationsScreen() {
   const [showModal,   setShowModal]   = useState(false);
   const [showPrep,    setShowPrep]    = useState<string | null>(null);
   const [marking,     setMarking]     = useState<string | null>(null);
-  const { showError } = useToast();
+  const [isOffline,   setIsOffline]   = useState(false);
+  const { showError, showSuccess, showInfo } = useToast();
+
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
@@ -271,15 +317,20 @@ export default function FestivalActivationsScreen() {
     return () => unsub();
   }, [venueId]);
 
-  async function markReady(activationId: string) {
+  function markReady(activationId: string) {
     if (!venueId || marking) return;
     setMarking(activationId);
     try {
-      await updateDoc(doc(db, 'venues', venueId, 'activations', activationId), {
+      enqueuePayload('updateDoc', `venues/${venueId}/activations/${activationId}`, {
         status:    'ready',
         updatedAt: serverTimestamp(),
       });
       setShowPrep(null);
+      if (isOffline) {
+        showInfo('Update queued — will sync when back online');
+      } else {
+        showSuccess('✓ Prep marked ready');
+      }
     } catch (e: any) {
       showError(e?.message);
     } finally {
@@ -314,6 +365,11 @@ export default function FestivalActivationsScreen() {
       <ScrollView contentContainerStyle={A.scroll}>
 
         <Text style={A.screenTitle}>Activations</Text>
+        {isOffline && (
+          <View style={A.offlineBanner}>
+            <Text style={A.offlineBannerText}>📶 Offline — changes will sync when you reconnect</Text>
+          </View>
+        )}
 
         <TouchableOpacity style={A.addBtn} onPress={() => setShowModal(true)}>
           <Text style={A.addBtnText}>+ Add activation</Text>
@@ -398,6 +454,9 @@ const A = StyleSheet.create({
   scroll:       { padding: 16, paddingBottom: 40 },
   screenTitle:  { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 16 },
   sectionLabel: { fontSize: 11, fontWeight: '800', color: '#9ca3af', letterSpacing: 1, marginTop: 20, marginBottom: 8 },
+
+  offlineBanner:     { backgroundColor: '#fef9c3', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fde68a' },
+  offlineBannerText: { fontSize: 13, color: '#92400e', fontWeight: '600' },
 
   addBtn:     { borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 12, alignItems: 'center', marginBottom: 16 },
   addBtnText: { color: '#1b4f72', fontWeight: '700', fontSize: 14 },

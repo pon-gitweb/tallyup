@@ -5,10 +5,12 @@ import {
   ScrollView,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import NetInfo from '@react-native-community/netinfo';
 import {
-  collection, getDocs, doc, getDoc, onSnapshot, setDoc, serverTimestamp,
+  collection, getDocs, doc, getDoc, onSnapshot, serverTimestamp,
 } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
+import { enqueuePayload } from '../../services/offlineOutbox';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { getSalesSummary } from '../../services/festival/salesData';
@@ -58,6 +60,14 @@ export default function FestivalReconciliationScreen() {
   const [supplierConfigs, setSupplierConfigs] = useState<Record<string, any>>({});
   const [loading,         setLoading]         = useState(FESTIVAL_BETA);
   const [saving,          setSaving]          = useState(false);
+  const [isOffline,       setIsOffline]       = useState(false);
+
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+    return unsub;
+  }, []);
 
   // ── Coming-soon gate ──────────────────────────────────────────────────────
   if (!FESTIVAL_BETA) {
@@ -219,18 +229,21 @@ export default function FestivalReconciliationScreen() {
     }
   }
 
-  async function doSaveReconciliation() {
+  function doSaveReconciliation() {
     if (!venueId || !summary || saving) return;
     setSaving(true);
     try {
-      const data = {
+      enqueuePayload('setDoc', `venues/${venueId}/returns/eventReconciliation`, {
         ...summary,
-        savedAt:  serverTimestamp(),
-        savedBy:  uid ?? 'unknown',
+        savedAt:   serverTimestamp(),
+        savedBy:   uid ?? 'unknown',
         eventName: event?.eventName || null,
-      };
-      await setDoc(doc(db, 'venues', venueId, 'returns', 'eventReconciliation'), data);
-      showSuccess('✓ Reconciliation report saved');
+      });
+      if (isOffline) {
+        showInfo('Report queued — will sync when back online');
+      } else {
+        showSuccess('✓ Reconciliation report saved');
+      }
     } catch (e: any) {
       showError(e?.message || 'Could not save report.');
     } finally {
@@ -268,6 +281,11 @@ export default function FestivalReconciliationScreen() {
       <ScrollView contentContainerStyle={S.scroll}>
         <Text style={S.screenTitle}>Reconciliation</Text>
         {event?.eventName && <Text style={S.sub}>{event.eventName}</Text>}
+        {isOffline && !isHistorical && (
+          <View style={S.offlineBanner}>
+            <Text style={S.offlineBannerText}>📶 Offline — report will sync when you reconnect</Text>
+          </View>
+        )}
 
         {saved?.savedAt && (
           <View style={S.savedBanner}>
@@ -402,7 +420,10 @@ function makeStyles(c: any) {
 
     scroll:      { padding: 16, paddingBottom: 40 },
     screenTitle: { fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 4 },
-    sub:         { fontSize: 14, color: c.slateMid, marginBottom: 16 },
+    sub:         { fontSize: 14, color: c.slateMid, marginBottom: 8 },
+
+    offlineBanner:     { backgroundColor: c.amber + '22', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: c.amber + '55' },
+    offlineBannerText: { fontSize: 13, color: c.amber, fontWeight: '600' },
 
     savedBanner:     { backgroundColor: c.positiveSoft, borderRadius: 10, padding: 10, marginBottom: 12 },
     savedBannerText: { fontSize: 13, fontWeight: '700', color: c.success, textAlign: 'center' },

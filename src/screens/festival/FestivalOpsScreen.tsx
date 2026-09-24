@@ -5,10 +5,12 @@ import {
   ScrollView, Animated,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import NetInfo from '@react-native-community/netinfo';
 import {
-  collection, doc, onSnapshot, updateDoc, getDocs, serverTimestamp,
+  collection, doc, onSnapshot, getDocs, serverTimestamp,
 } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
+import { enqueuePayload } from '../../services/offlineOutbox';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -75,8 +77,16 @@ export default function FestivalOpsScreen() {
   const [selectedBar, setSelectedBar] = useState<string>('all');
   const [loading,   setLoading]   = useState(FESTIVAL_BETA);
   const [acting,    setActing]    = useState<string | null>(null);
+  const [isOffline, setIsOffline] = useState(false);
 
   const liveDot = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     Animated.loop(
@@ -199,17 +209,21 @@ export default function FestivalOpsScreen() {
     );
   }
 
-  async function assignToMe(reqId: string) {
+  function assignToMe(reqId: string) {
     if (!venueId || acting) return;
     setActing(reqId);
     try {
-      await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
+      enqueuePayload('updateDoc', `venues/${venueId}/requests/${reqId}`, {
         status:         'accepted',
         assignedTo:     uid,
         assignedToName: userName,
         updatedAt:      serverTimestamp(),
       });
-      showSuccess('✓ Request assigned to you');
+      if (isOffline) {
+        showInfo('Assignment queued — will sync when back online');
+      } else {
+        showSuccess('✓ Request assigned to you');
+      }
     } catch (e: any) {
       showError(e?.message || 'Could not assign request.');
     } finally {
@@ -225,15 +239,19 @@ export default function FestivalOpsScreen() {
       confirmLabel: 'Yes, cancel',
       cancelLabel: 'No',
       destructive: true,
-      onConfirm: async () => {
+      onConfirm: () => {
         setActing(reqId);
         try {
-          await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
+          enqueuePayload('updateDoc', `venues/${venueId}/requests/${reqId}`, {
             status:      'cancelled',
             cancelledBy: uid ?? 'unknown',
             updatedAt:   serverTimestamp(),
           });
-          showSuccess('✓ Request cancelled');
+          if (isOffline) {
+            showInfo('Cancellation queued — will sync when back online');
+          } else {
+            showSuccess('✓ Request cancelled');
+          }
         } catch (e: any) {
           showError(e?.message || 'Could not cancel request.');
         } finally {
@@ -331,6 +349,12 @@ export default function FestivalOpsScreen() {
             <Text style={O.liveText}>LIVE</Text>
           </View>
         </View>
+
+        {isOffline && (
+          <View style={O.offlineBanner}>
+            <Text style={O.offlineBannerText}>📶 Offline — changes will sync when you reconnect</Text>
+          </View>
+        )}
 
         {/* ── Stock alerts (critical < 1hr, warning < 2hr) ─────────────── */}
         {stockAlerts.length > 0 && (
@@ -579,6 +603,9 @@ function makeStyles(c: any) {
     csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
     scroll:      { padding: 16, paddingBottom: 40 },
+
+    offlineBanner:     { backgroundColor: c.amber + '22', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: c.amber + '55' },
+    offlineBannerText: { fontSize: 13, color: c.amber, fontWeight: '600' },
 
     eventHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 },
     eventName:   { fontSize: 22, fontWeight: '800', color: c.navy, flex: 1, marginRight: 8 },

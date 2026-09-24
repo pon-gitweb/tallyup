@@ -6,9 +6,10 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
-  collection, getDocs, doc, setDoc, onSnapshot, serverTimestamp, query, where,
+  collection, getDocs, doc, onSnapshot, serverTimestamp, query, where,
 } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
+import { enqueuePayload } from '../../services/offlineOutbox';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -40,6 +41,14 @@ export default function FestivalEndOfEventCountScreen() {
   const [stockRows,   setStockRows]   = useState<CountRow[]>([]);
   const [loadingStock,setLoadingStock]= useState(false);
   const [saving,      setSaving]      = useState(false);
+  const [isOffline,   setIsOffline]   = useState(false);
+
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+    return unsub;
+  }, []);
 
   // Load bars
   useEffect(() => {
@@ -118,12 +127,12 @@ export default function FestivalEndOfEventCountScreen() {
       ));
     }
 
-    async function doSubmitBarCount() {
+    function doSubmitBarCount() {
       if (!venueId || saving) return;
       setSaving(true);
       try {
         const name = auth.currentUser?.displayName ?? 'Unknown';
-        await setDoc(doc(db, 'venues', venueId, 'returns', 'eventClose', 'barCounts', selectedBar!.barId), {
+        enqueuePayload('setDoc', `venues/${venueId}/returns/eventClose/barCounts/${selectedBar!.barId}`, {
           barId:         selectedBar!.barId,
           barName:       selectedBar!.barName,
           countedBy:     uid ?? 'unknown',
@@ -136,24 +145,14 @@ export default function FestivalEndOfEventCountScreen() {
           })),
           completedAt: serverTimestamp(),
         });
-
-        // Offline-aware feedback
-        const netState = await NetInfo.fetch();
-        const isOnline = netState.isConnected === true && netState.isInternetReachable !== false;
-        if (isOnline) {
-          showSuccess(`✓ Final count saved — ${selectedBar!.barName}`);
+        if (isOffline) {
+          showInfo(`Count queued — will sync when you're back online`);
         } else {
-          showInfo(`Final count saved locally — will sync when you're back online`);
+          showSuccess(`✓ Final count saved — ${selectedBar!.barName}`);
         }
         setSelectedBar(null);
       } catch (e: any) {
-        const msg = e?.message || '';
-        if (msg.includes('unavailable') || msg.includes('offline') || msg.includes('failed to get')) {
-          showInfo(`Count saved locally — will sync when you're back online`);
-          setSelectedBar(null);
-        } else {
-          showError(msg || 'Could not save count. Please try again.');
-        }
+        showError(e?.message || 'Could not save count. Please try again.');
       } finally {
         setSaving(false);
       }
@@ -174,6 +173,11 @@ export default function FestivalEndOfEventCountScreen() {
         <ScrollView contentContainerStyle={S.scroll} keyboardShouldPersistTaps="handled">
           <Text style={S.screenTitle}>{selectedBar.barName}</Text>
           <Text style={S.sub}>Final count — end of event</Text>
+          {isOffline && (
+            <View style={S.offlineBanner}>
+              <Text style={S.offlineBannerText}>📶 Offline — count will sync when you reconnect</Text>
+            </View>
+          )}
 
           {stockRows.length === 0 ? (
             <View style={S.emptyCard}>
@@ -308,7 +312,10 @@ function makeStyles(c: any) {
 
     scroll:     { padding: 16, paddingBottom: 40 },
     screenTitle:{ fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 4 },
-    sub:        { fontSize: 14, color: c.slateMid, marginBottom: 20 },
+    sub:        { fontSize: 14, color: c.slateMid, marginBottom: 12 },
+
+    offlineBanner:     { backgroundColor: c.amber + '22', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: c.amber + '55' },
+    offlineBannerText: { fontSize: 13, color: c.amber, fontWeight: '600' },
 
     barCard:    { backgroundColor: c.surface, borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: c.border },
     barRow:     { flexDirection: 'row', alignItems: 'center' },
