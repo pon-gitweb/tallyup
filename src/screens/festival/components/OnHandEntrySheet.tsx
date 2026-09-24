@@ -276,20 +276,18 @@ export function StockEntrySheet({ visible, editItem, locations, onHandItems, onC
   }
 
   function doProceed(qty: number) {
-    if (!isEdit) {
-      const normSrc = source;
-      const existing = onHandItems.find(item =>
-        item.productId === selectedProduct.id &&
-        (item.locationId ?? null) === (locationId ?? null) &&
-        normalizeSource(item.source) === normSrc &&
-        item.id !== editItem?.id
-      );
-      if (existing) {
-        setPendingQty(qty);
-        setLargeQtyPanel(null);
-        setDupPanel({ existing });
-        return;
-      }
+    const normSrc = source;
+    const existing = onHandItems.find(item =>
+      item.productId === selectedProduct.id &&
+      (item.locationId ?? null) === (locationId ?? null) &&
+      normalizeSource(item.source) === normSrc &&
+      item.id !== editItem?.id
+    );
+    if (existing) {
+      setPendingQty(qty);
+      setLargeQtyPanel(null);
+      setDupPanel({ existing });
+      return;
     }
     doWrite(qty);
     onClose();
@@ -543,6 +541,9 @@ export function StockEntrySheet({ visible, editItem, locations, onHandItems, onC
                       locationName,
                       updatedAt: serverTimestamp(),
                     }).catch(e => showError(e.message));
+                    if (isEdit && editItem?.id) {
+                      deleteDoc(doc(db, 'venues', venueId, 'onHand', editItem.id)).catch(e => showError(e.message));
+                    }
                     setDupPanel(null);
                     onClose();
                   }}
@@ -553,6 +554,9 @@ export function StockEntrySheet({ visible, editItem, locations, onHandItems, onC
                 <TouchableOpacity
                   onPress={() => {
                     doWrite(pendingQty, dupPanel.existing.id);
+                    if (isEdit && editItem?.id) {
+                      deleteDoc(doc(db, 'venues', venueId, 'onHand', editItem.id)).catch(e => showError(e.message));
+                    }
                     setDupPanel(null);
                     onClose();
                   }}
@@ -689,18 +693,16 @@ export function EquipEntrySheet({ visible, editItem, locations, equipItems, onCl
   }
 
   function doProceed(qtyNum: number, needNum: number) {
-    if (!isEdit) {
-      const nameKey = name.trim().toLowerCase();
-      const existing = equipItems.find(e =>
-        (e.nameKey || e.name?.trim().toLowerCase()) === nameKey &&
-        (e.locationId ?? null) === (locationId ?? null) &&
-        e.id !== editItem?.id
-      );
-      if (existing) {
-        setLargeQtyPanel(null);
-        setDupPanel({ existing });
-        return;
-      }
+    const nameKey = name.trim().toLowerCase();
+    const existing = equipItems.find(e =>
+      (e.nameKey || e.name?.trim().toLowerCase()) === nameKey &&
+      (e.locationId ?? null) === (locationId ?? null) &&
+      e.id !== editItem?.id
+    );
+    if (existing) {
+      setLargeQtyPanel(null);
+      setDupPanel({ existing });
+      return;
     }
     doWrite(qtyNum, needNum);
     onClose();
@@ -865,13 +867,31 @@ export function EquipEntrySheet({ visible, editItem, locations, equipItems, onCl
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                 <TouchableOpacity
                   onPress={() => {
-                    doWrite(qtyNumVal, needNumVal, dupPanel.existing.id);
+                    const mergedQty = (dupPanel.existing.qty || 0) + qtyNumVal;
+                    const mergedNeed = Math.max(dupPanel.existing.need || 0, needNumVal);
+                    doWrite(mergedQty, mergedNeed, dupPanel.existing.id);
+                    if (isEdit && editItem?.id) {
+                      deleteDoc(doc(db, 'venues', venueId, 'equipment', editItem.id)).catch(e => showError(e.message));
+                    }
                     setDupPanel(null);
                     onClose();
                   }}
-                  style={{ flex: 1, minWidth: 70, backgroundColor: c.deepBlue, borderRadius: 8, padding: 12, alignItems: 'center' }}
+                  style={{ flex: 1, minWidth: 110, backgroundColor: c.deepBlue, borderRadius: 8, padding: 12, alignItems: 'center' }}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Replace</Text>
+                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Add to existing</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    doWrite(qtyNumVal, needNumVal, dupPanel.existing.id);
+                    if (isEdit && editItem?.id) {
+                      deleteDoc(doc(db, 'venues', venueId, 'equipment', editItem.id)).catch(e => showError(e.message));
+                    }
+                    setDupPanel(null);
+                    onClose();
+                  }}
+                  style={{ flex: 1, minWidth: 70, borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 12, alignItems: 'center' }}
+                >
+                  <Text style={{ color: c.navy, fontWeight: '600', fontSize: 13 }}>Replace</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => { setDupPanel(null); }}
