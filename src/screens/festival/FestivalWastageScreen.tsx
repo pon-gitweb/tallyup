@@ -1,14 +1,18 @@
 // @ts-nocheck
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   ScrollView, TextInput,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import NetInfo from '@react-native-community/netinfo';
 import {
   collection, doc, getDocs, writeBatch, increment, onSnapshot, serverTimestamp, query, where,
 } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
+import {
+  enqueueOperation, registerOperation,
+} from '../../services/offlineOutbox';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -25,6 +29,39 @@ const REASONS = [
   { id: 'artist_rider',      label: 'Artist / rider' },
   { id: 'other',             label: 'Other' },
 ];
+
+// ─── Outbox operation: wastage ────────────────────────────────────────────────
+// batch.update + batch.set both use safe patterns (no existence-check reads
+// needed). Registered at module load so the outbox can replay after restart.
+
+registerOperation('wastageSubmit', async (p: any) => {
+  const { venueId, barId, barName, selectedProdId, productName, q, wastageId, uid, displayName, reason, note } = p;
+
+  const batch = writeBatch(db);
+
+  batch.update(
+    doc(db, 'venues', venueId, 'departments', barId, 'areas', 'back-of-house', 'items', selectedProdId),
+    { lastCount: increment(-q), updatedAt: serverTimestamp() },
+  );
+
+  batch.set(
+    doc(db, 'venues', venueId, 'wastage', wastageId),
+    {
+      barId,
+      barName:      barName || null,
+      itemId:       selectedProdId,
+      productName,
+      quantity:     q,
+      reason,
+      note:         note || null,
+      wastedBy:     uid,
+      wastedByName: displayName,
+      createdAt:    serverTimestamp(),
+    },
+  );
+
+  await batch.commit();
+});
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
@@ -47,6 +84,17 @@ export default function FestivalWastageScreen() {
   const [loading,        setLoading]        = useState(FESTIVAL_BETA);
   const [saving,         setSaving]         = useState(false);
   const [todayWastage,   setTodayWastage]   = useState<any[]>([]);
+  const [isOffline,      setIsOffline]      = useState(false);
+  // Ref guard: prevents double-entry from rapid taps before React re-renders
+  // (setSaving(true/false) are batched when the function is synchronous)
+  const submittingRef = useRef(false);
+
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+    return unsub;
+  }, []);
 
   // Load products for this bar
   useEffect(() => {
@@ -105,44 +153,33 @@ export default function FestivalWastageScreen() {
     );
   }
 
-  async function saveWastage() {
+  function saveWastage() {
+    if (submittingRef.current) return;
     if (!selectedProd) { showInfo('Select a product.'); return; }
     const q = parseFloat(qty);
     if (!q || q <= 0) { showInfo('Enter a valid quantity.'); return; }
     if (!venueId) return;
 
+    submittingRef.current = true;
     setSaving(true);
     try {
       const uid         = auth.currentUser?.uid ?? 'unknown';
       const displayName = auth.currentUser?.displayName ?? null;
       const wastageId   = `w_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-      const batch = writeBatch(db);
-
-      // Decrement bar stock
-      batch.update(
-        doc(db, 'venues', venueId, 'departments', barId, 'areas', 'back-of-house', 'items', selectedProd.id),
-        { lastCount: increment(-q), updatedAt: serverTimestamp() },
-      );
-
-      // Tracked wastage record
-      batch.set(
-        doc(db, 'venues', venueId, 'wastage', wastageId),
-        {
-          barId,
-          barName:      barName || null,
-          itemId:       selectedProd.id,
-          productName:  selectedProd.productName || selectedProd.id,
-          quantity:     q,
-          reason,
-          note:         note.trim() || null,
-          wastedBy:     uid,
-          wastedByName: displayName,
-          createdAt:    serverTimestamp(),
-        },
-      );
-
-      await batch.commit();
+      enqueueOperation('wastageSubmit', {
+        venueId,
+        barId,
+        barName:        barName || null,
+        selectedProdId: selectedProd.id,
+        productName:    selectedProd.productName || selectedProd.id,
+        q,
+        wastageId,
+        uid,
+        displayName,
+        reason,
+        note:           note.trim() || null,
+      });
 
       // Optimistic local update so chip shows reduced stock without re-read
       setProducts(prev => prev.map(p =>
@@ -155,11 +192,16 @@ export default function FestivalWastageScreen() {
       setQty('');
       setNote('');
       setReason('breakage');
-      showSuccess('✓ Wastage recorded');
+      if (isOffline) {
+        showInfo('Wastage queued — will sync when back online');
+      } else {
+        showSuccess('✓ Wastage recorded');
+      }
     } catch (e: any) {
       showError(e?.message || 'Could not record wastage.');
     } finally {
       setSaving(false);
+      submittingRef.current = false;
     }
   }
 
@@ -176,6 +218,11 @@ export default function FestivalWastageScreen() {
       <ScrollView contentContainerStyle={W.scroll} keyboardShouldPersistTaps="handled">
 
         <Text style={W.screenTitle}>{barName} — Wastage</Text>
+        {isOffline && (
+          <View style={W.offlineBanner}>
+            <Text style={W.offlineBannerText}>📶 Offline — changes will sync when you reconnect</Text>
+          </View>
+        )}
 
         {/* Product selection */}
         <Text style={W.label}>Product</Text>
@@ -272,6 +319,9 @@ function makeStyles(c: any) {
 
     scroll:      { padding: 16, paddingBottom: 40 },
     screenTitle: { fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 16 },
+
+    offlineBanner:     { backgroundColor: '#fef9c3', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fde68a' },
+    offlineBannerText: { fontSize: 13, color: '#92400e', fontWeight: '600' },
     label:       { fontSize: 13, fontWeight: '700', color: c.text, marginTop: 12, marginBottom: 6 },
 
     chipRow:  { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
