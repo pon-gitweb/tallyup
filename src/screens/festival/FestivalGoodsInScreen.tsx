@@ -5,12 +5,16 @@ import {
   Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import NetInfo from '@react-native-community/netinfo';
 import {
   collection, doc, getDoc, getDocs, increment, onSnapshot, query, updateDoc, where,
   setDoc, writeBatch, serverTimestamp,
 } from 'firebase/firestore';
 import { auth } from '../../services/firebase';
 import { db } from '../../services/firebase';
+import {
+  enqueuePayload, enqueueOperation, registerOperation,
+} from '../../services/offlineOutbox';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -36,6 +40,126 @@ type Allocation = {
 
 type AllocationMap = Record<string, Allocation[]>; // productId → allocations per bar
 
+// ─── Outbox operations: goods in ──────────────────────────────────────────────
+// Pre-fetch reads are INSIDE the operations so the increment-vs-set decision
+// is made against fresh Firestore state at flush time, not stale offline cache
+// captured at enqueue time.  Both operations registered at module load so the
+// outbox can replay them after an app restart.
+
+registerOperation('goodsInReceive', async (p: any) => {
+  const { venueId, locationId, lines, chepEnabled, chepReceived } = p;
+  if (!lines?.length && !chepEnabled) return;
+
+  const itemRefs = (lines || []).map((l: any) =>
+    doc(db, 'venues', venueId, 'departments', 'hq', 'areas', locationId, 'items', l.productId)
+  );
+  const existingSnaps = await Promise.all(itemRefs.map((r: any) => getDoc(r)));
+  const existsMap = new Map(
+    (lines || []).map((l: any, i: number) => [l.productId, existingSnaps[i].exists()])
+  );
+
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  for (const l of (lines || [])) {
+    const ref = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', locationId, 'items', l.productId);
+    if (existsMap.get(l.productId)) {
+      batch.update(ref, { lastCount: increment(l.receivedQty), lastCountAt: now, updatedAt: now });
+    } else {
+      batch.set(ref, {
+        name: l.productName, unit: 'unit',
+        lastCount: l.receivedQty, openingStock: l.receivedQty,
+        lastCountAt: now, createdAt: now, updatedAt: now,
+      });
+    }
+  }
+
+  if (chepEnabled && (chepReceived ?? 0) > 0) {
+    const chepRef = doc(
+      db, 'venues', venueId, 'departments', 'hq', 'areas', locationId, 'items', '_chep_pallets'
+    );
+    batch.set(chepRef, {
+      name: 'CHEP Pallets', unit: 'unit',
+      lastCount: chepReceived, lastCountAt: now, updatedAt: now,
+    }, { merge: true });
+  }
+
+  batch.set(
+    doc(db, 'venues', venueId, 'departments', 'hq', 'areas', locationId),
+    { distributionConfirmed: false },
+    { merge: true },
+  );
+
+  await batch.commit();
+});
+
+registerOperation('goodsInDistribute', async (p: any) => {
+  const { venueId, locationId, flatAllocations } = p;
+  if (!flatAllocations?.length) return;
+
+  // Re-fetch bar back-of-house item existence at flush time
+  const itemRefs = (flatAllocations as any[]).map((a: any) => ({
+    key: `${a.productId}:${a.barId}`,
+    ref: doc(db, 'venues', venueId, 'departments', a.barId, 'areas', 'back-of-house', 'items', a.productId),
+  }));
+  const snaps = await Promise.all(itemRefs.map(r => getDoc(r.ref)));
+  const existsMap = new Map(itemRefs.map((r, i) => [r.key, snaps[i].exists()]));
+
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  for (const a of (flatAllocations as any[])) {
+    const ref = doc(db, 'venues', venueId, 'departments', a.barId, 'areas', 'back-of-house', 'items', a.productId);
+    if (existsMap.get(`${a.productId}:${a.barId}`)) {
+      batch.update(ref, { lastCount: increment(a.qty), lastCountAt: now, updatedAt: now });
+    } else {
+      batch.set(ref, {
+        name: a.productName, unit: 'unit',
+        lastCount: a.qty, openingStock: a.qty,
+        openingSetAt: now, lastCountAt: now, createdAt: now, updatedAt: now,
+      });
+    }
+  }
+
+  // Deduct from HQ source per product
+  const productTotals = new Map<string, number>();
+  for (const a of (flatAllocations as any[])) {
+    productTotals.set(a.productId, (productTotals.get(a.productId) || 0) + a.qty);
+  }
+  for (const [productId, total] of productTotals) {
+    batch.set(
+      doc(db, 'venues', venueId, 'departments', 'hq', 'areas', locationId, 'items', productId),
+      { lastCount: increment(-total), updatedAt: now },
+      { merge: true },
+    );
+  }
+
+  batch.set(
+    doc(db, 'venues', venueId, 'departments', 'hq', 'areas', locationId),
+    { distributionConfirmed: true, distributionConfirmedAt: now },
+    { merge: true },
+  );
+
+  await batch.commit();
+
+  // Product catalogue — idempotent: add to festival catalogue if not already there
+  const seen = new Set<string>();
+  for (const a of (flatAllocations as any[])) {
+    if (seen.has(a.productId)) continue;
+    seen.add(a.productId);
+    try {
+      const productRef = doc(db, 'venues', venueId, 'products', a.productId);
+      const productSnap = await getDoc(productRef);
+      if (!productSnap.exists()) {
+        await setDoc(productRef, {
+          name: a.productName, unit: 'unit', source: 'goods-in',
+          createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        });
+      }
+    } catch {}
+  }
+});
+
 export default function FestivalGoodsInScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
@@ -58,6 +182,7 @@ export default function FestivalGoodsInScreen() {
   // PO integration state
   const [pendingOrders, setPendingOrders] = useState<any[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
@@ -130,6 +255,13 @@ export default function FestivalGoodsInScreen() {
     })();
   }, [venueId, selectedLocation?.id]);
 
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+    return unsub;
+  }, []);
+
   function loadFromOrder(order: any) {
     setSelectedOrder(order);
     const orderLines: DeliveryLine[] = (order.products || order.items || []).map((p: any) => ({
@@ -166,95 +298,61 @@ export default function FestivalGoodsInScreen() {
       .map(l => l.productName);
   }
 
-  async function saveReceive() {
+  function saveReceive() {
     if (!selectedLocation || !venueId) return;
     setSaving(true);
     try {
-      // Pre-fetch to determine which items already exist (use increment vs. set)
-      const receivingLines = lines.filter(l => l.receivedQty > 0);
-      const itemRefs = receivingLines.map(l =>
-        doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items', l.productId)
-      );
-      const existingSnaps = await Promise.all(itemRefs.map(r => getDoc(r)));
-      const existingMap = new Map(
-        receivingLines.map((l, i) => [l.productId, existingSnaps[i].exists()])
-      );
+      const receivingLines = lines
+        .filter(l => l.receivedQty > 0)
+        .map(l => ({ productId: l.productId, productName: l.productName, receivedQty: l.receivedQty }));
 
-      const batch = writeBatch(db);
-      const now = serverTimestamp();
-      lines.forEach(l => {
-        if (l.receivedQty <= 0) return;
-        const ref = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items', l.productId);
-        if (existingMap.get(l.productId)) {
-          // Second delivery to same location — increment, do not overwrite
-          batch.update(ref, {
-            lastCount: increment(l.receivedQty),
-            lastCountAt: now,
-            updatedAt: now,
-          });
-        } else {
-          // First receipt — set with openingStock baseline for velocity service
-          batch.set(ref, {
-            name: l.productName,
-            unit: 'unit',
-            lastCount: l.receivedQty,
-            openingStock: l.receivedQty,
-            lastCountAt: now,
-            createdAt: now,
-            updatedAt: now,
-          });
-        }
-      });
-      if (chepEnabled && chepReceived) {
-        const chepRef = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items', '_chep_pallets');
-        batch.set(chepRef, {
-          name: 'CHEP Pallets',
-          unit: 'unit',
-          lastCount: parseFloat(chepReceived) || 0,
-          lastCountAt: now,
-          updatedAt: now,
-        }, { merge: true });
+      if (receivingLines.length === 0 && !chepEnabled) {
+        setPhase('distribute');
+        return;
       }
-      // Reset distribution flag for this new receive
-      const locResetRef = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id);
-      batch.set(locResetRef, { distributionConfirmed: false }, { merge: true });
 
-      await batch.commit();
+      enqueueOperation('goodsInReceive', {
+        venueId,
+        locationId: selectedLocation.id,
+        lines: receivingLines,
+        chepEnabled,
+        chepReceived: parseFloat(chepReceived) || 0,
+      });
 
-      // Record shortfalls and mark order as received if receiving against a PO
+      // Shortfall records and order status are independent of the batch —
+      // enqueue as individual payload entries so they survive offline restarts
       if (selectedOrder) {
         const uid = auth.currentUser?.uid ?? 'unknown';
         const shortfallLines = lines.filter(l => l.receivedQty > 0 && l.receivedQty < l.expectedQty);
         for (const l of shortfallLines) {
-          try {
-            const sfRef = doc(collection(db, 'venues', venueId, 'event', 'shortfalls'));
-            await setDoc(sfRef, {
-              orderId:       selectedOrder.id,
-              supplierId:    selectedOrder.supplierId || null,
-              supplierName:  selectedOrder.supplierName || null,
-              productId:     l.productId,
-              productName:   l.productName,
-              orderedQty:    l.expectedQty,
-              receivedQty:   l.receivedQty,
-              shortfallQty:  l.expectedQty - l.receivedQty,
-              status:        'open',
-              note:          null,
-              createdAt:     serverTimestamp(),
-            });
-          } catch {}
-        }
-        try {
-          await updateDoc(doc(db, 'venues', venueId, 'orders', selectedOrder.id), {
-            status:          'received',
-            receivedAt:      serverTimestamp(),
-            receivedBy:      uid,
-            partialDelivery: shortfallLines.length > 0,
-            updatedAt:       serverTimestamp(),
+          const sfId = doc(collection(db, 'venues', venueId, 'event', 'shortfalls')).id;
+          enqueuePayload('setDoc', `venues/${venueId}/event/shortfalls/${sfId}`, {
+            orderId:      selectedOrder.id,
+            supplierId:   selectedOrder.supplierId || null,
+            supplierName: selectedOrder.supplierName || null,
+            productId:    l.productId,
+            productName:  l.productName,
+            orderedQty:   l.expectedQty,
+            receivedQty:  l.receivedQty,
+            shortfallQty: l.expectedQty - l.receivedQty,
+            status:       'open',
+            note:         null,
+            createdAt:    serverTimestamp(),
           });
-        } catch {}
+        }
+        enqueuePayload('updateDoc', `venues/${venueId}/orders/${selectedOrder.id}`, {
+          status:          'received',
+          receivedAt:      serverTimestamp(),
+          receivedBy:      uid,
+          partialDelivery: shortfallLines.length > 0,
+          updatedAt:       serverTimestamp(),
+        });
         setSelectedOrder(null);
       }
 
+      if (isOffline) {
+        showInfo('Receive queued — will sync when back online');
+      }
       setPhase('distribute');
     } catch (e: any) {
       showError(e?.message || 'Please try again.');
@@ -263,7 +361,7 @@ export default function FestivalGoodsInScreen() {
     }
   }
 
-  async function saveDistribute(forceDistribute = false) {
+  function saveDistribute(forceDistribute = false) {
     if (!selectedLocation || !venueId) return;
     const shortfalls = getShortfalls();
     if (shortfalls.length > 0) {
@@ -271,7 +369,6 @@ export default function FestivalGoodsInScreen() {
       return;
     }
 
-    // FIX 2: Guard against double-distribution
     if (!forceDistribute && selectedLocation.distributionConfirmed) {
       confirm({
         title: 'Already distributed',
@@ -286,92 +383,37 @@ export default function FestivalGoodsInScreen() {
 
     setSaving(true);
     try {
-      // Pre-fetch existing bar back-of-house item docs to decide increment vs. initial set
-      const refsToCheck: Array<{ productId: string; barId: string; ref: any }> = [];
+      // Flatten allocations — reads moved into the operation so existence checks
+      // run against fresh Firestore state at flush time, not offline cache
+      const flatAllocations: Array<{ productId: string; productName: string; barId: string; qty: number }> = [];
       for (const l of lines) {
         for (const a of (allocations[l.productId] || [])) {
           if (a.qty <= 0) continue;
-          refsToCheck.push({
+          flatAllocations.push({
             productId: l.productId,
+            productName: l.productName,
             barId: a.barId,
-            ref: doc(db, 'venues', venueId, 'departments', a.barId, 'areas', 'back-of-house', 'items', l.productId),
+            qty: a.qty,
           });
         }
       }
-      const existingSnaps = await Promise.all(refsToCheck.map(r => getDoc(r.ref)));
-      const existingMap = new Map<string, boolean>();
-      refsToCheck.forEach((r, i) => {
-        existingMap.set(`${r.productId}:${r.barId}`, existingSnaps[i].exists());
+
+      if (flatAllocations.length === 0) {
+        showInfo('No stock allocated to any bar.');
+        return;
+      }
+
+      enqueueOperation('goodsInDistribute', {
+        venueId,
+        locationId: selectedLocation.id,
+        flatAllocations,
       });
 
-      const batch = writeBatch(db);
-      const now = serverTimestamp();
-
-      for (const l of lines) {
-        for (const a of (allocations[l.productId] || [])) {
-          if (a.qty <= 0) continue;
-          const ref = doc(db, 'venues', venueId, 'departments', a.barId, 'areas', 'back-of-house', 'items', l.productId);
-          const exists = existingMap.get(`${l.productId}:${a.barId}`);
-          if (exists) {
-            batch.update(ref, {
-              lastCount: increment(a.qty),
-              lastCountAt: now,
-              updatedAt: now,
-            });
-          } else {
-            batch.set(ref, {
-              name: l.productName,
-              unit: 'unit',
-              lastCount: a.qty,
-              openingStock: a.qty,    // baseline for velocity service
-              openingSetAt: now,
-              lastCountAt: now,
-              createdAt: now,
-              updatedAt: now,
-            });
-          }
-        }
-
-        // Deduct from HQ source location using increment
-        const totalAllocated = (allocations[l.productId] || []).reduce((s, a) => s + a.qty, 0);
-        if (totalAllocated > 0) {
-          const srcRef = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items', l.productId);
-          batch.set(srcRef, {
-            lastCount: increment(-totalAllocated),
-            updatedAt: now,
-          }, { merge: true });
-        }
+      if (isOffline) {
+        showInfo('Distribution queued — will sync when back online');
+      } else {
+        showSuccess('✓ Stock allocated to bars.');
       }
-
-      // Mark this location as distributed
-      const locRef = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id);
-      batch.set(locRef, {
-        distributionConfirmed: true,
-        distributionConfirmedAt: now,
-      }, { merge: true });
-
-      await batch.commit();
-
-      // FIX 3: Write each distributed product to festival product catalogue if not already there
-      for (const l of lines) {
-        const totalAllocated = (allocations[l.productId] || []).reduce((s, a) => s + a.qty, 0);
-        if (totalAllocated <= 0) continue;
-        try {
-          const productRef = doc(db, 'venues', venueId, 'products', l.productId);
-          const productSnap = await getDoc(productRef);
-          if (!productSnap.exists()) {
-            await setDoc(productRef, {
-              name: l.productName,
-              unit: 'unit',
-              source: 'goods-in',
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-          }
-        } catch {}
-      }
-
-      showSuccess('✓ Stock allocated to bars.');
       nav.goBack();
     } catch (e: any) {
       showError(e?.message || 'Please try again.');
@@ -401,6 +443,11 @@ export default function FestivalGoodsInScreen() {
     return (
       <ScrollView style={S.screen} contentContainerStyle={{ padding: 20, paddingBottom: 60 }}>
         {modal}
+        {isOffline && (
+          <View style={S.offlineBanner}>
+            <Text style={S.offlineBannerText}>📶 Offline — changes will sync when you reconnect</Text>
+          </View>
+        )}
         <Text style={S.heading}>Goods In — Receive</Text>
         <Text style={S.sub}>Select where stock is arriving from, then enter quantities received.</Text>
 
@@ -533,6 +580,11 @@ export default function FestivalGoodsInScreen() {
   return (
     <ScrollView style={S.screen} contentContainerStyle={{ padding: 20, paddingBottom: 60 }}>
       {modal}
+      {isOffline && (
+        <View style={S.offlineBanner}>
+          <Text style={S.offlineBannerText}>📶 Offline — changes will sync when you reconnect</Text>
+        </View>
+      )}
       <Text style={S.heading}>Goods In — Distribute</Text>
       <Text style={S.sub}>Allocate received stock to bars. Total allocated cannot exceed received.</Text>
 
@@ -638,6 +690,9 @@ function makeStyles(c: any) {
     productBlockHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
     remaining: { fontSize: 12, fontWeight: '700', color: c.deepBlue },
     remainingOver: { color: c.error },
+
+    offlineBanner: { backgroundColor: '#fef9c3', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fde68a' },
+    offlineBannerText: { fontSize: 13, color: '#92400e', fontWeight: '600' },
 
     shortfallBanner: { backgroundColor: c.negativeSoft, borderRadius: 8, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: c.error },
     shortfallText: { fontSize: 13, color: c.error, fontWeight: '600' },
