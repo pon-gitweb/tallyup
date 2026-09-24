@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -114,6 +114,8 @@ export default function SettingsScreen() {
   // Success toast
   const [toast, setToast] = React.useState<string | null>(null);
   const toastTimer = React.useRef<any>(null);
+  const scrollRef  = useRef<any>(null);
+  const inputRefs  = useRef<Record<string, any>>({});
   function showToast(msg: string) {
     setToast(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -547,6 +549,7 @@ export default function SettingsScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
       <ScrollView
+        ref={scrollRef}
         style={styles.scrollRoot}
         contentContainerStyle={[styles.wrap, { paddingBottom: 40 + (insets?.bottom ?? 0) }]}
         keyboardShouldPersistTaps="handled"
@@ -609,6 +612,8 @@ export default function SettingsScreen() {
                     fontSize: 15, color: themeColours.text,
                     backgroundColor: themeColours.background,
                   }}
+                  ref={node => { inputRefs.current['displayName'] = node; }}
+                  onFocus={() => { inputRefs.current['displayName']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
                 />
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                   <TouchableOpacity
@@ -661,6 +666,8 @@ export default function SettingsScreen() {
                     fontSize: 15, color: themeColours.text,
                     backgroundColor: themeColours.background,
                   }}
+                  ref={node => { inputRefs.current['venueName'] = node; }}
+                  onFocus={() => { inputRefs.current['venueName']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
                 />
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                   <TouchableOpacity
@@ -799,6 +806,8 @@ export default function SettingsScreen() {
                   fontSize: 15, color: themeColours.text,
                   backgroundColor: themeColours.background,
                 }}
+                ref={node => { inputRefs.current['hourlyRate'] = node; }}
+                onFocus={() => { inputRefs.current['hourlyRate']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                 <TouchableOpacity
@@ -857,6 +866,8 @@ export default function SettingsScreen() {
                   fontSize: 15, color: themeColours.text,
                   backgroundColor: themeColours.background,
                 }}
+                ref={node => { inputRefs.current['baselineMinutes'] = node; }}
+                onFocus={() => { inputRefs.current['baselineMinutes']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                 <TouchableOpacity
@@ -913,6 +924,8 @@ export default function SettingsScreen() {
                   fontSize: 15, color: themeColours.text,
                   backgroundColor: themeColours.background,
                 }}
+                ref={node => { inputRefs.current['targetDaysOfCover'] = node; }}
+                onFocus={() => { inputRefs.current['targetDaysOfCover']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                 <TouchableOpacity

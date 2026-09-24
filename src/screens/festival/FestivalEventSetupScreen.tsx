@@ -213,12 +213,9 @@ export default function FestivalEventSetupScreen() {
   const [locsReady,    setLocsReady]    = useState(false);
   const toastTimer = useRef<any>(null);
 
-  // ── Refs: scroll, layout ──────────────────────────────────────────────────
-  const scrollViewRef         = useRef<any>(null);
-  const sectionLayouts        = useRef<Record<number, number>>({});
-  const pendingScrollSection  = useRef<number | null>(null);
-  const pendingScrollBarId    = useRef<string | null>(null);
-  const pendingScrollLocId    = useRef<string | null>(null);
+  // ── Refs: scroll, inputs ──────────────────────────────────────────────────
+  const scrollViewRef = useRef<any>(null);
+  const inputRefs     = useRef<Record<string, any>>({});
 
   // ── Refs: unsaved changes ─────────────────────────────────────────────────
   const baselines             = useRef<Record<number, string>>({});
@@ -346,14 +343,12 @@ export default function FestivalEventSetupScreen() {
   // ── Scroll helpers ────────────────────────────────────────────────────────
   function openSection(n: number) {
     setExpandedSection(n);
-    if (n > 0) pendingScrollSection.current = n;
   }
 
   function handleSectionPress(n: number) {
     if (expandedSection === n) {
       setExpandedSection(0);
     } else {
-      pendingScrollSection.current = n;
       setExpandedSection(n);
     }
   }
@@ -851,7 +846,6 @@ export default function FestivalEventSetupScreen() {
     const newId = `bar_${Date.now()}`;
     setBarForms(prev => [...prev, { id: newId, name: '', location: '', fridgeService: '', fridgeDisplay: '', fridgeUnderBar: '' }]);
     setExpandedBar(newId);
-    pendingScrollBarId.current = newId;
   }
   function updateBar(id: string, field: string, value: string) {
     setBarForms(prev => prev.map(b => b.id === id ? { ...b, [field]: value } : b));
@@ -862,7 +856,6 @@ export default function FestivalEventSetupScreen() {
     const newId = `loc_${Date.now()}`;
     setLocationForms(prev => [...prev, { id: newId, name: '', type: '20ft_container', dimensionL: '5.9', dimensionW: '2.35', dimensionH: '2.4', hasAisle: true, aisleWidth: '800', barsServed: [] }]);
     setExpandedLocation(newId);
-    pendingScrollLocId.current = newId;
   }
   function updateLocation(id: string, field: string, value: any) {
     setLocationForms(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
@@ -941,17 +934,7 @@ export default function FestivalEventSetupScreen() {
         <ProgressLine done={doneCount} total={6} />
 
         {/* ── SECTION 1: Event basics ── */}
-        <View
-          style={S.section}
-          onLayout={(e) => {
-            const y = e.nativeEvent.layout.y;
-            sectionLayouts.current[1] = y;
-            if (pendingScrollSection.current === 1) {
-              pendingScrollSection.current = null;
-              scrollViewRef.current?.scrollTo({ y: y - 8, animated: true });
-            }
-          }}
-        >
+        <View style={S.section}>
           <SectionHeader
             n="1" title="Event basics"
             complete={progress.basics}
@@ -963,7 +946,9 @@ export default function FestivalEventSetupScreen() {
           {expandedSection === 1 && (<>
 
           <Text style={S.label}>Event name *</Text>
-          <TextInput value={eventName} onChangeText={setEventName} placeholder="e.g. Winery Summer Fest 2025" placeholderTextColor="#9ca3af" style={S.input} />
+          <TextInput value={eventName} onChangeText={setEventName} placeholder="e.g. Winery Summer Fest 2025" placeholderTextColor="#9ca3af" style={S.input}
+            ref={node => { inputRefs.current['eventName'] = node; }}
+            onFocus={() => { inputRefs.current['eventName']?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
 
           <Text style={S.label}>Event type</Text>
           {EVENT_TYPES.map(et => (
@@ -1045,18 +1030,24 @@ export default function FestivalEventSetupScreen() {
 
           <Text style={S.label}>Expected daily attendance</Text>
           <Text style={S.helper}>Average across all days is fine</Text>
-          <TextInput value={dailyAttend} onChangeText={setDailyAttend} placeholder="e.g. 2500" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+          <TextInput value={dailyAttend} onChangeText={setDailyAttend} placeholder="e.g. 2500" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric"
+            ref={node => { inputRefs.current['dailyAttend'] = node; }}
+            onFocus={() => { inputRefs.current['dailyAttend']?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
 
           <Text style={S.label}>Total beverage budget (optional)</Text>
           <Text style={S.helper}>We'll flag if your predicted order exceeds this figure.</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={{ fontSize: 16, color: '#374151', fontWeight: '600' }}>$</Text>
-            <TextInput value={totalBudget} onChangeText={setTotalBudget} placeholder="e.g. 50000" placeholderTextColor="#9ca3af" style={[S.input, { flex: 1 }]} keyboardType="numeric" />
+            <TextInput value={totalBudget} onChangeText={setTotalBudget} placeholder="e.g. 50000" placeholderTextColor="#9ca3af" style={[S.input, { flex: 1 }]} keyboardType="numeric"
+              ref={node => { inputRefs.current['totalBudget'] = node; }}
+              onFocus={() => { inputRefs.current['totalBudget']?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
             <Text style={{ fontSize: 13, color: '#9ca3af' }}>NZD</Text>
           </View>
 
           <Text style={S.label}>Number of bars / service points</Text>
-          <TextInput value={numBars} onChangeText={setNumBars} placeholder="e.g. 3" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+          <TextInput value={numBars} onChangeText={setNumBars} placeholder="e.g. 3" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric"
+            ref={node => { inputRefs.current['numBars'] = node; }}
+            onFocus={() => { inputRefs.current['numBars']?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
 
           <Text style={S.label}>Stock model</Text>
           {STOCK_MODELS.map(sm => (
@@ -1088,17 +1079,7 @@ export default function FestivalEventSetupScreen() {
         </View>
 
         {/* ── SECTION 2: Bar configuration ── */}
-        <View
-          style={S.section}
-          onLayout={(e) => {
-            const y = e.nativeEvent.layout.y;
-            sectionLayouts.current[2] = y;
-            if (pendingScrollSection.current === 2) {
-              pendingScrollSection.current = null;
-              scrollViewRef.current?.scrollTo({ y: y - 8, animated: true });
-            }
-          }}
-        >
+        <View style={S.section}>
           <SectionHeader
             n="2" title="Bar configuration"
             complete={progress.bars}
@@ -1113,17 +1094,7 @@ export default function FestivalEventSetupScreen() {
           ) : (
             <>
               {barForms.map((bar, i) => (
-                <View
-                  key={bar.id}
-                  style={S.subCard}
-                  onLayout={(e) => {
-                    if (pendingScrollBarId.current === bar.id) {
-                      pendingScrollBarId.current = null;
-                      const sectionY = sectionLayouts.current[2] || 0;
-                      scrollViewRef.current?.scrollTo({ y: sectionY + e.nativeEvent.layout.y - 8, animated: true });
-                    }
-                  }}
-                >
+                <View key={bar.id} style={S.subCard}>
                   <ItemRow
                     name={bar.name.trim() || `Bar ${i + 1}`}
                     summary={getBarSummary(bar)}
@@ -1134,22 +1105,32 @@ export default function FestivalEventSetupScreen() {
                   {expandedBar === bar.id && (
                     <>
                       <Text style={S.label}>Bar name</Text>
-                      <TextInput value={bar.name} onChangeText={v => updateBar(bar.id, 'name', v)} placeholder="e.g. Main Stage Bar" placeholderTextColor="#9ca3af" style={S.input} />
+                      <TextInput value={bar.name} onChangeText={v => updateBar(bar.id, 'name', v)} placeholder="e.g. Main Stage Bar" placeholderTextColor="#9ca3af" style={S.input}
+                        ref={node => { inputRefs.current[`bar_${bar.id}_name`] = node; }}
+                        onFocus={() => { inputRefs.current[`bar_${bar.id}_name`]?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
 
                       <Text style={S.label}>Location description</Text>
-                      <TextInput value={bar.location} onChangeText={v => updateBar(bar.id, 'location', v)} placeholder="e.g. North side, stage left" placeholderTextColor="#9ca3af" style={S.input} />
+                      <TextInput value={bar.location} onChangeText={v => updateBar(bar.id, 'location', v)} placeholder="e.g. North side, stage left" placeholderTextColor="#9ca3af" style={S.input}
+                        ref={node => { inputRefs.current[`bar_${bar.id}_location`] = node; }}
+                        onFocus={() => { inputRefs.current[`bar_${bar.id}_location`]?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
 
                       <Text style={S.label}>Fridge configuration</Text>
 
                       <Text style={S.subLabel}>Service fridge capacity (cases)</Text>
                       <Text style={S.helper}>How many cases fit in your working fridge behind the bar?</Text>
-                      <TextInput value={bar.fridgeService} onChangeText={v => updateBar(bar.id, 'fridgeService', v)} placeholder="e.g. 6" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+                      <TextInput value={bar.fridgeService} onChangeText={v => updateBar(bar.id, 'fridgeService', v)} placeholder="e.g. 6" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric"
+                        ref={node => { inputRefs.current[`bar_${bar.id}_fridgeService`] = node; }}
+                        onFocus={() => { inputRefs.current[`bar_${bar.id}_fridgeService`]?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
 
                       <Text style={S.subLabel}>Display fridge capacity (cases) — optional</Text>
-                      <TextInput value={bar.fridgeDisplay} onChangeText={v => updateBar(bar.id, 'fridgeDisplay', v)} placeholder="e.g. 4" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+                      <TextInput value={bar.fridgeDisplay} onChangeText={v => updateBar(bar.id, 'fridgeDisplay', v)} placeholder="e.g. 4" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric"
+                        ref={node => { inputRefs.current[`bar_${bar.id}_fridgeDisplay`] = node; }}
+                        onFocus={() => { inputRefs.current[`bar_${bar.id}_fridgeDisplay`]?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
 
                       <Text style={S.subLabel}>Under-bar capacity (cases) — optional</Text>
-                      <TextInput value={bar.fridgeUnderBar} onChangeText={v => updateBar(bar.id, 'fridgeUnderBar', v)} placeholder="e.g. 2" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+                      <TextInput value={bar.fridgeUnderBar} onChangeText={v => updateBar(bar.id, 'fridgeUnderBar', v)} placeholder="e.g. 2" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric"
+                        ref={node => { inputRefs.current[`bar_${bar.id}_fridgeUnderBar`] = node; }}
+                        onFocus={() => { inputRefs.current[`bar_${bar.id}_fridgeUnderBar`]?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
 
                       <View style={S.infoBox}>
                         <Text style={S.infoText}>Primary storage space set up after adding storage spaces in Section 3.</Text>
@@ -1170,17 +1151,7 @@ export default function FestivalEventSetupScreen() {
         </View>
 
         {/* ── SECTION 3: Storage spaces ── */}
-        <View
-          style={S.section}
-          onLayout={(e) => {
-            const y = e.nativeEvent.layout.y;
-            sectionLayouts.current[3] = y;
-            if (pendingScrollSection.current === 3) {
-              pendingScrollSection.current = null;
-              scrollViewRef.current?.scrollTo({ y: y - 8, animated: true });
-            }
-          }}
-        >
+        <View style={S.section}>
           <SectionHeader
             n="3" title="Storage spaces"
             complete={progress.sourceLocations}
@@ -1195,17 +1166,7 @@ export default function FestivalEventSetupScreen() {
           ) : (
             <>
               {locationForms.map((loc, i) => (
-                <View
-                  key={loc.id}
-                  style={S.subCard}
-                  onLayout={(e) => {
-                    if (pendingScrollLocId.current === loc.id) {
-                      pendingScrollLocId.current = null;
-                      const sectionY = sectionLayouts.current[3] || 0;
-                      scrollViewRef.current?.scrollTo({ y: sectionY + e.nativeEvent.layout.y - 8, animated: true });
-                    }
-                  }}
-                >
+                <View key={loc.id} style={S.subCard}>
                   <ItemRow
                     name={loc.name.trim() || `Location ${i + 1}`}
                     summary={getLocationSummary(loc)}
@@ -1217,7 +1178,9 @@ export default function FestivalEventSetupScreen() {
                   {expandedLocation === loc.id && (
                     <>
                       <Text style={S.label}>Location name</Text>
-                      <TextInput value={loc.name} onChangeText={v => updateLocation(loc.id, 'name', v)} placeholder="e.g. Container 1" placeholderTextColor="#9ca3af" style={S.input} />
+                      <TextInput value={loc.name} onChangeText={v => updateLocation(loc.id, 'name', v)} placeholder="e.g. Container 1" placeholderTextColor="#9ca3af" style={S.input}
+                        ref={node => { inputRefs.current[`loc_${loc.id}_name`] = node; }}
+                        onFocus={() => { inputRefs.current[`loc_${loc.id}_name`]?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
 
                       <Text style={S.label}>Location type</Text>
                       {LOCATION_TYPES.map(lt => (
@@ -1256,6 +1219,8 @@ export default function FestivalEventSetupScreen() {
                               placeholderTextColor="#9ca3af"
                               style={S.input}
                               keyboardType="decimal-pad"
+                              ref={node => { inputRefs.current[`loc_${loc.id}_${field}`] = node; }}
+                              onFocus={() => { inputRefs.current[`loc_${loc.id}_${field}`]?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
                             />
                           </View>
                         ))}
@@ -1268,7 +1233,9 @@ export default function FestivalEventSetupScreen() {
                       {loc.hasAisle && (
                         <>
                           <Text style={S.subLabel}>Aisle width (mm)</Text>
-                          <TextInput value={loc.aisleWidth} onChangeText={v => updateLocation(loc.id, 'aisleWidth', v)} placeholder="800" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+                          <TextInput value={loc.aisleWidth} onChangeText={v => updateLocation(loc.id, 'aisleWidth', v)} placeholder="800" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric"
+                            ref={node => { inputRefs.current[`loc_${loc.id}_aisleWidth`] = node; }}
+                            onFocus={() => { inputRefs.current[`loc_${loc.id}_aisleWidth`]?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
                         </>
                       )}
 
@@ -1303,17 +1270,7 @@ export default function FestivalEventSetupScreen() {
         </View>
 
         {/* ── SECTION 4: Supplier setup ── */}
-        <View
-          style={S.section}
-          onLayout={(e) => {
-            const y = e.nativeEvent.layout.y;
-            sectionLayouts.current[4] = y;
-            if (pendingScrollSection.current === 4) {
-              pendingScrollSection.current = null;
-              scrollViewRef.current?.scrollTo({ y: y - 8, animated: true });
-            }
-          }}
-        >
+        <View style={S.section}>
           <SectionHeader
             n="4" title="Supplier setup"
             complete={progress.suppliers}
@@ -1395,9 +1352,13 @@ export default function FestivalEventSetupScreen() {
                           {cfg.chepEnabled && (
                             <>
                               <Text style={S.subLabel}>Expected pallet count</Text>
-                              <TextInput value={cfg.chepPalletCount || ''} onChangeText={v => updateSup(sup.id, 'chepPalletCount', v)} placeholder="e.g. 12" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+                              <TextInput value={cfg.chepPalletCount || ''} onChangeText={v => updateSup(sup.id, 'chepPalletCount', v)} placeholder="e.g. 12" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric"
+                                ref={node => { inputRefs.current[`sup_${sup.id}_chepPalletCount`] = node; }}
+                                onFocus={() => { inputRefs.current[`sup_${sup.id}_chepPalletCount`]?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
                               <Text style={S.subLabel}>CHEP account number</Text>
-                              <TextInput value={cfg.chepAccountNumber || ''} onChangeText={v => updateSup(sup.id, 'chepAccountNumber', v)} placeholder="e.g. 1234567" placeholderTextColor="#9ca3af" style={S.input} />
+                              <TextInput value={cfg.chepAccountNumber || ''} onChangeText={v => updateSup(sup.id, 'chepAccountNumber', v)} placeholder="e.g. 1234567" placeholderTextColor="#9ca3af" style={S.input}
+                                ref={node => { inputRefs.current[`sup_${sup.id}_chepAccountNumber`] = node; }}
+                                onFocus={() => { inputRefs.current[`sup_${sup.id}_chepAccountNumber`]?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
                             </>
                           )}
 
@@ -1433,17 +1394,7 @@ export default function FestivalEventSetupScreen() {
         </View>
 
         {/* ── SECTION 5: Product planning ── */}
-        <View
-          style={S.section}
-          onLayout={(e) => {
-            const y = e.nativeEvent.layout.y;
-            sectionLayouts.current[5] = y;
-            if (pendingScrollSection.current === 5) {
-              pendingScrollSection.current = null;
-              scrollViewRef.current?.scrollTo({ y: y - 8, animated: true });
-            }
-          }}
-        >
+        <View style={S.section}>
           <SectionHeader
             n="5" title="Product planning"
             complete={progress.productPlanning}
@@ -1493,6 +1444,8 @@ export default function FestivalEventSetupScreen() {
                 placeholderTextColor="#9ca3af"
                 style={[S.input, { minHeight: 64 }]}
                 multiline
+                ref={node => { inputRefs.current['exclusivityNote'] = node; }}
+                onFocus={() => { inputRefs.current['exclusivityNote']?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 80, animated: true }), () => {}); }}
               />
             </>
           )}
@@ -1502,17 +1455,7 @@ export default function FestivalEventSetupScreen() {
         </View>
 
         {/* ── SECTION 6: Historical data ── */}
-        <View
-          style={S.section}
-          onLayout={(e) => {
-            const y = e.nativeEvent.layout.y;
-            sectionLayouts.current[6] = y;
-            if (pendingScrollSection.current === 6) {
-              pendingScrollSection.current = null;
-              scrollViewRef.current?.scrollTo({ y: y - 8, animated: true });
-            }
-          }}
-        >
+        <View style={S.section}>
           <SectionHeader
             n="6" title="Historical data"
             complete={progress.historicalData}
@@ -1539,7 +1482,9 @@ export default function FestivalEventSetupScreen() {
           {!isNewEvent && (
             <>
               <Text style={S.label}>Prior year attendance</Text>
-              <TextInput value={priorAttendance} onChangeText={setPriorAttendance} placeholder="e.g. 8000" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+              <TextInput value={priorAttendance} onChangeText={setPriorAttendance} placeholder="e.g. 8000" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric"
+                ref={node => { inputRefs.current['priorAttendance'] = node; }}
+                onFocus={() => { inputRefs.current['priorAttendance']?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }} />
 
               <Text style={S.label}>Notes — changes, weather, context</Text>
               <TextInput
@@ -1549,6 +1494,8 @@ export default function FestivalEventSetupScreen() {
                 placeholderTextColor="#9ca3af"
                 style={[S.input, { minHeight: 80 }]}
                 multiline
+                ref={node => { inputRefs.current['historyNotes'] = node; }}
+                onFocus={() => { inputRefs.current['historyNotes']?.measureLayout(scrollViewRef.current, (_x, y) => scrollViewRef.current?.scrollTo({ y: y - 80, animated: true }), () => {}); }}
               />
 
               <View style={S.infoBox}>

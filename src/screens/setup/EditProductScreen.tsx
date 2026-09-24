@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getFirestore, doc, setDoc, addDoc, collection, getDocs, serverTimestamp, updateDoc, Timestamp } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 import {
@@ -114,6 +114,9 @@ export default function EditProductScreen() {
     return doc(collection(db, 'venues', '_', 'products')).id;
   });
   const activeProductId = editingId || pendingNewProductId;
+
+  const scrollRef = useRef<any>(null);
+  const inputRefs = useRef<Record<string, any>>({});
 
   // ----- Form state (kept simple + tolerant to legacy fields)
   const [form, setForm] = useState<any>(() => ({
@@ -517,6 +520,7 @@ export default function EditProductScreen() {
       behavior={Platform.select({ ios:'padding', android: undefined })}
     >
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={[styles.wrap, { backgroundColor: colours.background }]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -583,6 +587,8 @@ export default function EditProductScreen() {
               placeholder="e.g., Absolut Vodka"
               autoCapitalize="words"
               style={styles.input}
+              ref={node => { inputRefs.current['name'] = node; }}
+              onFocus={() => { inputRefs.current['name']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
             />
           </Field>
 
@@ -594,6 +600,8 @@ export default function EditProductScreen() {
                 placeholder="External SKU (optional)"
                 autoCapitalize="none"
                 style={styles.input}
+                ref={node => { inputRefs.current['sku'] = node; }}
+                onFocus={() => { inputRefs.current['sku']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
             </Field>
 
@@ -604,6 +612,8 @@ export default function EditProductScreen() {
                 placeholder="e.g., 6"
                 keyboardType="number-pad"
                 style={styles.input}
+                ref={node => { inputRefs.current['parLevel'] = node; }}
+                onFocus={() => { inputRefs.current['parLevel']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
               {form.categorySuggested && intOrNull(form.parLevel) === defaultParForCategory(form.categorySuggested) && intOrNull(form.parLevel) != null && (
                 <Text style={{ fontSize: 11, color: colours.amber, marginTop: 3 }}>
@@ -621,6 +631,8 @@ export default function EditProductScreen() {
                 placeholder="bottle, rtd, keg, bib, can…"
                 autoCapitalize="none"
                 style={styles.input}
+                ref={node => { inputRefs.current['unit'] = node; }}
+                onFocus={() => { inputRefs.current['unit']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
             </Field>
 
@@ -631,6 +643,8 @@ export default function EditProductScreen() {
                 placeholder="e.g., 700ml"
                 autoCapitalize="none"
                 style={styles.input}
+                ref={node => { inputRefs.current['size'] = node; }}
+                onFocus={() => { inputRefs.current['size']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
             </Field>
 
@@ -641,6 +655,8 @@ export default function EditProductScreen() {
                 placeholder="e.g., 6"
                 keyboardType="number-pad"
                 style={styles.input}
+                ref={node => { inputRefs.current['packSize'] = node; }}
+                onFocus={() => { inputRefs.current['packSize']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
             </Field>
           </FieldRow>
@@ -653,6 +669,8 @@ export default function EditProductScreen() {
                 placeholder="e.g., 40"
                 keyboardType="decimal-pad"
                 style={styles.input}
+                ref={node => { inputRefs.current['abv'] = node; }}
+                onFocus={() => { inputRefs.current['abv']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
             </Field>
 
@@ -663,6 +681,8 @@ export default function EditProductScreen() {
                 placeholder="e.g., 24.95"
                 keyboardType="decimal-pad"
                 style={styles.input}
+                ref={node => { inputRefs.current['costPrice'] = node; }}
+                onFocus={() => { inputRefs.current['costPrice']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
               {form.quantityConfidence !== 'physical_count' && (
                 <Text style={[styles.hintDim, { color: colours.textSecondary, marginTop: 3 }]}>
@@ -678,6 +698,8 @@ export default function EditProductScreen() {
                 placeholder="15"
                 keyboardType="decimal-pad"
                 style={styles.input}
+                ref={node => { inputRefs.current['gstPercent'] = node; }}
+                onFocus={() => { inputRefs.current['gstPercent']?.measureLayout(scrollRef.current, (_x, y) => scrollRef.current?.scrollTo({ y: y - 120, animated: true }), () => {}); }}
               />
             </Field>
           </FieldRow>
