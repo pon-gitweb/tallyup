@@ -736,7 +736,9 @@ export default function FestivalEventSetupScreen() {
     try {
       for (let i = 0; i < locationForms.length; i++) {
         const loc = locationForms[i];
-        await setDoc(doc(db, 'venues', venueId, 'departments', 'hq', 'areas', loc.id), {
+        const locRef = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', loc.id);
+        const locSnap = await getDoc(locRef);
+        await setDoc(locRef, {
           name: loc.name.trim() || `Location ${i + 1}`,
           type: loc.type,
           dimensions: {
@@ -747,7 +749,7 @@ export default function FestivalEventSetupScreen() {
           hasAisle: loc.hasAisle,
           aisleWidth: parseFloat(loc.aisleWidth) || 800,
           servingBarIds: loc.barsServed,
-          createdAt: serverTimestamp(),
+          ...(locSnap.exists() ? {} : { createdAt: serverTimestamp() }),
           updatedAt: serverTimestamp(),
         }, { merge: true });
       }
@@ -925,7 +927,7 @@ export default function FestivalEventSetupScreen() {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: '#f5f3ee' }}
-      behavior="padding"
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={headerHeight}
     >
       <ScrollView

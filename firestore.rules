@@ -430,6 +430,13 @@ service cloud.firestore {
             && (request.resource.data.cycleResetAt is timestamp)
             && (request.resource.data.updatedAt is timestamp);
 
+          // Festival event setup: re-save storage space configuration before any
+          // counting cycle has started on this area.
+          allow update: if hasVenueRole(venueId, ['manager','owner'])
+            && areaIsFresh()
+            && request.resource.data.diff(resource.data).changedKeys()
+                 .hasOnly(['name','type','dimensions','hasAisle','aisleWidth','servingBarIds','updatedAt']);
+
           allow update: if isVenueMember(venueId)
             && !(
               resource.data.keys().hasAny(['startedAt']) &&

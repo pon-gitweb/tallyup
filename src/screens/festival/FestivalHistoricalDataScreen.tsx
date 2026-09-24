@@ -1,10 +1,11 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Alert, ScrollView, StyleSheet,
+  ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet,
   Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useHeaderHeight } from '@react-navigation/elements';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
@@ -52,8 +53,9 @@ type ImportedProduct = { productName: string; qtySold: number };
 type Mode = null | 'csv' | 'photo' | 'manual';
 
 export default function FestivalHistoricalDataScreen() {
-  const nav     = useNavigation<any>();
-  const venueId = useVenueId();
+  const nav          = useNavigation<any>();
+  const venueId      = useVenueId();
+  const headerHeight = useHeaderHeight();
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
 
@@ -290,6 +292,11 @@ export default function FestivalHistoricalDataScreen() {
   if (mode === 'csv' || mode === 'photo') {
     return (
       <>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={headerHeight}
+      >
       <ScrollView style={H.screen} contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <Text style={H.title}>{mode === 'csv' ? 'Preview CSV data' : 'Preview OCR data'}</Text>
         <Text style={H.sub}>{imported.length} products detected. Edit quantities if needed, then add the prior year details.</Text>
@@ -324,6 +331,7 @@ export default function FestivalHistoricalDataScreen() {
           <Text style={H.backTxt}>← Choose different method</Text>
         </TouchableOpacity>
       </ScrollView>
+      </KeyboardAvoidingView>
       {modal}
       </>
     );
@@ -332,6 +340,11 @@ export default function FestivalHistoricalDataScreen() {
   // ── MANUAL ENTRY ──────────────────────────────────────────────────────────
   return (
     <>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={headerHeight}
+    >
     <ScrollView style={H.screen} contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
       <Text style={H.title}>Manual entry</Text>
       <Text style={H.sub}>Enter quantities sold last year. Leave blank if unknown — blank = unknown (not zero).</Text>
@@ -375,6 +388,7 @@ export default function FestivalHistoricalDataScreen() {
         <Text style={H.backTxt}>← Back</Text>
       </TouchableOpacity>
     </ScrollView>
+    </KeyboardAvoidingView>
     {modal}
     </>
   );
