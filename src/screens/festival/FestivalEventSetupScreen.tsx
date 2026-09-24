@@ -30,7 +30,7 @@ const EVENT_TYPES = [
 
 const STOCK_MODELS = [
   { id: 'sale_or_return', label: 'Sale or return',           sub: 'Unsold stock returned to supplier' },
-  { id: 'venue_owned',    label: 'Venue owned',              sub: 'You purchase and own all stock' },
+  { id: 'venue_owned',    label: 'Event owned',              sub: 'You purchase and own all stock' },
   { id: 'consignment',    label: 'Consignment',              sub: 'Pay for what you sell after the event' },
   { id: 'mixed',          label: 'Mixed (varies by supplier)', sub: 'Different arrangements per supplier' },
 ];
@@ -482,7 +482,7 @@ export default function FestivalEventSetupScreen() {
   useEffect(() => {
     if (venueId) return;
     const timeout = setTimeout(() => {
-      showError('Connection issue — could not connect to your venue. Please close and reopen the app.');
+      showError('Connection issue — could not connect to your event. Please close and reopen the app.');
     }, 10000);
     return () => clearTimeout(timeout);
   }, [venueId]);
@@ -606,7 +606,7 @@ export default function FestivalEventSetupScreen() {
   // ── Save: Event basics ────────────────────────────────────────────────────
   async function saveBasics() {
     if (!venueId) {
-      showInfo('Not connected — your venue is still loading. Please wait a moment and try again.');
+      showInfo('Not connected — your event is still loading. Please wait a moment and try again.');
       return;
     }
     if (!eventName.trim()) { showInfo('Event name is required.'); return; }

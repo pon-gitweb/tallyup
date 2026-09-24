@@ -218,7 +218,7 @@ export default function FestivalEventCloseScreen() {
     return (
       <View style={S.center}>
         <Text style={S.csTitle}>Owner only</Text>
-        <Text style={S.csBody}>Only the venue owner can close an event.</Text>
+        <Text style={S.csBody}>Only the event owner can close an event.</Text>
       </View>
     );
   }

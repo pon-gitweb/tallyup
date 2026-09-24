@@ -87,7 +87,7 @@ export default function FestivalContractScreen() {
       <View style={C.comingSoon}>
         <Text style={C.csEmoji}>🔒</Text>
         <Text style={C.csTitle}>Owner only</Text>
-        <Text style={C.csBody}>Contracts are confidential and visible to the venue owner only.</Text>
+        <Text style={C.csBody}>Contracts are confidential and visible to the event owner only.</Text>
       </View>
     );
   }
