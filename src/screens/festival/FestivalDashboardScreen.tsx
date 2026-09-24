@@ -48,6 +48,7 @@ export default function FestivalDashboardScreen() {
   const [role, setRole] = useState<string | null>(null);
   const [productCount, setProductCount] = useState(0);
   const [hasOrders, setHasOrders] = useState(false);
+  const [onHandCount, setOnHandCount] = useState(0);
   // Only show loading spinner when beta mode is active
   const [loading, setLoading] = useState(FESTIVAL_BETA);
 
@@ -94,6 +95,9 @@ export default function FestivalDashboardScreen() {
         .catch(() => {});
       getDocs(query(collection(db, 'venues', venueId, 'orders'), limit(1)))
         .then(snap => { if (!cancelled) setHasOrders(!snap.empty); })
+        .catch(() => {});
+      getCountFromServer(collection(db, 'venues', venueId, 'onHand'))
+        .then(snap => { if (!cancelled) setOnHandCount(snap.data().count); })
         .catch(() => {});
       return () => { cancelled = true; };
     }, [venueId]),
@@ -199,6 +203,7 @@ export default function FestivalDashboardScreen() {
               setupComplete: allDone,
               hasOrders,
               productCount,
+              onHandCount,
               event,
             }}
           />
@@ -285,6 +290,10 @@ export default function FestivalDashboardScreen() {
             </View>
             <Text style={S.tilesHeading}>ORDERS & RECEIVING</Text>
             <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalOnHand')}>
+                <Text style={S.tileEmoji}>🧺</Text>
+                <Text style={S.tileLabel}>On hand</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={[S.tile, doneCount >= 4 && !hasOrders && S.tilePredictionHighlight]}
                 onPress={() => nav.navigate('FestivalPurchasingPrediction')}
@@ -295,6 +304,8 @@ export default function FestivalDashboardScreen() {
                   <Text style={S.tileSub}>{productCount} products</Text>
                 )}
               </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Orders')}>
                 <Text style={S.tileEmoji}>🛒</Text>
                 <Text style={S.tileLabel}>Orders</Text>
@@ -394,6 +405,10 @@ export default function FestivalDashboardScreen() {
             </View>
             <Text style={S.tilesHeading}>ORDERS & RECEIVING</Text>
             <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalOnHand')}>
+                <Text style={S.tileEmoji}>🧺</Text>
+                <Text style={S.tileLabel}>On hand</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={[S.tile, doneCount >= 4 && !hasOrders && S.tilePredictionHighlight]}
                 onPress={() => nav.navigate('FestivalPurchasingPrediction')}
@@ -404,6 +419,8 @@ export default function FestivalDashboardScreen() {
                   <Text style={S.tileSub}>{productCount} products</Text>
                 )}
               </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Orders')}>
                 <Text style={S.tileEmoji}>🛒</Text>
                 <Text style={S.tileLabel}>Orders</Text>

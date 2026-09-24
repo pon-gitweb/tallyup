@@ -5,7 +5,7 @@ import {
   Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, doc, getDocs, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDocs, getDoc, query, setDoc, serverTimestamp, where } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { apiBase } from '../../services/apiBase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -332,6 +332,7 @@ export default function FestivalPurchasingPredictionScreen() {
   const [refinementError,setRefinementError]= useState(null);
   const [useAiSuggestion,setUseAiSuggestion]= useState<Record<string, boolean>>({});
   const [priorYearActuals, setPriorYearActuals] = useState(null);
+  const [staleOrderBanner, setStaleOrderBanner] = useState(false);
   const snapshotTimer = useRef(null);
   // Guided setup card
   const [setupExpanded,       setSetupExpanded]       = useState(true);
@@ -638,6 +639,19 @@ export default function FestivalPurchasingPredictionScreen() {
 
       setResults(enriched);
       if (enriched.length > 0) setSetupExpanded(false);
+
+      // §5 stale-order banner: compare onHandQty in existing draft prediction orders vs current
+      getDocs(query(collection(db, 'venues', venueId, 'orders'), where('source', '==', 'festival_prediction')))
+        .then(snap => {
+          const drafts = snap.docs.filter(d => d.data().status === 'draft');
+          if (drafts.length === 0) { setStaleOrderBanner(false); return; }
+          const stale = drafts.some(orderDoc => {
+            const prods = orderDoc.data().products || [];
+            return prods.some(p => (onHandByProduct[p.productId] || 0) !== (p.onHandQty || 0));
+          });
+          setStaleOrderBanner(stale);
+        })
+        .catch(() => null);
     } catch (e) {
       console.error('[PurchasingPrediction]', e?.message);
       setLoadError('Could not load prediction data. Please check your connection and try again.');
@@ -924,6 +938,15 @@ export default function FestivalPurchasingPredictionScreen() {
     <View style={{ flex: 1, backgroundColor: c.oat }}>
       {modal}
       <ScrollView contentContainerStyle={R.scroll} keyboardShouldPersistTaps="handled">
+
+        {/* §5 stale-order banner */}
+        {staleOrderBanner && (
+          <View style={{ backgroundColor: c.amber + '22', borderLeftWidth: 3, borderLeftColor: c.amber, borderRadius: 6, padding: 12, marginBottom: 12 }}>
+            <Text style={{ color: c.navy, fontSize: 13 }}>
+              On hand has changed since your draft orders were built — review them before sending.
+            </Text>
+          </View>
+        )}
 
         {/* ── Guided setup card ── */}
         {(results.length === 0 || setupExpanded) ? (

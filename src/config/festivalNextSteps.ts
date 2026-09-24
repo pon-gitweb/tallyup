@@ -24,6 +24,7 @@ export type NextStepContext = {
   setupComplete: boolean;
   hasOrders: boolean;
   productCount: number;
+  onHandCount: number;
   event: any;               // venues/{id}/event/details
 };
 
@@ -52,6 +53,17 @@ export const FESTIVAL_NEXT_STEPS: FestivalNextStep[] = [
     route: 'FestivalEventSetup',
     roles: ['owner', 'manager'],
     isVisible: ctx => !ctx.setupComplete,
+  },
+  {
+    key: 'on-hand',
+    phase: 'Planning',
+    title: 'Add what you already have',
+    body: 'Stock and equipment on hand reduce your order and show what\'s short.',
+    cta: 'Add on hand',
+    route: 'FestivalOnHand',
+    roles: ['owner', 'manager'],
+    isVisible: ctx => ctx.setupDone >= 4,
+    isDone: ctx => ctx.onHandCount > 0,
   },
   {
     key: 'suggested-order', // PLACEHOLDER

@@ -21,7 +21,7 @@ import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp, query, where, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp, query, where, deleteDoc, limit } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { listProducts, deleteProductById } from '../../services/products';
@@ -424,6 +424,17 @@ export default function ProductsScreen() {
     (async () => {
       if (!venueId || !p.id) return;
       const db2 = getFirestore();
+      try {
+        const ohSnap = await getDocs(query(
+          collection(db2, 'venues', venueId, 'onHand'),
+          where('productId', '==', p.id),
+          limit(1)
+        ));
+        if (!ohSnap.empty) {
+          showError(`"${p.name}" is recorded as on hand for your event — remove it from On hand first.`);
+          return;
+        }
+      } catch {}
       const affectedAreas: string[] = [];
       try {
         const deptsSnap = await getDocs(collection(db2, 'venues', venueId, 'departments'));
