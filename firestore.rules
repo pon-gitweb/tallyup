@@ -1431,6 +1431,20 @@ service cloud.firestore {
         }
       }
 
+      match /onHand/{entryId} {
+        allow read: if isVenueMember(venueId);
+        allow create, update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.productId is string
+          && request.resource.data.qtyUnits is number
+          && request.resource.data.qtyUnits >= 0;
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
+      match /equipment/{itemId} {
+        allow read: if isVenueMember(venueId);
+        allow create, update, delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
       match /eventHistory/{eventId} {
         allow read: if hasVenueRole(venueId, ['owner', 'manager']);
         allow write: if hasVenueRole(venueId, ['owner', 'manager']);

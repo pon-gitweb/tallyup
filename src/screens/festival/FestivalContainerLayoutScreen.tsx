@@ -5,7 +5,7 @@ import {
   ScrollView, Alert, Share,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -142,10 +142,12 @@ export default function FestivalContainerLayoutScreen() {
   const venueId = useVenueId();
   const { containerId, containerName, containerType } = route.params || {};
 
-  const [layout,       setLayout]       = useState<ContainerLayoutResult | null>(null);
-  const [selectedZone, setSelectedZone] = useState<LayoutZone | null>(null);
-  const [loading,      setLoading]      = useState(FESTIVAL_BETA);
-  const [chasingOpen,  setChasingOpen]  = useState(false);
+  const [layout,                setLayout]                = useState<ContainerLayoutResult | null>(null);
+  const [selectedZone,          setSelectedZone]          = useState<LayoutZone | null>(null);
+  const [loading,               setLoading]               = useState(FESTIVAL_BETA);
+  const [chasingOpen,           setChasingOpen]           = useState(false);
+  const [packSizeUnknownCount,  setPackSizeUnknownCount]  = useState(0);
+  const [dimensionsEstimate,    setDimensionsEstimate]    = useState(false);
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
@@ -154,17 +156,53 @@ export default function FestivalContainerLayoutScreen() {
 
   async function buildLayout() {
     try {
-      // Load source location products assigned to this container
-      const stockSnap = await getDocs(
-        collection(db, 'venues', venueId, 'departments', 'hq', 'areas', containerId ?? 'default', 'items'),
-      );
+      const areaPath = containerId ?? 'default';
+      // Load items, container area doc (for dimensions), and products (for pack-size resolution) in parallel
+      const [stockSnap, containerSnap, prodSnap] = await Promise.all([
+        getDocs(collection(db, 'venues', venueId, 'departments', 'hq', 'areas', areaPath, 'items')),
+        getDoc(doc(db, 'venues', venueId, 'departments', 'hq', 'areas', areaPath)),
+        getDocs(collection(db, 'venues', venueId, 'products')),
+      ]);
 
+      // Build product map for pack-size fallback resolution
+      const productMap: Record<string, any> = {};
+      prodSnap.docs.forEach(d => { productMap[d.id] = d.data(); });
+
+      // Resolve container dimensions from storage space doc (metres → mm)
+      let widthMM  = 2438;  // Standard 20ft defaults
+      let lengthMM = 5900;
+      let heightMM = 2390;
+      let dimsEstimate = false;
+      if (containerSnap.exists()) {
+        const dims = (containerSnap.data() as any)?.dimensions;
+        if (dims && dims.l > 0 && dims.w > 0 && dims.h > 0) {
+          lengthMM = dims.l * 1000;
+          widthMM  = dims.w * 1000;
+          heightMM = dims.h * 1000;
+        } else {
+          dimsEstimate = true;
+        }
+      } else {
+        dimsEstimate = true;
+      }
+
+      let unknownCount = 0;
       const products: ContainerProduct[] = stockSnap.docs.map((d, i) => {
         const data = d.data() as any;
+        // Resolve units-per-case: packSize → caseSize → unitsPerCase → linked product → 1
+        let upc: number = data.packSize ?? data.caseSize ?? data.unitsPerCase ?? null;
+        if ((upc == null || upc <= 0) && data.productId) {
+          const linked = productMap[data.productId];
+          if (linked) upc = linked.packSize ?? linked.caseSize ?? null;
+        }
+        if (!upc || upc <= 0) {
+          upc = 1;
+          unknownCount++;
+        }
         return {
           id:           d.id,
           name:         data.name || d.id,
-          casesNeeded:  Math.ceil((data.plannedQty ?? data.lastCount ?? 0) / (data.unitsPerCase ?? 1)),
+          casesNeeded:  Math.ceil((data.plannedQty ?? data.lastCount ?? 0) / upc),
           caseWidthMM:  data.caseWidthMM  ?? 300,
           caseLengthMM: data.caseLengthMM ?? 400,
           caseHeightMM: data.caseHeightMM ?? 280,
@@ -174,14 +212,16 @@ export default function FestivalContainerLayoutScreen() {
       });
 
       const container = {
-        name:     containerName || 'Container',
-        widthMM:  2438,   // Standard 20ft: 2438mm interior width
-        lengthMM: 5900,   // Standard 20ft: 5900mm interior length
-        heightMM: 2390,   // Standard 20ft: 2390mm interior height
+        name: containerName || 'Container',
+        widthMM,
+        lengthMM,
+        heightMM,
       };
 
       const result = calculateContainerLayout(container, products);
       setLayout(result);
+      setPackSizeUnknownCount(unknownCount);
+      setDimensionsEstimate(dimsEstimate);
     } catch {
       setLayout(null);
     } finally {
@@ -310,6 +350,22 @@ export default function FestivalContainerLayoutScreen() {
             {layout.guidance.map((g, i) => (
               <Text key={i} style={L.guidanceText}>• {g}</Text>
             ))}
+
+            {/* Estimate warnings */}
+            {(dimensionsEstimate || packSizeUnknownCount > 0) && (
+              <View style={{ backgroundColor: '#fffbeb', borderRadius: 10, padding: 12, marginTop: 16, borderWidth: 1, borderColor: '#fde68a' }}>
+                {dimensionsEstimate && (
+                  <Text style={{ fontSize: 12, color: '#92400e', marginBottom: packSizeUnknownCount > 0 ? 4 : 0 }}>
+                    ⚠ Dimensions not set — using standard 20ft container (estimate).
+                  </Text>
+                )}
+                {packSizeUnknownCount > 0 && (
+                  <Text style={{ fontSize: 12, color: '#92400e' }}>
+                    ⚠ Pack size missing for {packSizeUnknownCount} product{packSizeUnknownCount !== 1 ? 's' : ''} — counted as single units (estimate).
+                  </Text>
+                )}
+              </View>
+            )}
 
             {/* Share */}
             <TouchableOpacity style={L.shareBtn} onPress={shareLoadingGuide}>

@@ -64,6 +64,26 @@ function formatShortDate(ddmmyyyy) {
   return `${parseInt(d, 10)} ${months[parseInt(m, 10) - 1] || ''} ${y}`;
 }
 
+// ─── On-hand deduction helper (shared by step 11 + AI path) ─────────────────
+
+function applyOnHand(gross, onHandQty, row) {
+  const net0 = Math.max(0, gross - onHandQty);
+  const obligationFloored = row.obligationAdjusted && net0 < row.predictedQty;
+  const net = obligationFloored ? row.predictedQty : net0;
+  const surplusQty = Math.max(0, onHandQty - gross);
+  const onHandNotes = [];
+  if (onHandQty > 0) {
+    if (obligationFloored) {
+      onHandNotes.push('On hand not deducted below contract minimum.');
+    } else {
+      const deducted = gross - net0;
+      if (deducted > 0) onHandNotes.push(`− ${deducted} units already on hand.`);
+    }
+  }
+  if (surplusQty > 0) onHandNotes.push(`Surplus: ${surplusQty} units more on hand than needed.`);
+  return { net, surplusQty, onHandNotes };
+}
+
 // ─── Setup option lists ───────────────────────────────────────────────────────
 
 const EVENT_TYPE_OPTIONS = [
@@ -169,6 +189,12 @@ function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange, aiAd
           <View style={R.bkRow}>
             <Text style={R.bkLabel}>+ Activation stock:</Text>
             <Text style={R.bkQty}>{result.activationQty}</Text>
+          </View>
+        )}
+        {(result.onHandQty || 0) > 0 && (
+          <View style={R.bkRow}>
+            <Text style={R.bkLabel}>− On hand:</Text>
+            <Text style={R.bkQty}>{result.onHandQty}</Text>
           </View>
         )}
         <View style={R.bkDivider} />
@@ -365,14 +391,15 @@ export default function FestivalPurchasingPredictionScreen() {
     setLoading(true);
     setLoadError(null);
     try {
-      // ── Parallelise all 5 Firestore reads (FIX 9) ──────────────────────────
-      const [evSnap, prodSnap, oblSnapMaybe, ridersSnapMaybe, actSnapMaybe] =
+      // ── Parallelise all 6 Firestore reads ────────────────────────────────────
+      const [evSnap, prodSnap, oblSnapMaybe, ridersSnapMaybe, actSnapMaybe, onHandSnapMaybe] =
         await Promise.all([
           getDoc(doc(db, 'venues', venueId, 'event', 'details')),
           getDocs(collection(db, 'venues', venueId, 'products')),
           getDocs(collection(db, 'venues', venueId, 'obligations')).catch(() => null),
           getDocs(collection(db, 'venues', venueId, 'riders')).catch(() => null),
           getDocs(collection(db, 'venues', venueId, 'activations')).catch(() => null),
+          getDocs(collection(db, 'venues', venueId, 'onHand')).catch(() => null),
         ]);
 
       // 1. Event details
@@ -492,6 +519,16 @@ export default function FestivalPurchasingPredictionScreen() {
         }
       });
 
+      // 6b. On-hand stock per product — sum qtyUnits (all statuses; in-transit is incoming)
+      const onHandByProduct: Record<string, number> = {};
+      if (onHandSnapMaybe) {
+        onHandSnapMaybe.docs.forEach(d => {
+          const oh = d.data();
+          if (!oh.productId || !isFinite(oh.qtyUnits) || oh.qtyUnits < 0) return;
+          onHandByProduct[oh.productId] = (onHandByProduct[oh.productId] || 0) + oh.qtyUnits;
+        });
+      }
+
       // 7. Filter by active categories (FIX 8)
       const setupCats = event.categories || null;
       const activePredCats = setupCats
@@ -574,19 +611,25 @@ export default function FestivalPurchasingPredictionScreen() {
         }
       });
 
-      // 11. Attach rider + activation stock on top of predicted qty (FIX 4)
+      // 11. Attach rider + activation, apply on-hand deduction, floor at obligation minimum
       const enriched = rawPredictions.map(r => {
         const riderQty      = riderStock[r.productId] || 0;
         const activationQty = activationStock[r.productId] || 0;
-        const totalQty      = r.predictedQty + riderQty + activationQty;
-        const notes         = [...r.notes];
+        const gross         = r.predictedQty + riderQty + activationQty;
+        const onHandQty     = onHandByProduct[r.productId] || 0;
+        const { net, surplusQty, onHandNotes } = applyOnHand(gross, onHandQty, r);
+        const totalQty = net;
+        const notes = [...r.notes];
         if (riderQty > 0)      notes.push(`+ ${riderQty} units for rider allocations.`);
         if (activationQty > 0) notes.push(`+ ${activationQty} units for activations.`);
+        notes.push(...onHandNotes);
         return {
           ...r,
           notes,
           riderQty,
           activationQty,
+          onHandQty,
+          surplusQty,
           totalQty,
           estimatedCost: r.unitCost != null ? r.unitCost * totalQty : null,
         };
@@ -643,6 +686,7 @@ export default function FestivalPurchasingPredictionScreen() {
           supplierId: r.supplierId, supplierName: r.supplierName,
           predictedQty: r.predictedQty, bufferedQty: r.bufferedQty,
           totalQty: r.totalQty, riderQty: r.riderQty, activationQty: r.activationQty,
+          onHandQty: r.onHandQty || 0, surplusQty: r.surplusQty || 0,
           unitCost: r.unitCost, estimatedCost: r.estimatedCost,
           confidence: r.confidence, basis: r.basis, notes: r.notes,
           minimumCommitment: r.minimumCommitment ?? null,
@@ -687,7 +731,9 @@ export default function FestivalPurchasingPredictionScreen() {
     const cat = result.category || guessCategory(result.productName);
     const catTotal = getCategoryTotal(cat, allResults);
     const base = Math.ceil(catTotal * adj.adjustedShare);
-    return base + (result.riderQty || 0) + (result.activationQty || 0);
+    const gross = base + (result.riderQty || 0) + (result.activationQty || 0);
+    const { net } = applyOnHand(gross, result.onHandQty || 0, result);
+    return net;
   }
 
   async function refineWithAI() {
@@ -735,10 +781,11 @@ export default function FestivalPurchasingPredictionScreen() {
   }
 
   function clearAiRefinement() {
-    // Reset all products to their math baseline (predictedQty + riders + activations)
+    // Reset all products to their math baseline (deducted net)
     results.forEach(r => {
-      const mathQty = r.predictedQty + (r.riderQty || 0) + (r.activationQty || 0);
-      handleQtyChange(r.productId, mathQty);
+      const gross = r.predictedQty + (r.riderQty || 0) + (r.activationQty || 0);
+      const { net } = applyOnHand(gross, r.onHandQty || 0, r);
+      handleQtyChange(r.productId, net);
     });
     setAiRefinement(null);
     setUseAiSuggestion({});
@@ -756,8 +803,9 @@ export default function FestivalPurchasingPredictionScreen() {
       const aiQty = getAiQtyForProduct(result, adj, results);
       if (aiQty != null && aiQty > 0) handleQtyChange(result.productId, aiQty);
     } else {
-      const mathQty = result.predictedQty + (result.riderQty || 0) + (result.activationQty || 0);
-      handleQtyChange(result.productId, mathQty);
+      const gross = result.predictedQty + (result.riderQty || 0) + (result.activationQty || 0);
+      const { net } = applyOnHand(gross, result.onHandQty || 0, result);
+      handleQtyChange(result.productId, net);
     }
   }
 
@@ -807,6 +855,7 @@ export default function FestivalPurchasingPredictionScreen() {
             unitCost: i.unitCost,
             riderQty: i.riderQty || 0,
             activationQty: i.activationQty || 0,
+            onHandQty: i.onHandQty || 0,
           })),
         });
       }
@@ -1135,7 +1184,7 @@ export default function FestivalPurchasingPredictionScreen() {
               {items.map(r => {
                 const adj = aiRefinement?.adjustments?.find(a => a.productName === r.productName);
                 const mathQtyDisplay = adj
-                  ? r.predictedQty + (r.riderQty || 0) + (r.activationQty || 0)
+                  ? (() => { const g = r.predictedQty + (r.riderQty || 0) + (r.activationQty || 0); return applyOnHand(g, r.onHandQty || 0, r).net; })()
                   : null;
                 const aiQtyDisplay = adj
                   ? getAiQtyForProduct(r, adj, results)
