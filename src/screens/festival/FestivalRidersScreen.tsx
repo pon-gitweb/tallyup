@@ -8,12 +8,13 @@ import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { ref, uploadString } from 'firebase/storage';
-import { collection, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, serverTimestamp, deleteDoc, getDocs, query, where } from 'firebase/firestore';
 import { db, auth, storage } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { apiBase } from '../../services/apiBase';
 import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,6 +55,19 @@ function AddRiderModal({ visible, onClose, venueId, onAdded }: any) {
   const [saving,       setSaving]       = useState(false);
   const [pendingFile,  setPendingFile]  = useState<{ name: string; uri: string } | null>(null);
   const { showError } = useToast();
+
+  useEffect(() => {
+    if (!visible) return;
+    setMode('manual');
+    setArtistName('');
+    setSetTime('');
+    setDelivTime('');
+    setDelivLoc('');
+    setDressingRoom([{ product: '', quantity: '', unit: '', notes: '' }]);
+    setStageArea([{ product: '', quantity: '', unit: '', notes: '' }]);
+    setSaving(false);
+    setPendingFile(null);
+  }, [visible]);
 
   function addRow(list: ProductReq[], setter: any) {
     setter([...list, { product: '', quantity: '', unit: '', notes: '' }]);
@@ -259,6 +273,29 @@ export default function FestivalRidersScreen() {
   const [riders,    setRiders]    = useState<any[]>([]);
   const [loading,   setLoading]   = useState(FESTIVAL_BETA);
   const [showModal, setShowModal] = useState(false);
+  const { showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
+
+  function deleteRider(rider: any) {
+    confirm({
+      title: 'Delete rider?',
+      message: `Delete the rider for "${rider.artistName || 'Unknown artist'}"? Any delivery tasks created for this rider will also be removed.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        if (!venueId) return;
+        try {
+          const reqSnap = await getDocs(query(
+            collection(db, 'venues', venueId, 'requests'),
+            where('riderId', '==', rider.id),
+          ));
+          await Promise.all(reqSnap.docs.map(d => deleteDoc(d.ref)));
+          await deleteDoc(doc(db, 'venues', venueId, 'riders', rider.id));
+        } catch (e: any) {
+          showError(e?.message || 'Could not delete rider.');
+        }
+      },
+    });
+  }
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
@@ -328,6 +365,7 @@ export default function FestivalRidersScreen() {
               key={rider.id}
               style={[R.card, rider.status === 'overdue' && R.cardOverdue]}
               onPress={() => nav.navigate('FestivalRiderDetail', { riderId: rider.id })}
+              onLongPress={() => nav.navigate('FestivalRiderDetail', { riderId: rider.id })}
             >
               <View style={R.cardTop}>
                 <Text style={R.artistName} numberOfLines={1}>
@@ -340,6 +378,9 @@ export default function FestivalRidersScreen() {
               {rider.setTime && <Text style={R.setTime}>Set: {rider.setTime}</Text>}
               {rider.deliveryTime && <Text style={R.delivTime}>Deliver by: {rider.deliveryTime}</Text>}
               {totalItems > 0 && <Text style={R.itemCount}>{totalItems} item{totalItems !== 1 ? 's' : ''}</Text>}
+              <TouchableOpacity onPress={() => deleteRider(rider)} hitSlop={8} style={R.deleteLink}>
+                <Text style={R.deleteLinkText}>Delete</Text>
+              </TouchableOpacity>
             </TouchableOpacity>
           );
         })}
@@ -352,9 +393,13 @@ export default function FestivalRidersScreen() {
                 key={rider.id}
                 style={[R.card, R.cardDelivered]}
                 onPress={() => nav.navigate('FestivalRiderDetail', { riderId: rider.id })}
+                onLongPress={() => nav.navigate('FestivalRiderDetail', { riderId: rider.id })}
               >
                 <Text style={R.artistNameDone}>{rider.artistName || 'Unknown artist'} ✓</Text>
                 {rider.setTime && <Text style={R.setTimeDone}>{rider.setTime}</Text>}
+                <TouchableOpacity onPress={() => deleteRider(rider)} hitSlop={8} style={R.deleteLink}>
+                  <Text style={R.deleteLinkText}>Delete</Text>
+                </TouchableOpacity>
               </TouchableOpacity>
             ))}
           </>
@@ -368,6 +413,7 @@ export default function FestivalRidersScreen() {
         venueId={venueId}
         onAdded={() => {}}
       />
+      {modal}
     </View>
   );
 }
@@ -403,6 +449,9 @@ const R = StyleSheet.create({
   emptyCard: { backgroundColor: '#fff', borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8' },
   emptyText: { fontSize: 15, fontWeight: '700', color: '#0B132B', marginBottom: 6 },
   emptyHint: { fontSize: 13, color: '#9ca3af', textAlign: 'center', lineHeight: 18 },
+
+  deleteLink:     { alignSelf: 'flex-start', marginTop: 6 },
+  deleteLinkText: { fontSize: 12, color: '#dc2626', fontWeight: '600' },
 });
 
 const M = StyleSheet.create({
