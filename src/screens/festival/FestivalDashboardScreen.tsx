@@ -3,9 +3,9 @@ import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { collection, doc, getDoc, getDocs, limit, onSnapshot, query } from 'firebase/firestore';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { collection, doc, getCountFromServer, getDocs, limit, onSnapshot, query } from 'firebase/firestore';
 import { writeWeeklySnapshot } from '../../services/festival/weeklySnapshot';
 import { apiBase } from '../../services/apiBase';
 import {
@@ -20,6 +20,8 @@ import { VenueSwitcher } from '../../components/common/VenueSwitcher';
 import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
+import { openIzzy } from '../../components/IzzyAssistant';
+import FestivalNextSteps from './components/FestivalNextSteps';
 
 const SECTIONS = [
   { key: 'basics',         label: 'Event basics' },
@@ -79,16 +81,23 @@ export default function FestivalDashboardScreen() {
     return () => unsub();
   }, [venueId, uid]);
 
-  // Load product count + orders existence for prediction tile
-  useEffect(() => {
-    if (!FESTIVAL_BETA || !venueId) return;
-    getDocs(collection(db, 'venues', venueId, 'products'))
-      .then(snap => setProductCount(snap.size))
-      .catch(() => {});
-    getDocs(query(collection(db, 'venues', venueId, 'orders'), limit(1)))
-      .then(snap => setHasOrders(!snap.empty))
-      .catch(() => {});
-  }, [venueId]);
+  // Product count + orders existence — drive the prediction tile and the
+  // Next Steps carousel. Refreshed on focus: this tab stays mounted, so a
+  // mount-only fetch left "Generate your suggested order" stale after the user
+  // created an order and came back. Count via aggregation (1 read, not N).
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!FESTIVAL_BETA || !venueId) return;
+      let cancelled = false;
+      getCountFromServer(collection(db, 'venues', venueId, 'products'))
+        .then(snap => { if (!cancelled) setProductCount(snap.data().count); })
+        .catch(() => {});
+      getDocs(query(collection(db, 'venues', venueId, 'orders'), limit(1)))
+        .then(snap => { if (!cancelled) setHasOrders(!snap.empty); })
+        .catch(() => {});
+      return () => { cancelled = true; };
+    }, [venueId]),
+  );
 
   // ── Coming-soon gate ────────────────────────────────────────────────────────
   if (!FESTIVAL_BETA) {
@@ -122,6 +131,7 @@ export default function FestivalDashboardScreen() {
     return (
       <View style={S.container}>
         {modal}
+        <IzzyButton c={c} style={{ position: 'absolute', top: insets.top + 14, right: 20 }} />
         <Text style={S.emoji}>🎪</Text>
         <Text style={S.title}>Welcome to Hosti Festival</Text>
         <Text style={S.body}>
@@ -149,72 +159,50 @@ export default function FestivalDashboardScreen() {
   const allDone = doneCount === SECTIONS.length;
 
   return (
-    <View style={{ flex: 1, backgroundColor: c.oat }}>
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.oat }}>
       {modal}
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 + insets.bottom }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 + insets.bottom }}>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-          <Text style={S.emoji}>🎪</Text>
-          <VenueSwitcher />
-        </View>
-        <Text style={[S.title, { textAlign: 'left', marginBottom: 4 }]}>
-          {event.eventName || 'Your event'}
-        </Text>
-        {hasMultipleProjects && (
-          <TouchableOpacity
-            onPress={() => nav.navigate('VenueList')}
-            style={{ marginTop: 4, marginBottom: 4 }}
-          >
-            <Text style={{
-              color: c.deepBlue || '#1b4f72',
-              fontSize: 12,
-              fontFamily: theme.fontBody,
-              opacity: 0.8
-            }}>
-              My Projects →
+        {/* ── Header — mirrors Hosti Dashboard: badge | switcher | Izzy ─────── */}
+        <FestivalHeader c={c} />
+
+        {/* ── Event identity ───────────────────────────────────────────────── */}
+        <View style={{ paddingTop: 14, paddingBottom: 12 }}>
+          <Text style={[S.title, { textAlign: 'left', marginBottom: 4 }]}>
+            {event.eventName || 'Your event'}
+          </Text>
+          {(event.startDate || event.endDate) && (
+            <Text style={[S.dates, { marginBottom: 0 }]}>
+              {event.startDate}
+              {event.endDate && event.endDate !== event.startDate ? ` → ${event.endDate}` : ''}
             </Text>
-          </TouchableOpacity>
-        )}
-        {(event.startDate || event.endDate) && (
-          <Text style={S.dates}>
-            {event.startDate}
-            {event.endDate && event.endDate !== event.startDate ? ` → ${event.endDate}` : ''}
-          </Text>
-        )}
-
-        <View style={S.progressCard}>
-          <Text style={S.progressHeading}>
-            Setup progress · {doneCount}/{SECTIONS.length}
-          </Text>
-          {SECTIONS.map(sec => (
-            <View key={sec.key} style={S.progressRow}>
-              <Text style={progress[sec.key] ? S.dotDone : S.dotPending}>
-                {progress[sec.key] ? '●' : '○'}
-              </Text>
-              <Text style={[S.progressLabel, progress[sec.key] && S.progressLabelDone]}>
-                {sec.label}
-              </Text>
-              {progress[sec.key] && <Text style={S.check}>✓</Text>}
-            </View>
-          ))}
+          )}
+          <View style={{ flexDirection: 'row', gap: 16, marginTop: 6 }}>
+            <TouchableOpacity onPress={() => nav.navigate('FestivalEventSetup')} hitSlop={8}>
+              <Text style={S.inlineLink}>{allDone ? 'View event setup' : 'Event setup'} →</Text>
+            </TouchableOpacity>
+            {hasMultipleProjects && (
+              <TouchableOpacity onPress={() => nav.navigate('VenueList')} hitSlop={8}>
+                <Text style={[S.inlineLink, { fontFamily: theme.fontBody }]}>My Projects →</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
-        {doneCount >= 4 && !hasOrders && (
-          <TouchableOpacity
-            style={S.generateOrderCTA}
-            onPress={() => nav.navigate('FestivalPurchasingPrediction')}
-          >
-            <Text style={S.generateOrderCTAText}>
-              ✓ Setup ready — generate your suggested order →
-            </Text>
-          </TouchableOpacity>
+        {/* ── Hero — Next Steps carousel (replaces the setup-progress card) ── */}
+        {event?.status !== 'closed' && (
+          <FestivalNextSteps
+            ctx={{
+              role,
+              setupDone: doneCount,
+              setupTotal: SECTIONS.length,
+              setupComplete: allDone,
+              hasOrders,
+              productCount,
+              event,
+            }}
+          />
         )}
-
-        <TouchableOpacity style={S.cta} onPress={() => nav.navigate('FestivalEventSetup')}>
-          <Text style={S.ctaText}>
-            {allDone ? 'View event setup' : 'Continue setup →'}
-          </Text>
-        </TouchableOpacity>
 
         {/* Week close nudge (FIX 4) */}
         {event?.cycleLength === 'weekly' && event?.status !== 'closed' && (() => {
@@ -529,7 +517,33 @@ export default function FestivalDashboardScreen() {
         )}
 
       </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function FestivalHeader({ c }: { c: any }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, paddingBottom: 8 }}>
+      <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: c.stellarAmber, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 18 }}>🎪</Text>
+      </View>
+      <VenueSwitcher />
+      <IzzyButton c={c} />
     </View>
+  );
+}
+
+function IzzyButton({ c, style }: { c: any; style?: any }) {
+  return (
+    <TouchableOpacity
+      onPress={openIzzy}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel="Ask Izzy"
+      style={[{ width: 36, height: 36, borderRadius: 18, backgroundColor: c.positiveSoft, alignItems: 'center', justifyContent: 'center' }, style]}
+    >
+      <Text style={{ color: c.stellarAmber, fontSize: 18 }}>✦</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -563,20 +577,6 @@ function makeStyles(c: any) {
     },
     ctaText: { color: c.surface, fontWeight: '700', fontSize: 16 },
 
-    progressCard: {
-      backgroundColor: c.surface, borderRadius: 14, padding: 16,
-      marginBottom: 16, borderWidth: 1, borderColor: c.border,
-    },
-    progressHeading: {
-      fontSize: 13, fontWeight: '700', color: c.navy,
-      marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5,
-    },
-    progressRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
-    dotDone: { fontSize: 14, color: c.deepBlue, marginRight: 10 },
-    dotPending: { fontSize: 14, color: c.border, marginRight: 10 },
-    progressLabel: { flex: 1, fontSize: 14, color: c.slateMid },
-    progressLabelDone: { color: c.navy, fontWeight: '600' },
-    check: { fontSize: 13, color: c.deepBlue, fontWeight: '700' },
 
     closedBanner:     { backgroundColor: c.positiveSoft, borderRadius: 10, padding: 12, marginTop: 12, marginBottom: 4 },
     closedBannerText: { fontSize: 13, fontWeight: '700', color: c.success, marginBottom: 2 },
@@ -605,9 +605,8 @@ function makeStyles(c: any) {
     settingsLink: { marginTop: 20, paddingVertical: 8, paddingHorizontal: 20 },
     settingsLinkText: { fontSize: 14, color: c.slateMid, textDecorationLine: 'underline' },
 
-    generateOrderCTA: { backgroundColor: c.primaryLight, borderRadius: 10, padding: 12, marginTop: 10, borderWidth: 1.5, borderColor: c.deepBlue },
-    generateOrderCTAText: { color: c.deepBlue, fontWeight: '700', fontSize: 14, textAlign: 'center' },
     tilePredictionHighlight: { borderColor: c.stellarAmber, borderWidth: 2 },
+    inlineLink: { fontSize: 13, fontWeight: '600', color: c.deepBlue },
     tileSub: { fontSize: 11, color: c.slateMid, marginTop: 2, textAlign: 'center' },
   });
 }
