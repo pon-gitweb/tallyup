@@ -243,6 +243,50 @@ describe('commitInvoiceChanges â nearDuplicateMatch price change', () => {
   });
 });
 
+// ── Suite: nearDuplicateMatch – changePercent uses WAC (Part A fix) ────────────────────
+
+describe('commitInvoiceChanges – nearDuplicateMatch changePercent uses wac4.costPrice', () => {
+  beforeEach(clearMocks);
+
+  it('changePercent is based on the WAC-blended price, not the raw invoice price', async () => {
+    // Product has prior stock: 10 units at $40.00.
+    // New invoice: 2 units at $44.00.
+    // WAC blend = (10*40 + 2*44) / 12 = 488/12 = 40.6667
+    // CORRECT changePercent: ((40.6667 - 40) / 40) * 100 = 1.67%
+    // WRONG changePercent (pre-fix): ((44 - 40) / 40) * 100 = 10.00%
+    mockProductData = {
+      supplierId: null, primarySupplierId: null, supplierName: null,
+      costPrice: 40, costPriceQuantityBasis: 10,
+    };
+
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:nearDuplicateMatch:whisky-wac`,
+      type: 'nearDuplicateMatch',
+      candidateProductId: 'prod-wac',
+      candidateProductName: 'Single Malt 700ml',
+      lineName: 'Single Malt',
+      existingPrice: 40,
+      newPrice: 44,
+      qty: 2,
+      caseSize: null,
+    };
+
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+
+    const priceHist = mockBatchSets.find(
+      (s) => s.path.includes('prod-wac') && s.path.includes('/priceHistory/')
+    );
+    expect(priceHist).toBeDefined();
+    expect(priceHist!.data.newPrice).toBe(40.6667);
+    expect(priceHist!.data.changePercent).toBe(1.67);
+    expect(priceHist!.data.oldPrice).toBe(40);
+
+    const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-wac'));
+    expect(productUpdate!.data.costPrice).toBe(40.6667);
+  });
+});
+
+
 // ââ Suite: nearDuplicateMatch â same-price touch ââââââââââââââââââââââââââââââ
 
 describe('commitInvoiceChanges â nearDuplicateMatch same-price touch', () => {

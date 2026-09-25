@@ -237,3 +237,96 @@ describe('Suitee price-context — historical section only when non-empty', () =
     expect(historicalBackfills).toHaveLength(2);
   });
 });
+
+// ── B2 helpers mirroring the api.ts context-string building logic ─────────────────
+
+/** Mirrors the summary line construction added for B2 truncation disclosure. */
+function buildSummaryLine(recentChangesLength: number): string {
+  const shownCount = Math.min(recentChangesLength, 8);
+  const truncNote = recentChangesLength > 8 ? `, showing most recent ${shownCount}` : '';
+  return `PRICE CHANGES (last 90 days): ${recentChangesLength} detected${truncNote}`;
+}
+
+type EntryLineArgs = {
+  productName: string;
+  oldPrice: number;
+  newPrice: number;
+  changePercent: number;
+  supplierName: string;
+  date: Date | null;
+  historyFetchLimited: boolean;
+};
+
+/** Mirrors the per-entry line construction added for B2 per-product truncation note. */
+function buildEntryLine(c: EntryLineArgs): string {
+  const sign = c.changePercent >= 0 ? '+' : '';
+  const dateStr = c.date ? c.date.toISOString().slice(0, 10) : '–';
+  const histLimitNote = c.historyFetchLimited
+    ? ' [history fetch limited to 3 entries; earlier changes may exist]'
+    : '';
+  return `  - ${c.productName}: $${c.oldPrice.toFixed(2)} → $${c.newPrice.toFixed(2)} (${sign}${c.changePercent.toFixed(1)}%) from ${c.supplierName} on ${dateStr}${histLimitNote}`;
+}
+
+// ── B2: summary line truncation disclosure ───────────────────────────────────────────
+
+describe('B2: price-changes summary line truncation disclosure', () => {
+  it('no "showing" note when all changes fit within the 8-entry limit', () => {
+    const line = buildSummaryLine(3);
+    expect(line).toBe('PRICE CHANGES (last 90 days): 3 detected');
+    expect(line).not.toContain('showing');
+  });
+
+  it('no "showing" note at exactly 8 changes', () => {
+    const line = buildSummaryLine(8);
+    expect(line).toBe('PRICE CHANGES (last 90 days): 8 detected');
+    expect(line).not.toContain('showing');
+  });
+
+  it('adds "showing most recent 8" note when detected > 8', () => {
+    const line = buildSummaryLine(12);
+    expect(line).toBe('PRICE CHANGES (last 90 days): 12 detected, showing most recent 8');
+  });
+
+  it('total count is the full detected count, not the shown count', () => {
+    const line = buildSummaryLine(15);
+    expect(line).toContain('15 detected');
+    expect(line).toContain('showing most recent 8');
+  });
+});
+
+// ── B2: per-entry history-fetch truncation disclosure ────────────────────────
+
+describe('B2: per-entry history-fetch truncation note', () => {
+  const entry: EntryLineArgs = {
+    productName: 'Sauvignon Blanc 750ml',
+    oldPrice: 25.00,
+    newPrice: 27.50,
+    changePercent: 10,
+    supplierName: 'Fresh Wines Co.',
+    date: NOW,
+    historyFetchLimited: false,
+  };
+
+  it('no truncation note when historyFetchLimited is false', () => {
+    const line = buildEntryLine({ ...entry, historyFetchLimited: false });
+    expect(line).not.toContain('limited');
+    expect(line).not.toContain('earlier changes');
+  });
+
+  it('appends truncation note when historyFetchLimited is true', () => {
+    const line = buildEntryLine({ ...entry, historyFetchLimited: true });
+    expect(line).toContain('[history fetch limited to 3 entries; earlier changes may exist]');
+  });
+
+  it('entry line format is unchanged when not truncated', () => {
+    const line = buildEntryLine({ ...entry, historyFetchLimited: false });
+    const dateStr = NOW.toISOString().slice(0, 10);
+    expect(line).toBe(`  - Sauvignon Blanc 750ml: $25.00 → $27.50 (+10.0%) from Fresh Wines Co. on ${dateStr}`);
+  });
+
+  it('entry line with truncation note has correct format', () => {
+    const line = buildEntryLine({ ...entry, historyFetchLimited: true });
+    const dateStr = NOW.toISOString().slice(0, 10);
+    expect(line).toBe(`  - Sauvignon Blanc 750ml: $25.00 → $27.50 (+10.0%) from Fresh Wines Co. on ${dateStr} [history fetch limited to 3 entries; earlier changes may exist]`);
+  });
+});

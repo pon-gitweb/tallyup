@@ -1478,7 +1478,7 @@ export async function commitInvoiceChanges(
         if (pctDiff > 0.01) {
           // Price change on confirmed near-duplicate â tag source + write priceHistory
           const changePercent = Math.round(
-            ((proposal.newPrice - proposal.existingPrice) / proposal.existingPrice) * 10000
+            ((wac4.costPrice - proposal.existingPrice) / proposal.existingPrice) * 10000
           ) / 100;
           const nearDupHistRef = productRef.collection("priceHistory").doc();
           batch.set(nearDupHistRef, {

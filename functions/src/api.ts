@@ -3588,7 +3588,8 @@ app.post("/suitee", async (req, res) => {
       db.collection(`venues/${venueId}/salesReports`).orderBy('createdAt', 'desc').limit(3).get()
         .catch(() => db.collection(`venues/${venueId}/salesReports`).limit(3).get().catch(() => null)),
       db.collection(`venues/${venueId}/slowMovers`).limit(20).get().catch(() => null),
-      db.collection(`venues/${venueId}/products`).where('priceChanged', '==', true).limit(10).get().catch(() => null),
+      db.collection(`venues/${venueId}/products`).where('priceChanged', '==', true).orderBy('costPriceUpdatedAt', 'desc').limit(10).get()
+        .catch(() => db.collection(`venues/${venueId}/products`).where('priceChanged', '==', true).limit(10).get().catch(() => null)),
       db.collection(`venues/${venueId}/invoices`).where('invoiceDateTimestamp', '>=', ninetyDaysTs).limit(200).get().catch(() => null),
       db.collection(`venues/${venueId}/budgets`).get().catch(() => null),
       db.collection(`venues/${venueId}/wastage`).where('createdAt', '>=', ninetyDaysTs).limit(50).get()
@@ -4015,7 +4016,7 @@ app.post("/suitee", async (req, res) => {
       const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
       if (priceChangedSnap && !priceChangedSnap.empty) {
         const supplierIncreases: Record<string, number> = {};
-        const recentChanges: { productName: string; oldPrice: number; newPrice: number; changePercent: number; direction: string; supplierName: string; date: Date | null }[] = [];
+        const recentChanges: { productName: string; oldPrice: number; newPrice: number; changePercent: number; direction: string; supplierName: string; date: Date | null; historyFetchLimited: boolean }[] = [];
         // Entries excluded from the 90-day section because they came from a historical
         // invoice — kept available for Suitee's context with clear date attribution.
         const historicalBackfillEntries: { productName: string; invoiceDate: string | null; recordedAt: Date | null; newPrice: number; oldPrice: number | null; scenario: string | null; supplierName: string }[] = [];
@@ -4025,7 +4026,7 @@ app.post("/suitee", async (req, res) => {
             try {
               const histSnap = await db.collection(`venues/${venueId}/products/${prodDoc.id}/priceHistory`)
                 .orderBy("date", "desc").limit(3).get();
-              return { prodDoc, histSnap };
+              return { prodDoc, histSnap, historyFetchLimited: histSnap.docs.length >= 3 };
             } catch { return null; }
           })
         );
@@ -4059,6 +4060,7 @@ app.post("/suitee", async (req, res) => {
                 oldPrice: hd.oldPrice ?? 0, newPrice: hd.newPrice ?? 0,
                 changePercent: hd.changePercent ?? 0, direction: hd.direction || "increase",
                 supplierName: hd.supplierName || "Unknown", date: hDate,
+                historyFetchLimited: r.historyFetchLimited,
               });
               if (hd.direction === "increase" && hd.supplierName) {
                 supplierIncreases[hd.supplierName] = (supplierIncreases[hd.supplierName] || 0) + 1;
@@ -4069,11 +4071,14 @@ app.post("/suitee", async (req, res) => {
 
         if (recentChanges.length > 0) {
           const topSupplier = Object.entries(supplierIncreases).sort((a, b) => b[1] - a[1])[0];
-          priceChangeLines.push(`PRICE CHANGES (last 90 days): ${recentChanges.length} detected`);
+          const shownCount = Math.min(recentChanges.length, 8);
+          const truncNote = recentChanges.length > 8 ? `, showing most recent ${shownCount}` : '';
+          priceChangeLines.push(`PRICE CHANGES (last 90 days): ${recentChanges.length} detected${truncNote}`);
           recentChanges.slice(0, 8).forEach(c => {
             const sign = c.changePercent >= 0 ? "+" : "";
             const dateStr = c.date ? c.date.toISOString().slice(0, 10) : "–";
-            priceChangeLines.push(`  - ${c.productName}: $${c.oldPrice.toFixed(2)} → $${c.newPrice.toFixed(2)} (${sign}${c.changePercent.toFixed(1)}%) from ${c.supplierName} on ${dateStr}`);
+            const histLimitNote = c.historyFetchLimited ? ' [history fetch limited to 3 entries; earlier changes may exist]' : '';
+            priceChangeLines.push(`  - ${c.productName}: $${c.oldPrice.toFixed(2)} → $${c.newPrice.toFixed(2)} (${sign}${c.changePercent.toFixed(1)}%) from ${c.supplierName} on ${dateStr}${histLimitNote}`);
           });
           if (topSupplier) priceChangeLines.push(`  Supplier with most increases: ${topSupplier[0]} (${topSupplier[1]} increases)`);
         }
