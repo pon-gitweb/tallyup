@@ -19,6 +19,7 @@
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
 import { computeGpPercent } from './priceTracking';
 import { computeRecipeGpPct } from './priceCascade';
+import { flagAnomalousChanges, SanityInput } from './priceChangeSanity';
 
 // ── Stage 0: get_gp_analysis interfaces ──────────────────────────────────────
 
@@ -54,13 +55,22 @@ export interface PriceChangeRecord {
   supplierId: string | null;
   supplierName: string | null;
   changePercent: number;
+  /** Product name from the flags doc — used as the label when flagging anomalous changes. */
+  productName?: string | null;
 }
 
 export interface SupplierTrendEntry {
   supplierId: string | null;
   supplierName: string | null;
   changeCount: number;
+  /** Clean average (anomalous events excluded) — the published figure; same as cleanAverage. */
   avgChangePercent: number;
+  /** Raw average including all events. Equals avgChangePercent when nothing is flagged. */
+  rawAverage: number;
+  /** Average excluding events where |changePercent| > ANOMALOUS_CHANGE_THRESHOLD_PCT. */
+  cleanAverage: number;
+  /** Events excluded from cleanAverage (|value| > threshold). Each carries its product label. */
+  flagged: SanityInput[];
   direction: 'up' | 'down' | 'flat';
 }
 
@@ -102,12 +112,17 @@ export const GP_ANALYSIS_TOOL = {
 export const SUPPLIER_TREND_TOOL = {
   name: 'get_supplier_price_trend',
   description:
-    'Returns the top 5 suppliers ranked by highest average price-increase percentage ' +
-    '(avgChangePercent), based on priceChangeFlags recorded for this venue. ' +
+    'Returns the top 5 suppliers ranked by highest clean average price-increase percentage ' +
+    '(avgChangePercent — anomalous events excluded), based on priceChangeFlags recorded for this venue. ' +
     'Each entry includes: supplierId, supplierName, changeCount (number of flagged events), ' +
-    'avgChangePercent (mean across all events in the window), and direction (up/down/flat). ' +
-    'Sorted by avgChangePercent descending — biggest average increase first. ' +
+    'avgChangePercent (clean average excluding |change| > 75%; same as cleanAverage), ' +
+    'rawAverage (mean including all events), cleanAverage, ' +
+    'flagged (events with |change| > 75%, each with value and label identifying the product), ' +
+    'and direction (up/down/flat based on cleanAverage). ' +
+    'Sorted by avgChangePercent descending — biggest clean average increase first. ' +
     'Returns hasData:false when no flags exist in the window. ' +
+    'When flagged is non-empty for a supplier, always report both rawAverage and cleanAverage and name the ' +
+    'flagged item(s); recommend calling get_price_change_detail for any flagged product to investigate further. ' +
     'Use this whenever the user asks which suppliers have increased prices the most. ' +
     'Always relay exactly what this tool returns — never rank or average suppliers yourself from price history or invoice data in context.',
   input_schema: {
@@ -261,7 +276,7 @@ export function aggregateSupplierTrend(
   const groups = new Map<string, {
     supplierId: string | null;
     supplierName: string | null;
-    changes: number[];
+    labelledChanges: SanityInput[];
   }>();
 
   for (const r of records) {
@@ -288,10 +303,10 @@ export function aggregateSupplierTrend(
     }
 
     if (!groups.has(groupKey)) {
-      groups.set(groupKey, { supplierId: sid, supplierName: r.supplierName ?? null, changes: [] });
+      groups.set(groupKey, { supplierId: sid, supplierName: r.supplierName ?? null, labelledChanges: [] });
     }
     const g = groups.get(groupKey)!;
-    g.changes.push(r.changePercent);
+    g.labelledChanges.push({ value: r.changePercent, label: r.productName || `event ${g.labelledChanges.length + 1}` });
     // Prefer the ID-tagged name for display — it's more authoritative.
     if (r.supplierId && r.supplierName) g.supplierName = r.supplierName;
     if (sid && !g.supplierId) g.supplierId = sid;
@@ -300,14 +315,16 @@ export function aggregateSupplierTrend(
   // Compute stats per group.
   const entries: SupplierTrendEntry[] = [];
   for (const g of groups.values()) {
-    const sum = g.changes.reduce((a, b) => a + b, 0);
-    const avg = Math.round((sum / g.changes.length) * 100) / 100;
+    const sanity = flagAnomalousChanges(g.labelledChanges);
     entries.push({
       supplierId: g.supplierId,
       supplierName: g.supplierName,
-      changeCount: g.changes.length,
-      avgChangePercent: avg,
-      direction: avg > 0 ? 'up' : avg < 0 ? 'down' : 'flat',
+      changeCount: g.labelledChanges.length,
+      avgChangePercent: sanity.cleanAverage,
+      rawAverage: sanity.rawAverage,
+      cleanAverage: sanity.cleanAverage,
+      flagged: sanity.flagged,
+      direction: sanity.cleanAverage > 0 ? 'up' : sanity.cleanAverage < 0 ? 'down' : 'flat',
     });
   }
 

@@ -11,6 +11,7 @@ import { resolveSupplier, commitSupplierResolution } from './supplierResolution'
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES, HOSTI_BUSINESS_REDIRECT } from "./izzyContext";
 import { AiCallType, checkAiLimit, trackAiCall, AI_METER_EXTENSION_LOOKUP_KEY, resolveVenuePlan, PLAN_LIMITS } from './services/aiMeter';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
+import { flagAnomalousChanges } from './priceChangeSanity';
 import { detectNewProducts } from './inventoryMatching';
 import {
   resolveGpAnalysis, runToolLoop, GP_ANALYSIS_TOOL, SuiteeRecipe,
@@ -4071,11 +4072,18 @@ app.post("/suitee", async (req, res) => {
 
         if (recentChanges.length > 0) {
           const topSupplier = Object.entries(supplierIncreases).sort((a, b) => b[1] - a[1])[0];
-          const avgChangePercent = Math.round(
-            (recentChanges.reduce((s, c) => s + c.changePercent, 0) / recentChanges.length) * 100
-          ) / 100;
-          const avgSign = avgChangePercent >= 0 ? "+" : "";
-          priceChangeLines.push(`PRICE CHANGES (last 90 days): ${recentChanges.length} detected, average change ${avgSign}${avgChangePercent.toFixed(1)}%`);
+          const sanity = flagAnomalousChanges(
+            recentChanges.map(c => ({ value: c.changePercent, label: c.productName }))
+          );
+          const rawSign   = sanity.rawAverage   >= 0 ? "+" : "";
+          const cleanSign = sanity.cleanAverage >= 0 ? "+" : "";
+          let summaryLine = `PRICE CHANGES (last 90 days): ${recentChanges.length} detected, average change ${rawSign}${sanity.rawAverage.toFixed(1)}%`;
+          if (sanity.flagged.length > 0) {
+            const flagNames = sanity.flagged.map(f => f.label).join(', ');
+            const n = sanity.flagged.length;
+            summaryLine += ` (${cleanSign}${sanity.cleanAverage.toFixed(1)}% excluding ${n} unusually large event${n > 1 ? 's' : ''}: ${flagNames})`;
+          }
+          priceChangeLines.push(summaryLine);
           if (topSupplier) priceChangeLines.push(`  Supplier with most increases: ${topSupplier[0]} (${topSupplier[1]} increases)`);
         }
 
@@ -4809,9 +4817,10 @@ ${context}`;
         const records: PriceChangeRecord[] = flagsSnap.docs.map((d: any) => {
           const data = d.data();
           return {
-            supplierId: typeof data.supplierId === 'string' ? data.supplierId : null,
+            supplierId:   typeof data.supplierId   === 'string' ? data.supplierId   : null,
             supplierName: typeof data.supplierName === 'string' ? data.supplierName : null,
             changePercent: typeof data.changePercent === 'number' ? data.changePercent : 0,
+            productName:  typeof data.productName  === 'string' ? data.productName  : null,
           };
         });
         return aggregateSupplierTrend(records, 5, days);
