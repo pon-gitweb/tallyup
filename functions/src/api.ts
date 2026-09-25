@@ -20,6 +20,7 @@ import {
   BATCH_RATIO_TOOL, aggregateBatchRatioConsistency, BatchRecipe, BatchRecipeItem,
   GP_TREND_TOOL, aggregateGpTrend, GpAlertRecord,
   MENU_ENGINEERING_TOOL, aggregateMenuEngineering, MenuEngineeringRecipe, RecipeSalesData,
+  PRICE_CHANGE_DETAIL_TOOL, buildPriceChangeDetail, PriceDetailRawRecord,
 } from './suiteeTools';
 
 const app = express();
@@ -4016,7 +4017,7 @@ app.post("/suitee", async (req, res) => {
       const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
       if (priceChangedSnap && !priceChangedSnap.empty) {
         const supplierIncreases: Record<string, number> = {};
-        const recentChanges: { productName: string; oldPrice: number; newPrice: number; changePercent: number; direction: string; supplierName: string; date: Date | null; historyFetchLimited: boolean }[] = [];
+        const recentChanges: { productName: string; oldPrice: number; newPrice: number; changePercent: number; direction: string; supplierName: string; date: Date | null }[] = [];
         // Entries excluded from the 90-day section because they came from a historical
         // invoice — kept available for Suitee's context with clear date attribution.
         const historicalBackfillEntries: { productName: string; invoiceDate: string | null; recordedAt: Date | null; newPrice: number; oldPrice: number | null; scenario: string | null; supplierName: string }[] = [];
@@ -4026,7 +4027,7 @@ app.post("/suitee", async (req, res) => {
             try {
               const histSnap = await db.collection(`venues/${venueId}/products/${prodDoc.id}/priceHistory`)
                 .orderBy("date", "desc").limit(3).get();
-              return { prodDoc, histSnap, historyFetchLimited: histSnap.docs.length >= 3 };
+              return { prodDoc, histSnap };
             } catch { return null; }
           })
         );
@@ -4060,7 +4061,6 @@ app.post("/suitee", async (req, res) => {
                 oldPrice: hd.oldPrice ?? 0, newPrice: hd.newPrice ?? 0,
                 changePercent: hd.changePercent ?? 0, direction: hd.direction || "increase",
                 supplierName: hd.supplierName || "Unknown", date: hDate,
-                historyFetchLimited: r.historyFetchLimited,
               });
               if (hd.direction === "increase" && hd.supplierName) {
                 supplierIncreases[hd.supplierName] = (supplierIncreases[hd.supplierName] || 0) + 1;
@@ -4071,15 +4071,11 @@ app.post("/suitee", async (req, res) => {
 
         if (recentChanges.length > 0) {
           const topSupplier = Object.entries(supplierIncreases).sort((a, b) => b[1] - a[1])[0];
-          const shownCount = Math.min(recentChanges.length, 8);
-          const truncNote = recentChanges.length > 8 ? `, showing most recent ${shownCount}` : '';
-          priceChangeLines.push(`PRICE CHANGES (last 90 days): ${recentChanges.length} detected${truncNote}`);
-          recentChanges.slice(0, 8).forEach(c => {
-            const sign = c.changePercent >= 0 ? "+" : "";
-            const dateStr = c.date ? c.date.toISOString().slice(0, 10) : "–";
-            const histLimitNote = c.historyFetchLimited ? ' [history fetch limited to 3 entries; earlier changes may exist]' : '';
-            priceChangeLines.push(`  - ${c.productName}: $${c.oldPrice.toFixed(2)} → $${c.newPrice.toFixed(2)} (${sign}${c.changePercent.toFixed(1)}%) from ${c.supplierName} on ${dateStr}${histLimitNote}`);
-          });
+          const avgChangePercent = Math.round(
+            (recentChanges.reduce((s, c) => s + c.changePercent, 0) / recentChanges.length) * 100
+          ) / 100;
+          const avgSign = avgChangePercent >= 0 ? "+" : "";
+          priceChangeLines.push(`PRICE CHANGES (last 90 days): ${recentChanges.length} detected, average change ${avgSign}${avgChangePercent.toFixed(1)}%`);
           if (topSupplier) priceChangeLines.push(`  Supplier with most increases: ${topSupplier[0]} (${topSupplier[1]} increases)`);
         }
 
@@ -4639,6 +4635,12 @@ app.post("/suitee", async (req, res) => {
     const systemPrompt = `You are Suitee, the venue intelligence assistant for Hosti.
 You have been given real data from this venue's stocktake and ordering history. Answer the operator's question using only this data — never invent numbers or make assumptions beyond what the data shows.
 
+## Per-product and per-supplier price detail
+
+When the user asks about a specific product's or specific supplier's price history or changes — including any expectation of dollar figures, dates, or per-event percentages — call get_price_change_detail before answering. These specifics must never be answered from the general venue context, from memory of an earlier tool call in this conversation, or by inference from an aggregate number. If the tool returns hasData:false, say plainly that no price-change data was found for that specific product/supplier/window and stop — do not fall back to a related but different number (such as a supplier-wide average) presented as if it answered the specific question asked.
+
+Never state that a level of detail "isn't available" or "isn't surfaced" unless a tool was actually called and genuinely returned nothing for that specific request. If a tool hasn't been called, call it before making any claim about what data does or doesn't exist — don't guess about your own data access.
+
 You answer questions like:
 - What was my GP last month?
 - Which product has the worst variance?
@@ -4776,7 +4778,7 @@ ${context}`;
           temperature: 0.3,
           system: systemPrompt,
           messages: msgs,
-          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL, BATCH_RATIO_TOOL, GP_TREND_TOOL, MENU_ENGINEERING_TOOL],
+          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL, BATCH_RATIO_TOOL, GP_TREND_TOOL, MENU_ENGINEERING_TOOL, PRICE_CHANGE_DETAIL_TOOL],
         }),
       });
       if (!resp.ok) {
@@ -4964,6 +4966,69 @@ ${context}`;
         });
 
         return aggregateMenuEngineering(recipesForMenuEng, salesByRecipeId, topN);
+      }
+      if (toolName === 'get_price_change_detail') {
+        const productKeyword = typeof input?.productKeyword === 'string' ? input.productKeyword.trim() : '';
+        const supplierKeyword = typeof input?.supplierKeyword === 'string' ? input.supplierKeyword.trim() : '';
+        const days = (typeof input?.days === 'number' && input.days > 0) ? Math.round(input.days) : 90;
+
+        if (!productKeyword && !supplierKeyword) {
+          return { hasData: false, windowDays: days, products: [] };
+        }
+
+        const windowStart = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+        // Determine candidate product docs.
+        let candidateDocs: any[];
+        if (productKeyword) {
+          const kwTokens = tokenizeForMatching(productKeyword);
+          candidateDocs = (productsSnap?.docs ?? []).filter((doc: any) => {
+            const name: string = doc.data().name || '';
+            const score = overlapCoefficient(productKeyword, name);
+            return isReliableMatch(kwTokens, tokenizeForMatching(name), score);
+          });
+        } else {
+          // Supplier-only query: start from all priceChanged products (fresh, uncapped).
+          const snap = await db.collection(`venues/${venueId}/products`)
+            .where('priceChanged', '==', true).get().catch(() => null);
+          candidateDocs = snap?.docs ?? [];
+        }
+
+        // Fetch full priceHistory for each candidate (no limit(3) cap).
+        const skwTokens = supplierKeyword ? tokenizeForMatching(supplierKeyword) : null;
+        const rawRecords: PriceDetailRawRecord[] = [];
+
+        await Promise.all(candidateDocs.map(async (doc: any) => {
+          try {
+            const histSnap = await db
+              .collection(`venues/${venueId}/products/${doc.id}/priceHistory`)
+              .orderBy('date', 'asc')
+              .get();
+            for (const h of histSnap.docs) {
+              const hd = h.data() as any;
+              if (hd.isHistoricalBackfill === true) continue;
+              const hDate: Date | null = hd.date?.toDate ? hd.date.toDate() : null;
+              if (!hDate || hDate < windowStart) continue;
+              if (skwTokens && supplierKeyword) {
+                const sName: string = hd.supplierName || '';
+                const score = overlapCoefficient(supplierKeyword, sName);
+                if (!isReliableMatch(skwTokens, tokenizeForMatching(sName), score)) continue;
+              }
+              rawRecords.push({
+                productId:     doc.id,
+                productName:   doc.data().name || doc.id,
+                oldPrice:      typeof hd.oldPrice      === 'number' ? hd.oldPrice      : 0,
+                newPrice:      typeof hd.newPrice      === 'number' ? hd.newPrice      : 0,
+                changePercent: typeof hd.changePercent === 'number' ? hd.changePercent : 0,
+                direction:     typeof hd.direction     === 'string' ? hd.direction     : 'increase',
+                supplierName:  typeof hd.supplierName  === 'string' ? hd.supplierName  : 'Unknown',
+                dateMs:        hDate.getTime(),
+              });
+            }
+          } catch { /* non-fatal — skip this product */ }
+        }));
+
+        return buildPriceChangeDetail(rawRecords, days);
       }
       return { error: `Unknown tool: ${toolName}` };
     };

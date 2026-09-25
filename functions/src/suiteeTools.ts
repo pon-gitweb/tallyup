@@ -108,7 +108,8 @@ export const SUPPLIER_TREND_TOOL = {
     'avgChangePercent (mean across all events in the window), and direction (up/down/flat). ' +
     'Sorted by avgChangePercent descending — biggest average increase first. ' +
     'Returns hasData:false when no flags exist in the window. ' +
-    'Use this whenever the user asks which suppliers have increased prices the most.',
+    'Use this whenever the user asks which suppliers have increased prices the most. ' +
+    'Always relay exactly what this tool returns — never rank or average suppliers yourself from price history or invoice data in context.',
   input_schema: {
     type: 'object',
     properties: {
@@ -347,7 +348,8 @@ export const WORST_GP_RECIPES_TOOL = {
     'Only recipes with both rrp and cogs recorded are ranked — those missing ' +
     'either field are excluded and counted in excludedCount, not scored as 0%. ' +
     'Returns hasData:false when no recipes are rankable. ' +
-    'Use this when the user asks which recipes have the worst or lowest margins.',
+    'Use this when the user asks which recipes have the worst or lowest margins. ' +
+    'Always relay exactly what this tool returns — never compute or estimate recipe GP% yourself from raw rrp or cogs figures in context.',
   input_schema: {
     type: 'object',
     properties: {
@@ -448,7 +450,8 @@ export const SUPPLIER_COMPLIANCE_TOOL = {
     '(from a non-preferred supplier), and estimatedExtraCost — the dollar difference vs the ' +
     'preferred supplier\'s most-recent price in the same window, null when no preferred-price ' +
     'baseline exists for comparison. Products with 100% preferred-supplier compliance excluded. ' +
-    'Returns hasData:false when no non-preferred purchases exist in the window.',
+    'Returns hasData:false when no non-preferred purchases exist in the window. ' +
+    'Always relay exactly what this tool returns — never estimate compliance costs or non-preferred purchase rates yourself from invoice context.',
   input_schema: {
     type: 'object',
     properties: {
@@ -595,7 +598,8 @@ export const GP_TREND_TOOL = {
     'materiality threshold — a recipe that drifted gradually below that threshold ' +
     'over many small moves may show zero alerts even though its GP did decline, and ' +
     'this tool has no way to see that. Always note this limitation when presenting ' +
-    'results, especially a "no alerts" answer.',
+    'results, especially a "no alerts" answer. ' +
+    'Always relay exactly what this tool returns — never estimate a recipe\'s GP trend yourself from ingredient price changes visible in context.',
   input_schema: {
     type: 'object',
     properties: {
@@ -773,7 +777,8 @@ export const BATCH_RATIO_TOOL = {
     'diagnosis. It cannot distinguish "recipe not followed" from "ingredient used ' +
     'elsewhere" or "one item wasted independently of the batch." Always present ' +
     'findings as something worth looking into, never as a confirmed conclusion. ' +
-    'Returns hasData:false when no stocktake velocity data is available.',
+    'Returns hasData:false when no stocktake velocity data is available. ' +
+    'Always relay exactly what this tool returns — never estimate batch consistency yourself from velocity or stocktake numbers in context.',
   input_schema: {
     type: 'object',
     properties: {},
@@ -939,7 +944,8 @@ export const MENU_ENGINEERING_TOOL = {
     'sufficient tagged history are excluded and counted, not guessed at or scored ' +
     'as zero. Thresholds are relative to this venue\'s own eligible recipe pool — ' +
     'not absolute — so the quadrant boundary moves with the venue\'s own typical ' +
-    'margins and volumes. Returns hasData:false when too few recipes qualify.',
+    'margins and volumes. Returns hasData:false when too few recipes qualify. ' +
+    'Always relay exactly what this tool returns — never classify recipes into quadrants yourself from margin or sales-volume data in context.',
   input_schema: {
     type: 'object',
     properties: {
@@ -1083,6 +1089,156 @@ export function aggregateMenuEngineering(
     medianGpPercent: medGp,
     medianQtySold:   medVol,
   };
+}
+
+// ── Stage 8: get_price_change_detail ─────────────────────────────────────────
+
+/** One raw priceHistory event, pre-fetched and pre-filtered by the resolver. */
+export interface PriceDetailRawRecord {
+  productId: string;
+  productName: string;
+  oldPrice: number;
+  newPrice: number;
+  changePercent: number;
+  direction: string;
+  supplierName: string;
+  dateMs: number;
+}
+
+export interface PriceChangeDetailEvent {
+  oldPrice: number;
+  newPrice: number;
+  changePercent: number;
+  direction: string;
+  supplierName: string;
+  date: string; // YYYY-MM-DD
+}
+
+export interface PriceChangeDetailProduct {
+  productId: string;
+  productName: string;
+  /** Individual events in chronological order (oldest first). */
+  events: PriceChangeDetailEvent[];
+  /**
+   * Single correct change across the window: earliest oldPrice → latest newPrice,
+   * computed as a direct (latest - earliest) / earliest calculation.
+   * Never a sum of individual step percentages.
+   * null when fewer than 2 events exist for this product in the window.
+   */
+  windowChange: {
+    oldPrice: number;
+    newPrice: number;
+    changePercent: number;
+    direction: string;
+  } | null;
+}
+
+export interface PriceChangeDetailResult {
+  hasData: boolean;
+  windowDays: number;
+  products: PriceChangeDetailProduct[];
+}
+
+/**
+ * Stage 8 tool — retrieve real, per-event price-change history for a specific
+ * product or supplier.
+ */
+export const PRICE_CHANGE_DETAIL_TOOL = {
+  name: 'get_price_change_detail',
+  description:
+    'Returns real, per-product price-change events — before price, after price, percent ' +
+    'change, date, direction — for the matched product(s) and/or supplier, within the ' +
+    'requested window (defaults to 90 days). At least one of productKeyword or ' +
+    'supplierKeyword is required. ' +
+    'When a single product had more than one price-change event in the window, the tool ' +
+    'returns both (a) one single, correct change from the earliest to the latest known ' +
+    'price in that window (windowChange — a direct endpoint-to-endpoint calculation, never ' +
+    'a sum of intermediate percent steps), and (b) the individual events in between, clearly ' +
+    'labeled as intermediate steps. ' +
+    'Returns hasData:false with no fabricated substitute when nothing matches. ' +
+    'Always relay exactly what this tool returns — never compute, estimate, or summarise ' +
+    'price history yourself from memory of other calls or from aggregate context numbers.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      productKeyword: {
+        type: 'string',
+        description: 'Product name or keyword (fuzzy-matched against the product catalogue).',
+      },
+      supplierKeyword: {
+        type: 'string',
+        description: 'Supplier name or keyword (fuzzy-matched against supplierName on each history entry).',
+      },
+      days: {
+        type: 'number',
+        description: 'Look-back window in days. Defaults to 90 if omitted.',
+      },
+    },
+    required: [],
+  },
+} as const;
+
+/**
+ * Pure function: groups pre-fetched, pre-filtered priceHistory records by product,
+ * sorts events chronologically, and computes the endpoint-to-endpoint windowChange.
+ *
+ * The resolver in api.ts handles Firestore fetching, days-window filtering, and
+ * keyword matching; this function receives only the matching records.
+ *
+ * windowChange is computed as (latest.newPrice − earliest.oldPrice) / earliest.oldPrice —
+ * never as a sum or average of the individual step changePercents.
+ */
+export function buildPriceChangeDetail(
+  records: PriceDetailRawRecord[],
+  windowDays: number,
+): PriceChangeDetailResult {
+  if (records.length === 0) {
+    return { hasData: false, windowDays, products: [] };
+  }
+
+  const byProduct = new Map<string, { productName: string; recs: PriceDetailRawRecord[] }>();
+  for (const r of records) {
+    if (!byProduct.has(r.productId)) {
+      byProduct.set(r.productId, { productName: r.productName, recs: [] });
+    }
+    byProduct.get(r.productId)!.recs.push(r);
+  }
+
+  const products: PriceChangeDetailProduct[] = [];
+
+  for (const [productId, { productName, recs }] of byProduct.entries()) {
+    recs.sort((a, b) => a.dateMs - b.dateMs); // chronological: oldest first
+
+    const events: PriceChangeDetailEvent[] = recs.map(r => ({
+      oldPrice:      r.oldPrice,
+      newPrice:      r.newPrice,
+      changePercent: r.changePercent,
+      direction:     r.direction,
+      supplierName:  r.supplierName,
+      date:          new Date(r.dateMs).toISOString().slice(0, 10),
+    }));
+
+    let windowChange: PriceChangeDetailProduct['windowChange'] = null;
+    if (recs.length >= 1) {
+      const oldest = recs[0];
+      const newest = recs[recs.length - 1];
+      const oldPrice = oldest.oldPrice;
+      const newPrice = newest.newPrice;
+      const changePercent = oldPrice > 0
+        ? Math.round(((newPrice - oldPrice) / oldPrice) * 10000) / 100
+        : 0;
+      windowChange = {
+        oldPrice,
+        newPrice,
+        changePercent,
+        direction: newPrice > oldPrice ? 'increase' : newPrice < oldPrice ? 'decrease' : 'unchanged',
+      };
+    }
+
+    products.push({ productId, productName, events, windowChange });
+  }
+
+  return { hasData: true, windowDays, products };
 }
 
 // ── runToolLoop ───────────────────────────────────────────────────────────────

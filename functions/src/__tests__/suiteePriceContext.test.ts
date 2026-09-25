@@ -330,3 +330,76 @@ describe('B2: per-entry history-fetch truncation note', () => {
     expect(line).toBe(`  - Sauvignon Blanc 750ml: $25.00 → $27.50 (+10.0%) from Fresh Wines Co. on ${dateStr} [history fetch limited to 3 entries; earlier changes may exist]`);
   });
 });
+
+// ── C2: aggregate-only price context (no per-product lines) ─────────────────
+
+/** Mirrors the api.ts C2 aggregate summary line. */
+function buildAggregateSummaryLine(
+  detectedCount: number,
+  changePercents: number[],
+): string {
+  const avg = changePercents.length > 0
+    ? Math.round((changePercents.reduce((s, c) => s + c, 0) / changePercents.length) * 100) / 100
+    : 0;
+  const sign = avg >= 0 ? '+' : '';
+  return `PRICE CHANGES (last 90 days): ${detectedCount} detected, average change ${sign}${avg.toFixed(1)}%`;
+}
+
+describe('C2: general Suitee context contains aggregate summary only', () => {
+  it('aggregate summary line matches expected format', () => {
+    const line = buildAggregateSummaryLine(5, [10, 5, -3, 8, 2]);
+    // avg = (10+5-3+8+2)/5 = 22/5 = 4.4
+    expect(line).toBe('PRICE CHANGES (last 90 days): 5 detected, average change +4.4%');
+  });
+
+  it('aggregate line contains no per-product price arrows ($X → $Y)', () => {
+    const line = buildAggregateSummaryLine(3, [15, 8, 12]);
+    expect(line).not.toMatch(/\$[\d.]+\s*[→→]/);
+  });
+
+  it('aggregate line contains no product names (by construction — no product enumeration)', () => {
+    const line = buildAggregateSummaryLine(3, [15, 8, 12]);
+    // The aggregate line only contains the count and the average — no room for product names.
+    expect(line).toMatch(/^PRICE CHANGES \(last 90 days\): \d+ detected, average change [+-]?[\d.]+%$/);
+  });
+
+  it('negative average change is displayed with minus sign', () => {
+    const line = buildAggregateSummaryLine(2, [-5, -3]);
+    expect(line).toContain('average change -4.0%');
+    expect(line).not.toContain('+');
+  });
+});
+
+// ── D1: all seven tools contain the anti-fabrication instruction ──────────────
+
+import {
+  GP_ANALYSIS_TOOL,
+  SUPPLIER_TREND_TOOL,
+  WORST_GP_RECIPES_TOOL,
+  SUPPLIER_COMPLIANCE_TOOL,
+  BATCH_RATIO_TOOL,
+  GP_TREND_TOOL,
+  MENU_ENGINEERING_TOOL,
+  PRICE_CHANGE_DETAIL_TOOL,
+} from '../suiteeTools';
+
+describe('D1: every tool description contains the anti-fabrication instruction', () => {
+  const ANTI_FABRICATION_PHRASE = 'Always relay exactly what this tool returns';
+
+  const tools = [
+    GP_ANALYSIS_TOOL,
+    SUPPLIER_TREND_TOOL,
+    WORST_GP_RECIPES_TOOL,
+    SUPPLIER_COMPLIANCE_TOOL,
+    BATCH_RATIO_TOOL,
+    GP_TREND_TOOL,
+    MENU_ENGINEERING_TOOL,
+    PRICE_CHANGE_DETAIL_TOOL,
+  ];
+
+  for (const tool of tools) {
+    it(`${tool.name} contains the anti-fabrication phrase`, () => {
+      expect(tool.description).toContain(ANTI_FABRICATION_PHRASE);
+    });
+  }
+});
