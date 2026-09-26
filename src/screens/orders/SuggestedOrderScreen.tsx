@@ -11,7 +11,8 @@ import {
   writeBatch, doc, query, where, serverTimestamp, updateDoc
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { useVenueId } from '../../context/VenueProvider';
+import { useVenueId, useSubscription } from '../../context/VenueProvider';
+import { MODULES } from '../../services/billing/modules';
 import IdentityBadge from '../../components/IdentityBadge';
 import { OrdersService } from '../../domain/orders';
 import { showToast } from './_toast';
@@ -67,6 +68,7 @@ export function __showSuggestToast(msg:string){
 export default function SuggestedOrderScreen(){
   const nav=useNavigation<any>();
   const venueId=useVenueId();
+  const { hasModule }=useSubscription();
   const db=getFirestore();
   const uid=getAuth()?.currentUser?.uid||'dev';
   const { showSuccess, showError } = useToast();
@@ -288,7 +290,7 @@ export default function SuggestedOrderScreen(){
       try{
         await loadSuppliers();
         await loadDepartments();
-        setEntitled(true); // BETA: bypass entitlement check
+        setEntitled(hasModule(MODULES.SUPPLIER_OPTIMISATION));
         await doRefreshRaw();
       } finally { setRefreshing(false); }
     })();

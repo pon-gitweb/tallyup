@@ -11,6 +11,25 @@ import { DEV_VENUE_ID, IS_DEV_PIN_ENABLED, isDevEmail } from '../config/dev';
 import { BillingState, defaultBillingState } from '../services/billing/entitlements';
 import { MODULES } from '../services/billing/modules';
 
+// ── Founder access ───────────────────────────────────────────────────────────
+// Live check against ownerUid — ownership transfer removes access automatically.
+// Two UIDs pending (izzy@hosti.co.nz, shayle@hosti.co.nz) — add once accounts exist.
+const FOUNDER_UIDS = new Set([
+  'ChpWVbutHwSCRQKr3THR79EIw1X2', // Poni (account 1)
+  'nIIcWSEbb2QjkKlwrALBUFXIXtu2', // Poni (account 2)
+  'DyydVaTSaPN5MWrLyHczVeZbzDv2', // Izzy (account 1)
+  // TODO: add izzy@hosti.co.nz UID once that account is created
+  'XdxYqrCUeQYvfHkJkptjOoXDEwl2', // Chris (account 1)
+  'OIvPVgL6FpN960FMqTybe7aMRZG3', // Chris (account 2)
+  'WXQtR9QUsCShHtmKzopGEwiQYLV2', // Shayle (account 1)
+  // TODO: add shayle@hosti.co.nz UID once that account is created
+]);
+
+const MATCHBOX_VENUE_ID = 'O9pChydjz75nwpWA81KO';
+
+// 365 days in milliseconds — used for post-grace expiry checks
+const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+
 export type SubscriptionData = {
   status: string;
   plan: string | null;
@@ -46,6 +65,7 @@ type VenueCtx = {
   plan: string | null;
   hasModule: (moduleId: string) => boolean;
   billingState: BillingState;
+  discountPercent: number; // 0 = no discount; 50 = 50% off Core (Matchbox/pilot period)
 };
 
 const Ctx = createContext<VenueCtx>({
@@ -54,7 +74,7 @@ const Ctx = createContext<VenueCtx>({
   switchVenue: async () => {},
   refresh: () => {}, attachVenueIfMissing: async () => {},
   subscription: null, subscriptionOverride: null, isPilot: true, isActive: false, plan: null, hasModule: () => false,
-  billingState: defaultBillingState,
+  billingState: defaultBillingState, discountPercent: 0,
 });
 
 export function VenueProvider({ children }: { children: React.ReactNode }) {
@@ -66,6 +86,9 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
   const [subscriptionOverride, setSubscriptionOverride] = useState<SubscriptionOverride | null>(null);
   const [legacyFreeAccess, setLegacyFreeAccess] = useState(false);
+  const [ownerUid, setOwnerUid] = useState<string | null>(null);
+  const [venueCreatedAt, setVenueCreatedAt] = useState<Date | null>(null);
+  const [pilotTriggerDate, setPilotTriggerDate] = useState<Date | null>(null);
   const [venueType, setVenueType] = useState<string | null>(null);
   const [venueCountry, setVenueCountry] = useState<string>('NZ');
 
@@ -227,7 +250,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
-    if (!venueId) { setSubscription(null); setSubscriptionOverride(null); setLegacyFreeAccess(false); setVenueType(null); setVenueCountry('NZ'); lastVenueTypeRef.current = null; return; }
+    if (!venueId) { setSubscription(null); setSubscriptionOverride(null); setLegacyFreeAccess(false); setOwnerUid(null); setVenueCreatedAt(null); setVenueType(null); setVenueCountry('NZ'); lastVenueTypeRef.current = null; return; }
     unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
       if (!snap.exists()) {
         // Venue doc not yet written — keep loading, don't flip to null/festival
@@ -274,6 +297,9 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       // protected by omission from the venue update hasOnlyFields allowlist in firestore.rules).
       // Grants permanent full access regardless of Stripe state — for grandfathered pilot venues.
       setLegacyFreeAccess(data?.legacyFreeAccess === true);
+      setOwnerUid((data?.ownerUid as string) || null);
+      const rawCreatedAt = data?.createdAt;
+      setVenueCreatedAt(rawCreatedAt?.toDate ? rawCreatedAt.toDate() : null);
     }, (err) => {
       if (__DEV__) console.log('[TallyUp VenueProvider] venue snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
       // Only clear state on permanent errors — not transient network issues
@@ -293,6 +319,24 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
     };
   }, [venueId]);
+
+  // Read pilotTriggerDate from config/billing — reactive, no rebuild needed when date changes.
+  // This is a global config doc, not per-venue, so it mounts once with no dependency.
+  useEffect(() => {
+    const unsubConfig = onSnapshot(
+      doc(db, 'config', 'billing'),
+      (snap) => {
+        if (snap.exists()) {
+          const ts = snap.data()?.pilotTriggerDate;
+          setPilotTriggerDate(ts?.toDate ? ts.toDate() : null);
+        } else {
+          setPilotTriggerDate(null);
+        }
+      },
+      () => setPilotTriggerDate(null),
+    );
+    return unsubConfig;
+  }, []);
 
   // Pre-cache global_products for venue's known barcodes
   // This warms Firestore's offline cache so barcodes resolve without network
@@ -359,28 +403,39 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   }, [venueId]);
 
   // ── Entitlement computation ──────────────────────────────────────────────
-  // subscriptionOverride (written only via Firebase Console / Admin SDK — never
-  // client-writable) takes absolute precedence over Stripe-driven state.
-  // If absent, falls through to the existing pilot/Stripe logic unchanged.
+  // Priority order (highest first):
+  //   1. subscriptionOverride  — Console/Admin SDK only; never client-writable
+  //   2. legacyFreeAccess      — Console-only flag; permanent full access for grandfathered venues
+  //   3. Founder UID           — live ownerUid check; access revokes on ownership transfer
+  //   4. Matchbox venue        — time-boxed: full access until pilotTriggerDate+365, then Core 50% off
+  //   5. Pilot venue           — createdAt < pilotTriggerDate: Core 50% off until pilotTriggerDate+365, then Stripe
+  //   6. Normal Stripe-driven  — existing logic unchanged
   let isPilot: boolean;
   let isActive: boolean;
   let plan: string | null;
   let hasModule: (moduleId: string) => boolean;
   let billingState: BillingState;
+  let discountPercent: number = 0;
+
+  // Shared helper: pilotTriggerDate + 365 days as ms epoch (null-safe)
+  const gracePeriodEndMs = pilotTriggerDate ? pilotTriggerDate.getTime() + ONE_YEAR_MS : null;
+  const nowMs = Date.now();
 
   if (subscriptionOverride) {
     // Override branch: treat venue as a fully active paying subscriber with the
     // specified plan and modules, regardless of what Stripe says.
+    // P&I is always included when active (no longer separately purchasable).
     isPilot = false;
     isActive = true;
     plan = subscriptionOverride.plan;
-    hasModule = (moduleId: string) => subscriptionOverride.modules.includes(moduleId);
+    hasModule = (moduleId: string) =>
+      moduleId === MODULES.PERFORMANCE_INCENTIVES || subscriptionOverride.modules.includes(moduleId);
     billingState = {
       plan: subscriptionOverride.plan,
       addons: {
         aiReporting:       subscriptionOverride.modules.includes(MODULES.OPS_INTELLIGENCE),
         predictiveOrdering:subscriptionOverride.modules.includes(MODULES.SUPPLIER_OPTIMISATION),
-        gamification:      subscriptionOverride.modules.includes(MODULES.PERFORMANCE_INCENTIVES),
+        gamification:      true, // P&I always included when active
         suitee:            subscriptionOverride.modules.includes(MODULES.OPS_INTELLIGENCE),
         groupHQ:           subscriptionOverride.modules.includes(MODULES.MULTI_VENUE),
       },
@@ -407,19 +462,90 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       accessMode: 'full',
       trial: {},
     };
+  } else if (ownerUid && FOUNDER_UIDS.has(ownerUid)) {
+    // Founder branch: permanent full access while they own this venue.
+    // Live check — ownership transfer removes this entitlement automatically.
+    isPilot = false;
+    isActive = true;
+    plan = 'core_plus';
+    hasModule = (_moduleId: string) => true;
+    billingState = {
+      plan: 'core_plus',
+      addons: {
+        aiReporting:        true,
+        predictiveOrdering: true,
+        gamification:       true,
+        suitee:             true,
+        groupHQ:            true,
+      },
+      accessMode: 'full',
+      trial: {},
+    };
+  } else if (venueId === MATCHBOX_VENUE_ID) {
+    // Matchbox branch: full access until pilotTriggerDate+365 days,
+    // then Core-only at 50% off indefinitely.
+    isPilot = false;
+    isActive = true;
+    plan = gracePeriodEndMs === null || nowMs < gracePeriodEndMs ? 'core_plus' : 'core';
+    const matchboxFullAccess = gracePeriodEndMs === null || nowMs < gracePeriodEndMs;
+    discountPercent = matchboxFullAccess ? 0 : 50;
+    hasModule = (moduleId: string) =>
+      matchboxFullAccess || moduleId === MODULES.PERFORMANCE_INCENTIVES;
+    billingState = {
+      plan: matchboxFullAccess ? 'core_plus' : 'core',
+      addons: {
+        aiReporting:        matchboxFullAccess,
+        predictiveOrdering: matchboxFullAccess,
+        gamification:       true, // P&I always included when active
+        suitee:             matchboxFullAccess,
+        groupHQ:            matchboxFullAccess,
+      },
+      accessMode: 'full',
+      trial: {},
+    };
+  } else if (
+    venueCreatedAt !== null &&
+    pilotTriggerDate !== null &&
+    venueCreatedAt < pilotTriggerDate &&
+    gracePeriodEndMs !== null &&
+    nowMs < gracePeriodEndMs
+  ) {
+    // Pilot venue branch: any venue created before pilotTriggerDate gets Core-only at
+    // 50% off until pilotTriggerDate+365 days; after that, falls through to Stripe logic.
+    isPilot = false;
+    isActive = true;
+    plan = 'core';
+    discountPercent = 50;
+    hasModule = (moduleId: string) => moduleId === MODULES.PERFORMANCE_INCENTIVES;
+    billingState = {
+      plan: 'core',
+      addons: {
+        aiReporting:        false,
+        predictiveOrdering: false,
+        gamification:       true, // P&I always included when active
+        suitee:             false,
+        groupHQ:            false,
+      },
+      accessMode: 'full',
+      trial: {},
+    };
   } else {
     // Normal branch: derive entitlement from Stripe-driven subscription doc.
     // During pilot isPilot=true → accessMode='full' for all venues regardless of Stripe.
+    // P&I is always included when isActive (no longer separately purchasable).
     isPilot = !subscription || !['active', 'trialing'].includes(subscription.status);
     isActive = subscription?.status === 'active' || subscription?.status === 'trialing';
     plan = subscription?.plan ?? null;
-    hasModule = (moduleId: string) => subscription?.modules?.includes(moduleId) ?? false;
+    hasModule = (moduleId: string) => {
+      if (moduleId === MODULES.PERFORMANCE_INCENTIVES) return isPilot || isActive;
+      return isPilot || (subscription?.modules?.includes(moduleId) ?? false);
+    };
     billingState = {
       plan: isActive ? ((subscription?.plan as 'core' | 'core_plus') ?? 'core') : 'none',
       addons: {
         aiReporting:       isPilot || (subscription?.modules?.includes(MODULES.OPS_INTELLIGENCE) ?? false),
         predictiveOrdering:isPilot || (subscription?.modules?.includes(MODULES.SUPPLIER_OPTIMISATION) ?? false),
-        gamification:      isPilot || (subscription?.modules?.includes(MODULES.PERFORMANCE_INCENTIVES) ?? false),
+        gamification:      isPilot || isActive, // P&I always included when active
         suitee:            isPilot || (subscription?.modules?.includes(MODULES.OPS_INTELLIGENCE) ?? false),
         groupHQ:           isPilot || (subscription?.modules?.includes(MODULES.MULTI_VENUE) ?? false),
       },
@@ -487,7 +613,8 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     plan,
     hasModule,
     billingState,
-  }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, subscriptionOverride, isPilot, isActive, plan]);
+    discountPercent,
+  }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, subscriptionOverride, isPilot, isActive, plan, ownerUid, venueCreatedAt, pilotTriggerDate, discountPercent]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 
@@ -537,6 +664,6 @@ export function useVenueId(): string | null { return useContext(Ctx).venueId; }
 export function useVenueType(): string | null { return useContext(Ctx).venueType; }
 export function useVenueCountry(): string { return useContext(Ctx).venueCountry; }
 export function useSubscription() {
-  const { subscription, subscriptionOverride, isPilot, isActive, plan, hasModule, billingState } = useContext(Ctx);
-  return { subscription, subscriptionOverride, isPilot, isActive, plan, hasModule, billingState };
+  const { subscription, subscriptionOverride, isPilot, isActive, plan, hasModule, billingState, discountPercent } = useContext(Ctx);
+  return { subscription, subscriptionOverride, isPilot, isActive, plan, hasModule, billingState, discountPercent };
 }
