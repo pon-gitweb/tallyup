@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView,
+  View, Text, ScrollView,
   StyleSheet,
 } from 'react-native';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -16,30 +16,18 @@ function PricingScreen() {
   const { isPilot, isActive, hasModule } = useSubscription();
 
   const [billing, setBilling] = useState<BillingPeriod>('annual');
-  const [venueCount, setVenueCount] = useState(1);
 
   // ── Computed values ──────────────────────────────────────────────────────
 
   const coreActive = !isPilot && isActive;
 
-  const bundleActive =
+  // SO + Ops combo active when both constituent modules are included
+  const comboActive =
     hasModule(MODULES.SUPPLIER_OPTIMISATION) &&
-    hasModule(MODULES.OPS_INTELLIGENCE) &&
-    hasModule(MODULES.PERFORMANCE_INCENTIVES);
+    hasModule(MODULES.OPS_INTELLIGENCE);
 
-  // Display price for Multi-Venue based on count and billing period.
-  // Stripe applies the real tiered amount server-side; this is display-only.
-  function multiVenueDisplayPrice(): string {
-    if (billing === 'annual') {
-      const total = 299.00 + Math.max(0, venueCount - 3) * 18;
-      return `$${total.toFixed(2)}/mo`;
-    }
-    const total = 332.22 + Math.max(0, venueCount - 3) * 20;
-    return `$${total.toFixed(2)}/mo`;
-  }
-
-  // Saving for Pro Ops Bundle vs. the three modules purchased separately
-  const bundleSaving = billing === 'annual' ? '$18.00/mo' : '$20.00/mo';
+  // Saving for SO + Ops combo vs. modules purchased separately
+  const comboSaving = billing === 'annual' ? '$205.00/yr' : '$19.00/mo';
 
   // ── Status indicator ─────────────────────────────────────────────────────
   // Non-tappable text showing inclusion status. No purchase mechanism.
@@ -62,6 +50,11 @@ function PricingScreen() {
       </View>
     );
   }
+
+  // ── Billing period toggle ────────────────────────────────────────────────
+  // Imported TouchableOpacity only for the toggle — purchase buttons are
+  // temporarily disabled (checkout reopening once new Stripe prices are live).
+  const { TouchableOpacity } = require('react-native');
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -114,12 +107,12 @@ function PricingScreen() {
       <View style={[styles.heroCard, { backgroundColor: c.deepBlue || '#1b4f72' }]}>
         <Text style={[styles.heroLabel, { fontFamily: theme.fontBodySemiBold }]}>CORE</Text>
         <Text style={[styles.heroPrice, { fontFamily: theme.fontTitleBold }]}>
-          {billing === 'annual' ? '$199.00' : '$221.11'}
+          {billing === 'annual' ? '$134.00' : '$149.00'}
           <Text style={styles.heroPriceMo}>/mo</Text>
         </Text>
         {billing === 'annual' && (
           <Text style={[styles.heroBillingNote, { fontFamily: theme.fontBody }]}>
-            $2,388.00 billed annually
+            $1,608.00 billed annually
           </Text>
         )}
         <View style={styles.heroFeatures}>
@@ -128,6 +121,7 @@ function PricingScreen() {
             'Invoice scanning with automatic variance detection',
             'Full stocktake history and reporting',
             'Product catalogue and supplier management',
+            'Performance & Incentives — included free',
           ].map((feature, i) => (
             <View key={i} style={styles.featureRow}>
               <Text style={styles.heroCheck}>✓</Text>
@@ -163,11 +157,11 @@ function PricingScreen() {
           Take the guesswork out of ordering. AI-driven suggestions and supplier performance tracking keep your stock lean and your supplier relationships sharper.
         </Text>
         <Text style={[styles.modulePrice, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitleBold }]}>
-          {billing === 'annual' ? '$79.00' : '$87.78'}<Text style={styles.modulePriceMo}>/mo</Text>
+          {billing === 'annual' ? '$53.00' : '$59.00'}<Text style={styles.modulePriceMo}>/mo</Text>
         </Text>
         {billing === 'annual' && (
           <Text style={[styles.moduleAnnualNote, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-            $948.00/yr
+            $637.00/yr
           </Text>
         )}
         {moduleStatus(hasModule(MODULES.SUPPLIER_OPTIMISATION))}
@@ -182,99 +176,69 @@ function PricingScreen() {
           Know exactly how your venue is really performing. Hosti Health scores, KPI dashboards, and operational insights give you a single source of truth for what's working and what isn't.
         </Text>
         <Text style={[styles.modulePrice, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitleBold }]}>
-          {billing === 'annual' ? '$69.00' : '$76.67'}<Text style={styles.modulePriceMo}>/mo</Text>
+          {billing === 'annual' ? '$44.00' : '$49.00'}<Text style={styles.modulePriceMo}>/mo</Text>
         </Text>
         {billing === 'annual' && (
           <Text style={[styles.moduleAnnualNote, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-            $828.00/yr
+            $529.00/yr
           </Text>
         )}
         {moduleStatus(hasModule(MODULES.OPS_INTELLIGENCE))}
       </View>
 
-      {/* Performance & Incentives */}
-      <View style={[styles.moduleCard, { backgroundColor: c.surface || '#fbfaf6' }]}>
-        <Text style={[styles.moduleName, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontBodySemiBold }]}>
-          Performance & Incentives
+      {/* Live Sales — coming soon */}
+      <View style={[styles.moduleCard, styles.comingSoonCard, { backgroundColor: c.surface || '#fbfaf6' }]}>
+        <View style={styles.comingSoonBadgeRow}>
+          <View style={[styles.comingSoonBadge, { backgroundColor: c.oatMuted || '#e8e4dc' }]}>
+            <Text style={[styles.comingSoonBadgeText, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBodySemiBold }]}>
+              Coming soon
+            </Text>
+          </View>
+        </View>
+        <Text style={[styles.moduleName, { color: c.slateMid || '#9ca3af', fontFamily: theme.fontBodySemiBold }]}>
+          Live Sales
         </Text>
-        <Text style={[styles.moduleDesc, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-          Turn stocktake accuracy into team motivation. Staff leaderboards, gamified targets, and performance reward tracking make counting something your team actually cares about.
+        <Text style={[styles.moduleDesc, { color: c.slateMid || '#9ca3af', fontFamily: theme.fontBody }]}>
+          Real-time sales data directly from your POS — automatic recipe matching, live COGS, and instant variance detection as sales happen.
         </Text>
-        <Text style={[styles.modulePrice, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitleBold }]}>
-          {billing === 'annual' ? '$39.00' : '$43.33'}<Text style={styles.modulePriceMo}>/mo</Text>
+        <Text style={[styles.modulePrice, { color: c.slateMid || '#9ca3af', fontFamily: theme.fontTitleBold }]}>
+          {billing === 'annual' ? '$63.00' : '$70.00'}<Text style={styles.modulePriceMo}>/mo</Text>
         </Text>
         {billing === 'annual' && (
-          <Text style={[styles.moduleAnnualNote, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-            $468.00/yr
+          <Text style={[styles.moduleAnnualNote, { color: c.slateMid || '#9ca3af', fontFamily: theme.fontBody }]}>
+            $756.00/yr
           </Text>
         )}
-        {moduleStatus(hasModule(MODULES.PERFORMANCE_INCENTIVES))}
-      </View>
-
-      {/* Multi-Venue Command Centre */}
-      <View style={[styles.moduleCard, { backgroundColor: c.surface || '#fbfaf6' }]}>
-        <Text style={[styles.moduleName, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontBodySemiBold }]}>
-          Multi-Venue Command Centre
-        </Text>
-        <Text style={[styles.moduleDesc, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-          Run many venues like one. Consolidated dashboards, cross-venue reporting, and group management give operators a single view across their entire group.
-        </Text>
-        <Text style={[styles.modulePrice, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitleBold }]}>
-          {multiVenueDisplayPrice()}
-        </Text>
-        <Text style={[styles.moduleAnnualNote, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-          {billing === 'annual'
-            ? 'Base ≤3 venues ($3,588/yr) · +~$18/mo per venue above 3'
-            : 'Base ≤3 venues · +$20/mo per venue above 3'
-          }
-        </Text>
-        {/* Venue count stepper — display-only price preview, updates local state only */}
-        <View style={styles.stepperRow}>
-          <Text style={[styles.stepperLabel, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontBody }]}>
-            Venues:
+        <View style={styles.statusRow}>
+          <Text style={[styles.statusNot, { color: c.slateMid || '#9ca3af', fontFamily: theme.fontBody }]}>
+            Requires a live POS connection — not yet available
           </Text>
-          <TouchableOpacity
-            style={[styles.stepperBtn, { borderColor: c.oatMuted || '#c9c5bd' }]}
-            onPress={() => setVenueCount(n => Math.max(1, n - 1))}
-          >
-            <Text style={[styles.stepperBtnText, { color: c.missionSlate || '#3b3f4a' }]}>−</Text>
-          </TouchableOpacity>
-          <Text style={[styles.stepperCount, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontBodySemiBold }]}>
-            {venueCount}
-          </Text>
-          <TouchableOpacity
-            style={[styles.stepperBtn, { borderColor: c.oatMuted || '#c9c5bd' }]}
-            onPress={() => setVenueCount(n => n + 1)}
-          >
-            <Text style={[styles.stepperBtnText, { color: c.missionSlate || '#3b3f4a' }]}>+</Text>
-          </TouchableOpacity>
         </View>
-        {moduleStatus(hasModule(MODULES.MULTI_VENUE))}
       </View>
 
-      {/* ── Pro Ops Bundle ──────────────────────────────────────────────── */}
+      {/* ── SO + Ops combo ──────────────────────────────────────────────── */}
       <View style={[styles.bundleCard, { backgroundColor: c.surface || '#fbfaf6', borderColor: c.deepBlue || '#1b4f72' }]}>
         <View style={[styles.bundleBadge, { backgroundColor: c.deepBlue || '#1b4f72' }]}>
           <Text style={[styles.bundleBadgeText, { fontFamily: theme.fontBodySemiBold }]}>Best value</Text>
         </View>
         <Text style={[styles.moduleName, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontBodySemiBold, marginTop: 10 }]}>
-          Pro Ops Bundle
+          SO + Ops Combo
         </Text>
         <Text style={[styles.moduleDesc, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-          The complete operational upgrade. Supplier Optimisation, Ops Intelligence, and Performance &amp; Incentives — everything needed to run a tighter, smarter, more motivated operation, bundled together.
+          Supplier Optimisation and Ops Intelligence together — smarter ordering and clearer performance insights, at a better price than buying separately.
         </Text>
         <Text style={[styles.modulePrice, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitleBold }]}>
-          {billing === 'annual' ? '$169.00' : '$187.78'}<Text style={styles.modulePriceMo}>/mo</Text>
+          {billing === 'annual' ? '$80.00' : '$89.00'}<Text style={styles.modulePriceMo}>/mo</Text>
         </Text>
         <Text style={[styles.bundleSavingText, { color: c.positiveStrong || '#2f9e5d', fontFamily: theme.fontBodySemiBold }]}>
-          Save {bundleSaving} vs. modules separately
+          Save {comboSaving} vs. modules separately
         </Text>
         {billing === 'annual' && (
           <Text style={[styles.moduleAnnualNote, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-            $2,028.00/yr
+            $961.00/yr
           </Text>
         )}
-        {moduleStatus(bundleActive)}
+        {moduleStatus(comboActive)}
       </View>
 
       {/* ── Footer ──────────────────────────────────────────────────────── */}
@@ -330,19 +294,18 @@ const styles = StyleSheet.create({
   modulePriceMo: { fontSize: 14, fontWeight: '400' },
   moduleAnnualNote: { fontSize: 12, marginBottom: 12 },
 
-  // Quantity stepper (Multi-Venue) — display-only price preview
-  stepperRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  stepperLabel: { fontSize: 14, marginRight: 10 },
-  stepperBtn: { width: 34, height: 34, borderRadius: 8, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  stepperBtnText: { fontSize: 20, lineHeight: 24 },
-  stepperCount: { fontSize: 16, minWidth: 36, textAlign: 'center' },
-
   // Module inclusion status (plain text, not a button)
   statusRow: { marginTop: 4 },
   statusIncluded: { fontSize: 14 },
   statusNot: { fontSize: 13 },
 
-  // Pro Ops Bundle card
+  // Coming-soon card overlay (Live Sales)
+  comingSoonCard: { opacity: 0.75 },
+  comingSoonBadgeRow: { marginBottom: 8 },
+  comingSoonBadge: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6 },
+  comingSoonBadgeText: { fontSize: 11, letterSpacing: 0.3 },
+
+  // SO + Ops combo card
   bundleCard: { borderRadius: 16, borderWidth: 1.5, padding: 18, marginBottom: 20 },
   bundleBadge: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6 },
   bundleBadgeText: { fontSize: 11, color: '#fff', letterSpacing: 0.3 },

@@ -154,6 +154,14 @@
   font-family: Inter, system-ui, sans-serif;
 }
 
+.heroIncluded {
+  font-size: 13px;
+  color: #16a34a;
+  font-weight: 600;
+  font-family: Inter, system-ui, sans-serif;
+  margin: 10px 0 0;
+}
+
 .heroPrice {
   font-size: 28px;
   font-weight: 800;
@@ -343,7 +351,7 @@
   cursor: default;
 }
 
-/* Ghost/disabled button for "Requires Core" */
+/* Ghost/disabled button for "Requires Core" or temporarily-disabled checkout */
 .btnGhost {
   padding: 9px 18px;
   font-size: 13px;
@@ -354,8 +362,28 @@
   border-radius: 8px;
   cursor: default;
   font-family: Inter, system-ui, sans-serif;
-  white-space: nowrap;
+  white-space: normal;
   margin-top: 12px;
+  line-height: 1.4;
+}
+
+/* Coming-soon card (Live Sales) */
+.comingSoonCard {
+  opacity: 0.7;
+}
+
+.comingSoonBadge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6B7280;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 2px 8px;
+  margin: 0 0 10px;
+  font-family: Inter, system-ui, sans-serif;
 }
 
 /* ── Active status ─────────────────────────────────────────────────────────── */
