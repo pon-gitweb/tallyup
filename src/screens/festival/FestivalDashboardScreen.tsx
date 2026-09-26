@@ -273,11 +273,11 @@ export default function FestivalDashboardScreen() {
           <>
             <Text style={S.tilesHeading}>COUNTS</Text>
             <View style={S.tilesRow}>
-              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Stock')}>
                 <Text style={S.tileEmoji}>📦</Text>
                 <Text style={S.tileLabel}>Load-in count</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Stock')}>
                 <Text style={S.tileEmoji}>📊</Text>
                 <Text style={S.tileLabel}>Session count</Text>
               </TouchableOpacity>
@@ -388,11 +388,11 @@ export default function FestivalDashboardScreen() {
           <>
             <Text style={S.tilesHeading}>COUNTS</Text>
             <View style={S.tilesRow}>
-              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Stock')}>
                 <Text style={S.tileEmoji}>📦</Text>
                 <Text style={S.tileLabel}>Load-in count</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Stock')}>
                 <Text style={S.tileEmoji}>📊</Text>
                 <Text style={S.tileLabel}>Session count</Text>
               </TouchableOpacity>
@@ -484,11 +484,11 @@ export default function FestivalDashboardScreen() {
           <>
             <Text style={S.tilesHeading}>COUNTS</Text>
             <View style={S.tilesRow}>
-              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Stock')}>
                 <Text style={S.tileEmoji}>📦</Text>
                 <Text style={S.tileLabel}>Load-in count</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Stock')}>
                 <Text style={S.tileEmoji}>📊</Text>
                 <Text style={S.tileLabel}>Session count</Text>
               </TouchableOpacity>

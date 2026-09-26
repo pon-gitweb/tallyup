@@ -179,7 +179,7 @@ export default function AcceptInviteScreen() {
         </Text>
         <TouchableOpacity
           style={[S.btn, { marginTop: 24 }]}
-          onPress={() => nav.navigate('Dashboard')}
+          onPress={() => nav.navigate('Home')}
         >
           <Text style={S.btnText}>Go to Dashboard</Text>
         </TouchableOpacity>

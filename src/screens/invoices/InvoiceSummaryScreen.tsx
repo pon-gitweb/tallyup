@@ -426,7 +426,7 @@ function InvoiceSummaryScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          onPress={() => nav.navigate('Dashboard')}
+          onPress={() => nav.navigate('Home')}
           style={{
             backgroundColor: colours.surface, borderRadius: 12,
             paddingVertical: 14, alignItems: 'center',

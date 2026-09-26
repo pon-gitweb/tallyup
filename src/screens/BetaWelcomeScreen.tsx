@@ -18,7 +18,7 @@ export default function BetaWelcomeScreen() {
   const navigation = useNavigation<any>();
   const { theme } = useTheme();
 
-  const goDashboard = () => navigation.navigate('Dashboard');
+  const goDashboard = () => navigation.navigate('Home');
   const goStockTake = () => navigation.navigate('DepartmentSelection');
   const goStockControl = () => navigation.navigate('DepartmentSelection');
   const goSuggestedOrders = () => navigation.navigate('SuggestedOrders');

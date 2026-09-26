@@ -128,7 +128,7 @@ function StocktakeSummaryScreen() {
         setResetting(true);
         try {
           await resetAllDepartmentsStockTake(venueId);
-          nav.navigate('Dashboard' as never);
+          nav.navigate('Home' as never);
         } catch (e) {
           showError('Could not reset stocktake. Please try again.');
         } finally { setResetting(false); }
@@ -735,7 +735,7 @@ function StocktakeSummaryScreen() {
           )}
 
           <TouchableOpacity
-            onPress={() => nav.navigate('Dashboard' as never)}
+            onPress={() => nav.navigate('Home' as never)}
             style={{ backgroundColor: c.primaryLight, borderRadius: 10, padding: 10, alignItems: 'center', marginTop: 4 }}>
             <Text style={{ color: c.primary, fontWeight: '800', fontSize: 13 }}>Review & update PAR levels →</Text>
           </TouchableOpacity>
@@ -867,7 +867,7 @@ function StocktakeSummaryScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={{ paddingVertical: 10, alignItems: 'center' }}
-          onPress={() => nav.navigate('Dashboard' as never)}
+          onPress={() => nav.navigate('Home' as never)}
         >
           <Text style={{ color: '#6B7280', fontSize: 13 }}>Back to dashboard</Text>
         </TouchableOpacity>

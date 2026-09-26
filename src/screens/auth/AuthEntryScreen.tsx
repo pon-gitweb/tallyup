@@ -23,7 +23,7 @@ export default function AuthEntryScreen() {
     const unsub = onAuthStateChanged(auth, (u) => {
       if (!u) return;
       if (venueId) {
-        nav.reset({ index: 0, routes: [{ name: 'Dashboard' }] });
+        nav.reset({ index: 0, routes: [{ name: 'Home' }] });
       } else {
         setShowSetup(true);
       }

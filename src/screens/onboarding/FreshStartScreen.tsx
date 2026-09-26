@@ -53,7 +53,7 @@ export default function FreshStartScreen() {
         console.error('[FreshStart] onboarding-update failed', JSON.stringify({ code: e?.code, message: e?.message, name: e?.name }));
         throw e;
       }
-      nav.navigate('Dashboard');
+      nav.navigate('Home');
     } catch (e: any) {
       console.error('[FreshStart] setup failed', JSON.stringify({ code: e?.code, message: e?.message, name: e?.name }));
       Alert.alert('Setup failed', e?.message || 'Please try again.');

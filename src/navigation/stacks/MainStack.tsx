@@ -11,7 +11,6 @@ import IzzyAssistant, { openIzzy } from '../../components/IzzyAssistant';
 import MainTabs from './MainTabs';
 
 // Core
-import DashboardScreen from '../../screens/DashboardScreen';
 import ProfitInsightsScreen from '../../screens/health/ProfitInsightsScreen';
 
 // Stock-take
@@ -27,7 +26,6 @@ import TeamMembersScreen from '../../screens/settings/TeamMembersScreen';
 import AcceptInviteScreen from '../../screens/auth/AcceptInviteScreen';
 
 // Reports
-import ReportsScreen from '../../screens/reports/ReportsScreen';
 import DepartmentVarianceScreen from '../../screens/reports/DepartmentVarianceScreen';
 import ReconciliationsScreen from '../../screens/reports/ReconciliationsScreen';
 import VarianceSnapshotScreen from '../../screens/reports/VarianceSnapshotScreen';
@@ -85,7 +83,6 @@ import AdjustmentDetailScreen from '../../screens/adjustments/AdjustmentDetailSc
 
 // Orders
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
-import OrdersScreen from '../../screens/orders/OrdersScreen';
 import NewOrderScreen from '../../screens/orders/NewOrderScreen';
 import NewOrderStartScreen from '../../screens/orders/NewOrderStartScreen';
 import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
@@ -98,7 +95,6 @@ import VenueListScreen from '../../screens/venues/VenueListScreen';
 
 // Festival
 import FestivalEventSetupScreen from '../../screens/festival/FestivalEventSetupScreen';
-import FestivalBarSelectionScreen from '../../screens/festival/FestivalBarSelectionScreen';
 import FestivalBarDashboardScreen from '../../screens/festival/FestivalBarDashboardScreen';
 import FestivalTopUpRequestScreen from '../../screens/festival/FestivalTopUpRequestScreen';
 import FestivalDeliveryTasksScreen from '../../screens/festival/FestivalDeliveryTasksScreen';
@@ -106,7 +102,6 @@ import FestivalTransferScreen from '../../screens/festival/FestivalTransferScree
 import FestivalSessionCountScreen from '../../screens/festival/FestivalSessionCountScreen';
 import FestivalWastageScreen from '../../screens/festival/FestivalWastageScreen';
 import FestivalOpsScreen from '../../screens/festival/FestivalOpsScreen';
-import FestivalReportsScreen from '../../screens/festival/FestivalReportsScreen';
 import FestivalContainerLayoutScreen from '../../screens/festival/FestivalContainerLayoutScreen';
 import FestivalPlanogramScreen from '../../screens/festival/FestivalPlanogramScreen';
 import FestivalPurchasingPredictionScreen from '../../screens/festival/FestivalPurchasingPredictionScreen';
@@ -205,8 +200,6 @@ export default function MainStack() {
       <Stack.Screen name="VenueList" component={VenueListScreen} options={{ title: 'My Projects' }} />
       {/* Root — bottom tab navigator */}
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
-      {/* Legacy direct route kept for nav.navigate('Dashboard') calls */}
-      <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Dashboard' }} />
       <Stack.Screen name="ProfitInsights" component={ProfitInsightsScreen} options={{ title: 'Profit Insights' }} />
 
       {/* Stock-take */}
@@ -249,7 +242,6 @@ export default function MainStack() {
       <Stack.Screen name="Suppliers" component={SuppliersScreen} options={{ title: 'Suppliers' }} />
 
       {/* Reports hub + detail */}
-      <Stack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
       <Stack.Screen
         name="Reconciliations"
         component={ReconciliationsScreen}
@@ -304,7 +296,6 @@ export default function MainStack() {
       <Stack.Screen name="DemoResult" component={DemoResultScreen} options={{ headerShown: false }} />
       <Stack.Screen name="SetupWizard" component={SetupWizardScreen} options={{ headerShown: false }} />
       <Stack.Screen name="FestivalEventSetup" component={FestivalEventSetupScreen} options={{ title: 'Event Setup' }} />
-      <Stack.Screen name="FestivalBarSelection" component={FestivalBarSelectionScreen} options={{ title: 'Bars' }} />
       <Stack.Screen name="FestivalBarDashboard" component={FestivalBarDashboardScreen} options={{ title: 'Bar' }} />
       <Stack.Screen name="FestivalTopUpRequest" component={FestivalTopUpRequestScreen} options={{ title: 'Request Top-Up' }} />
       <Stack.Screen name="FestivalDeliveryTasks" component={FestivalDeliveryTasksScreen} options={{ title: 'Delivery Tasks' }} />
@@ -312,7 +303,6 @@ export default function MainStack() {
       <Stack.Screen name="FestivalSessionCount" component={FestivalSessionCountScreen} options={{ title: 'Session Count' }} />
       <Stack.Screen name="FestivalWastage" component={FestivalWastageScreen} options={{ title: 'Record Wastage' }} />
       <Stack.Screen name="FestivalOps" component={FestivalOpsScreen} options={{ title: 'Ops Overview' }} />
-      <Stack.Screen name="FestivalReports" component={FestivalReportsScreen} options={{ title: 'Festival Reports' }} />
       <Stack.Screen name="FestivalContainerLayout" component={FestivalContainerLayoutScreen} options={{ title: 'Container Layout' }} />
       <Stack.Screen name="FestivalPlanogram" component={FestivalPlanogramScreen} options={{ title: 'Fridge Planogram' }} />
       <Stack.Screen name="FestivalPurchasingPrediction" component={FestivalPurchasingPredictionScreen} options={{ title: 'Purchasing Prediction' }} />
@@ -377,7 +367,6 @@ export default function MainStack() {
         component={SuggestedOrderScreen}
         options={{ title: 'Suggested Orders' }}
       />
-      <Stack.Screen name="Orders" component={OrdersScreen} options={{ title: 'Orders' }} />
       <Stack.Screen name="NewOrder" component={NewOrderScreen} options={{ title: 'New Order' }} />
       <Stack.Screen
         name="NewOrderStart"

@@ -35,7 +35,7 @@ export default function OnboardingRoadScreen() {
         onboardingDismissedAt: serverTimestamp(),
       }).catch(() => {});
     }
-    nav.navigate('Dashboard');
+    nav.navigate('Home');
   }
 
   return (

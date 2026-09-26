@@ -367,7 +367,7 @@ function InventoryImportPreviewScreen() {
           </View>
           <TouchableOpacity
             style={{ alignItems: 'center', paddingVertical: 12 }}
-            onPress={() => { setShowImportGuide(false); nav.navigate('Dashboard'); }}
+            onPress={() => { setShowImportGuide(false); nav.navigate('Home'); }}
           >
             <Text style={{ color: '#6b7280', fontSize: 15, fontWeight: '600' }}>Got it — go to dashboard</Text>
           </TouchableOpacity>

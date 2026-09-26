@@ -19,7 +19,7 @@ export default function CreateVenueDashboard() {
         config: { openSignup: true }
       });
       showSuccess('Venue is ready. Heading to the dashboard.');
-      nav.reset({ index: 0, routes: [{ name: 'Dashboard' as never }] });
+      nav.reset({ index: 0, routes: [{ name: 'Home' as never }] });
     } catch (e: any) {
       console.warn('[CreateVenueDashboard] create error', e);
       showError(e?.message ?? 'Please try again.');

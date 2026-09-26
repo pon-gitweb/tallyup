@@ -112,7 +112,7 @@ export const FESTIVAL_NEXT_STEPS: FestivalNextStep[] = [
     title: 'Start your load-in count',
     body: 'Count stock into each bar as it’s set up.',
     cta: 'Choose a bar',
-    route: 'FestivalBarSelection',
+    route: 'Stock',
     roles: ['owner', 'manager', 'staff'],
   },
 ];

@@ -62,7 +62,7 @@ export default function SetupWizardScreen() {
     await AsyncStorage.setItem(SETUP_WIZARD_KEY, '1').catch(() => {});
     nav.reset({
       index: 0,
-      routes: [{ name: 'Dashboard' }],
+      routes: [{ name: 'Home' }],
     });
   };
 
