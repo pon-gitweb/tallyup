@@ -530,10 +530,21 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       trial: {},
     };
   } else {
-    // Normal branch: derive entitlement from Stripe-driven subscription doc.
-    // During pilot isPilot=true → accessMode='full' for all venues regardless of Stripe.
-    // P&I is always included when isActive (no longer separately purchasable).
-    isPilot = !subscription || !['active', 'trialing'].includes(subscription.status);
+    // Stripe-driven branch: all recognized pilot windows are handled by earlier branches,
+    // so access here is based purely on a real Stripe subscription.
+    //
+    // Race-condition exception: if either pilotTriggerDate or venueCreatedAt hasn't loaded
+    // yet (null), a legitimate pilot venue may have fallen through because branch 5 couldn't
+    // fire. Keep the old generous formula during that brief sub-second window so we don't
+    // flash readOnly incorrectly. Once both dates are resolved, isPilot is always false here —
+    // any venue that genuinely belongs in branch 5 will have been caught there.
+    //
+    // venueCreatedAt===null permanently (venue predates the createdAt field) is also handled
+    // correctly by this: those are old enough to be genuine legacy users and stay generous.
+    const datesLoaded = pilotTriggerDate !== null && venueCreatedAt !== null;
+    isPilot = datesLoaded
+      ? false
+      : (!subscription || !['active', 'trialing'].includes(subscription.status));
     isActive = subscription?.status === 'active' || subscription?.status === 'trialing';
     plan = subscription?.plan ?? null;
     hasModule = (moduleId: string) => {
