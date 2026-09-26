@@ -1402,6 +1402,8 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       client_reference_id: venueId,
       ...(existingCustomerId ? { customer: existingCustomerId } : {}),
       metadata: { venueId, uid },
+      automatic_tax: { enabled: true },
+      billing_address_collection: "required",
     });
     console.log("[api/stripe/create-checkout-session] OK", { uid, venueId, sessionId: session.id });
     res.json({ ok: true, sessionId: session.id, url: session.url });
@@ -1447,6 +1449,8 @@ app.post("/stripe/create-one-off-checkout-session", async (req, res) => {
       // Store lookupKey in metadata so the webhook can identify the product
       // without an extra stripe.checkout.sessions.listLineItems() call.
       metadata: { venueId, uid, lookupKey: lookupKey || "" },
+      automatic_tax: { enabled: true },
+      billing_address_collection: "required",
     });
     console.log("[api/stripe/create-one-off-checkout-session] OK", { uid, venueId, lookupKey, sessionId: session.id });
     res.json({ ok: true, sessionId: session.id, url: session.url });

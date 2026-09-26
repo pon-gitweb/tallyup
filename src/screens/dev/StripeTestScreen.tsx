@@ -15,7 +15,7 @@ import { useColours } from '../../context/ThemeContext';
 import { db } from '../../services/firebase';
 import { createCheckout, fetchEntitlement, openBillingPortal } from '../../services/payments';
 
-const PRICE_ID = 'price_1Tz2GwAJ9PbuJOpgLGTa0ev7';
+const LOOKUP_KEY = 'core_monthly_rolling';
 const RETURN_URL = 'https://tallyup-f1463.web.app/app';
 
 function StripeTestScreen() {
@@ -52,7 +52,7 @@ function StripeTestScreen() {
       const result = await createCheckout({
         uid,
         venueId,
-        priceId: PRICE_ID,
+        lookupKey: LOOKUP_KEY,
         successUrl: RETURN_URL,
         cancelUrl: RETURN_URL,
       });

@@ -194,21 +194,21 @@ export default function BillingPage({
 
   // ── Pricing display ───────────────────────────────────────────────────────
   const prices = {
-    core:       cycle === 'monthly' ? '$149.00/mo' : '$134.00/mo',
-    coreNote:   cycle === 'annual'  ? '$1,608.00/yr' : null,
+    core:       cycle === 'monthly' ? '$149.00/mo excl. GST' : '$134.00/mo excl. GST',
+    coreNote:   cycle === 'annual'  ? '$1,608.00/yr excl. GST' : null,
 
-    so:         cycle === 'monthly' ? '$59.00/mo' : '$53.00/mo',
-    soNote:     cycle === 'annual'  ? '$637.00/yr' : null,
+    so:         cycle === 'monthly' ? '$59.00/mo excl. GST' : '$53.00/mo excl. GST',
+    soNote:     cycle === 'annual'  ? '$637.00/yr excl. GST' : null,
 
-    oi:         cycle === 'monthly' ? '$49.00/mo' : '$44.00/mo',
-    oiNote:     cycle === 'annual'  ? '$529.00/yr' : null,
+    oi:         cycle === 'monthly' ? '$49.00/mo excl. GST' : '$44.00/mo excl. GST',
+    oiNote:     cycle === 'annual'  ? '$529.00/yr excl. GST' : null,
 
-    combo:      cycle === 'monthly' ? '$89.00/mo' : '$80.00/mo',
-    comboNote:  cycle === 'annual'  ? '$961.00/yr' : null,
+    combo:      cycle === 'monthly' ? '$89.00/mo excl. GST' : '$80.00/mo excl. GST',
+    comboNote:  cycle === 'annual'  ? '$961.00/yr excl. GST' : null,
     comboSave:  cycle === 'annual'  ? 'Saves $205.00/yr vs. modules separately' : 'Saves $19.00/mo vs. modules separately',
 
-    liveSales:     cycle === 'monthly' ? '$70.00/mo' : '$63.00/mo',
-    liveSalesNote: cycle === 'annual'  ? '$756.00/yr' : null,
+    liveSales:     cycle === 'monthly' ? '$70.00/mo excl. GST' : '$63.00/mo excl. GST',
+    liveSalesNote: cycle === 'annual'  ? '$756.00/yr excl. GST' : null,
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -345,7 +345,7 @@ export default function BillingPage({
           <p className={styles.cardDesc}>
             Topped out on AI calls this month? Buy a one-off extension — doubles your plan's monthly AI call limit for the rest of this calendar month, then resets automatically.
           </p>
-          <p className={styles.cardPrice}>$40.00 one-off</p>
+          <p className={styles.cardPrice}>$40.00 one-off excl. GST</p>
           <>
             <button type="button" className={styles.btnGhost} disabled>
               Updated plans — checkout reopening shortly

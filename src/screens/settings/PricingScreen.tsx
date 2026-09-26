@@ -108,11 +108,11 @@ function PricingScreen() {
         <Text style={[styles.heroLabel, { fontFamily: theme.fontBodySemiBold }]}>CORE</Text>
         <Text style={[styles.heroPrice, { fontFamily: theme.fontTitleBold }]}>
           {billing === 'annual' ? '$134.00' : '$149.00'}
-          <Text style={styles.heroPriceMo}>/mo</Text>
+          <Text style={styles.heroPriceMo}>/mo excl. GST</Text>
         </Text>
         {billing === 'annual' && (
           <Text style={[styles.heroBillingNote, { fontFamily: theme.fontBody }]}>
-            $1,608.00 billed annually
+            $1,608.00 billed annually (excl. GST)
           </Text>
         )}
         <View style={styles.heroFeatures}>
@@ -157,11 +157,11 @@ function PricingScreen() {
           Take the guesswork out of ordering. AI-driven suggestions and supplier performance tracking keep your stock lean and your supplier relationships sharper.
         </Text>
         <Text style={[styles.modulePrice, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitleBold }]}>
-          {billing === 'annual' ? '$53.00' : '$59.00'}<Text style={styles.modulePriceMo}>/mo</Text>
+          {billing === 'annual' ? '$53.00' : '$59.00'}<Text style={styles.modulePriceMo}>/mo excl. GST</Text>
         </Text>
         {billing === 'annual' && (
           <Text style={[styles.moduleAnnualNote, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-            $637.00/yr
+            $637.00/yr excl. GST
           </Text>
         )}
         {moduleStatus(hasModule(MODULES.SUPPLIER_OPTIMISATION))}
@@ -176,11 +176,11 @@ function PricingScreen() {
           Know exactly how your venue is really performing. Hosti Health scores, KPI dashboards, and operational insights give you a single source of truth for what's working and what isn't.
         </Text>
         <Text style={[styles.modulePrice, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitleBold }]}>
-          {billing === 'annual' ? '$44.00' : '$49.00'}<Text style={styles.modulePriceMo}>/mo</Text>
+          {billing === 'annual' ? '$44.00' : '$49.00'}<Text style={styles.modulePriceMo}>/mo excl. GST</Text>
         </Text>
         {billing === 'annual' && (
           <Text style={[styles.moduleAnnualNote, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-            $529.00/yr
+            $529.00/yr excl. GST
           </Text>
         )}
         {moduleStatus(hasModule(MODULES.OPS_INTELLIGENCE))}
@@ -202,11 +202,11 @@ function PricingScreen() {
           Real-time sales data directly from your POS — automatic recipe matching, live COGS, and instant variance detection as sales happen.
         </Text>
         <Text style={[styles.modulePrice, { color: c.slateMid || '#9ca3af', fontFamily: theme.fontTitleBold }]}>
-          {billing === 'annual' ? '$63.00' : '$70.00'}<Text style={styles.modulePriceMo}>/mo</Text>
+          {billing === 'annual' ? '$63.00' : '$70.00'}<Text style={styles.modulePriceMo}>/mo excl. GST</Text>
         </Text>
         {billing === 'annual' && (
           <Text style={[styles.moduleAnnualNote, { color: c.slateMid || '#9ca3af', fontFamily: theme.fontBody }]}>
-            $756.00/yr
+            $756.00/yr excl. GST
           </Text>
         )}
         <View style={styles.statusRow}>
@@ -228,14 +228,14 @@ function PricingScreen() {
           Supplier Optimisation and Ops Intelligence together — smarter ordering and clearer performance insights, at a better price than buying separately.
         </Text>
         <Text style={[styles.modulePrice, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitleBold }]}>
-          {billing === 'annual' ? '$80.00' : '$89.00'}<Text style={styles.modulePriceMo}>/mo</Text>
+          {billing === 'annual' ? '$80.00' : '$89.00'}<Text style={styles.modulePriceMo}>/mo excl. GST</Text>
         </Text>
         <Text style={[styles.bundleSavingText, { color: c.positiveStrong || '#2f9e5d', fontFamily: theme.fontBodySemiBold }]}>
           Save {comboSaving} vs. modules separately
         </Text>
         {billing === 'annual' && (
           <Text style={[styles.moduleAnnualNote, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
-            $961.00/yr
+            $961.00/yr excl. GST
           </Text>
         )}
         {moduleStatus(comboActive)}
