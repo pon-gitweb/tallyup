@@ -5,11 +5,27 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../services/firebase';
 import {
   doc, collection, onSnapshot, getDoc, getDocs, setDoc, updateDoc,
-  query, where, limit as qlimit, Unsubscribe, serverTimestamp,
+  query, where, limit as qlimit, Unsubscribe, serverTimestamp, runTransaction,
 } from 'firebase/firestore';
 import { DEV_VENUE_ID, IS_DEV_PIN_ENABLED, isDevEmail } from '../config/dev';
 import { BillingState, defaultBillingState } from '../services/billing/entitlements';
-import { MODULES } from '../services/billing/modules';
+import { MODULES, MODULE_INTRODUCED_AT, ModuleId } from '../services/billing/modules';
+
+type TrialStateDoc = {
+  startedAt: { toMillis: () => number } | null;
+  stocktakesAtStart: number;
+  stocktakesUsed: number;
+  status: 'active' | 'converting' | 'expired';
+  resolvedAt?: any;
+  resolvedReason?: string;
+  reminderSentAt?: any;
+};
+
+type ModuleTrialEntry = {
+  startedAt: any;
+  expiresAt: { toMillis?: () => number; getTime?: () => number } | null;
+  status: 'active' | 'expired' | 'converted';
+};
 
 // ── Founder access ───────────────────────────────────────────────────────────
 // Live check against ownerUid — ownership transfer removes access automatically.
@@ -91,6 +107,9 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [pilotTriggerDate, setPilotTriggerDate] = useState<Date | null>(null);
   const [venueType, setVenueType] = useState<string | null>(null);
   const [venueCountry, setVenueCountry] = useState<string>('NZ');
+  // undefined = snapshot not yet fired (loading); null = doc doesn't exist; object = loaded
+  const [trialState, setTrialState] = useState<TrialStateDoc | null | undefined>(undefined);
+  const [moduleTrialState, setModuleTrialState] = useState<Record<string, ModuleTrialEntry> | null>(null);
 
   const triedAutoAttachForUid = useRef<string | null>(null);
   const lastVenueIdRef = useRef<string | null>(undefined as any);
@@ -98,6 +117,9 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const unsubUserDocRef = useRef<Unsubscribe | null>(null);
   const unsubVenueDocRef = useRef<Unsubscribe | null>(null);
   const userSnapshotFailsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks which venueId we've already attempted trial init for — prevents
+  // double-write across React Strict Mode double-invoke or rapid re-renders.
+  const trialInitiatedRef = useRef<string | null>(null);
 
   function clearUserSnapshotFailsafe() {
     if (userSnapshotFailsafeRef.current) {
@@ -402,6 +424,95 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, [venueId]);
 
+  // ── D-039 trial state snapshot ───────────────────────────────────────────
+  // Loads trialState (and moduleTrialState) for the active venue.
+  // Resets to undefined (loading) on venue change so the entitlement branch
+  // stays generous until the snapshot fires.
+  useEffect(() => {
+    if (!venueId) {
+      setTrialState(undefined);
+      setModuleTrialState(null);
+      return;
+    }
+    setTrialState(undefined);
+    const unsub1 = onSnapshot(
+      doc(db, 'venues', venueId, 'billing', 'trialState'),
+      (snap) => setTrialState(snap.exists() ? (snap.data() as TrialStateDoc) : null),
+      () => setTrialState(null),
+    );
+    const unsub2 = onSnapshot(
+      doc(db, 'venues', venueId, 'billing', 'moduleTrialState'),
+      (snap) => setModuleTrialState(snap.exists() ? (snap.data() as Record<string, ModuleTrialEntry>) : null),
+      () => setModuleTrialState(null),
+    );
+    return () => { unsub1(); unsub2(); };
+  }, [venueId]);
+
+  // ── D-039 trial init ─────────────────────────────────────────────────────
+  // Runs once when we confirm the trial doc is absent for an eligible venue
+  // (created on/after pilotTriggerDate). Uses runTransaction so two devices
+  // racing to create the doc produce one winner and one no-op: the transaction
+  // reads first and writes only if the doc is still missing. The client-side
+  // trialInitiatedRef prevents a second async attempt in the same app session
+  // even if the snapshot re-fires before the write propagates back.
+  useEffect(() => {
+    if (!venueId) return;
+    if (trialState !== null) return;           // undefined = loading; object = exists
+    if (venueCreatedAt === null || pilotTriggerDate === null) return;
+    if (venueCreatedAt < pilotTriggerDate) return; // older venue — not this branch
+    if (trialInitiatedRef.current === venueId) return;
+    trialInitiatedRef.current = venueId;
+
+    const trialRef = doc(db, 'venues', venueId, 'billing', 'trialState');
+    const venueRef = doc(db, 'venues', venueId);
+    (async () => {
+      try {
+        await runTransaction(db, async (tx) => {
+          const [snap, venueSnap] = await Promise.all([tx.get(trialRef), tx.get(venueRef)]);
+          if (snap.exists()) return; // another device raced us — nothing to do
+          const stocktakesAtStart: number = venueSnap.data()?.totalStocktakesCompleted ?? 0;
+          tx.set(trialRef, {
+            startedAt: serverTimestamp(),
+            venueCreatedAt: venueSnap.data()?.createdAt ?? null,
+            stocktakesAtStart,
+            stocktakesUsed: 0,
+            status: 'active',
+          });
+          // Denormalize trialStatus onto the venue doc so the CF can query
+          // venues in trial without a collectionGroup scan.
+          tx.update(venueRef, { trialStatus: 'active' });
+        });
+      } catch (e) {
+        console.warn('[VenueProvider] trial init failed:', e);
+        trialInitiatedRef.current = null; // allow retry on next render
+      }
+    })();
+  }, [venueId, trialState, venueCreatedAt, pilotTriggerDate]);
+
+  // ── D-039 new-module trial creation ─────────────────────────────────────
+  // For each module whose catalog-introduction date is AFTER this venue's
+  // trial startedAt, write a 14-day moduleTrialState entry on first encounter.
+  // setDoc with merge:true ensures we never overwrite an existing entry.
+  useEffect(() => {
+    if (!venueId || !trialState || !trialState.startedAt) return;
+    const trialStartMs = trialState.startedAt.toMillis?.() ?? 0;
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const trialActive = trialState.stocktakesUsed < 3 && Date.now() < trialStartMs + THIRTY_DAYS_MS;
+    if (!trialActive) return;
+
+    const newEntries: Record<string, any> = {};
+    for (const [moduleId, introducedAt] of Object.entries(MODULE_INTRODUCED_AT)) {
+      if (introducedAt.getTime() > trialStartMs && !(moduleTrialState?.[moduleId])) {
+        const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+        newEntries[moduleId] = { startedAt: serverTimestamp(), expiresAt, status: 'active' };
+      }
+    }
+    if (Object.keys(newEntries).length === 0) return;
+
+    setDoc(doc(db, 'venues', venueId, 'billing', 'moduleTrialState'), newEntries, { merge: true })
+      .catch(e => console.warn('[VenueProvider] module trial init failed:', e));
+  }, [venueId, trialState, moduleTrialState]);
+
   // ── Entitlement computation ──────────────────────────────────────────────
   // Priority order (highest first):
   //   1. subscriptionOverride  — Console/Admin SDK only; never client-writable
@@ -409,7 +520,8 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   //   3. Founder UID           — live ownerUid check; access revokes on ownership transfer
   //   4. Matchbox venue        — time-boxed: full access until pilotTriggerDate+365, then Core 50% off
   //   5. Pilot venue           — createdAt < pilotTriggerDate: Core 50% off until pilotTriggerDate+365, then Stripe
-  //   6. Normal Stripe-driven  — existing logic unchanged
+  //   6. D-039 trial           — createdAt >= pilotTriggerDate: 30-day / 3-stocktake free trial
+  //   7. Normal Stripe-driven  — existing logic unchanged
   let isPilot: boolean;
   let isActive: boolean;
   let plan: string | null;
@@ -529,6 +641,76 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       accessMode: 'full',
       trial: {},
     };
+  } else if (
+    venueCreatedAt !== null &&
+    pilotTriggerDate !== null &&
+    venueCreatedAt >= pilotTriggerDate
+  ) {
+    // D-039 trial branch: venue created on/after pilotTriggerDate.
+    // trialState is undefined while the snapshot is loading — stay generous.
+    // trialState is null while the creation transaction is in flight — stay generous.
+    // Gate is computed from raw counters, never from the stored .status field.
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const trialDoc = trialState as TrialStateDoc | null | undefined;
+    const trialStartMs = trialDoc?.startedAt?.toMillis?.() ?? 0;
+    const trialActive =
+      trialDoc === undefined || trialDoc === null
+        ? true // still loading or pending creation — be generous
+        : trialDoc.stocktakesUsed < 3 && nowMs < trialStartMs + THIRTY_DAYS_MS;
+
+    isPilot = false;
+    isActive = false;
+    plan = null;
+
+    if (trialActive) {
+      hasModule = (moduleId: string) => {
+        const modIntroduced = MODULE_INTRODUCED_AT[moduleId as ModuleId];
+        if (modIntroduced && trialDoc && trialDoc.startedAt) {
+          if (modIntroduced.getTime() > trialStartMs) {
+            // Module introduced after this venue's trial started — check per-module trial
+            const entry = moduleTrialState?.[moduleId];
+            if (!entry || entry.status !== 'active') return false;
+            const expMs = entry.expiresAt?.toMillis?.() ?? entry.expiresAt?.getTime?.() ?? 0;
+            return nowMs < expMs;
+          }
+        }
+        return true; // all modules that existed at trial start are included
+      };
+      billingState = {
+        plan: 'core_plus',
+        addons: {
+          aiReporting:        true,
+          predictiveOrdering: true,
+          gamification:       true,
+          suitee:             true,
+          groupHQ:            true,
+        },
+        accessMode: 'full',
+        trial: {
+          stocktakesRemaining: trialDoc ? Math.max(0, 3 - trialDoc.stocktakesUsed) : 3,
+        },
+      };
+    } else {
+      // Trial exhausted — Stripe-driven from here
+      isActive = subscription?.status === 'active' || subscription?.status === 'trialing';
+      plan = subscription?.plan ?? null;
+      hasModule = (moduleId: string) => {
+        if (moduleId === MODULES.PERFORMANCE_INCENTIVES) return isActive;
+        return isActive && (subscription?.modules?.includes(moduleId) ?? false);
+      };
+      billingState = {
+        plan: isActive ? ((subscription?.plan as 'core' | 'core_plus') ?? 'core') : 'none',
+        addons: {
+          aiReporting:        isActive && (subscription?.modules?.includes(MODULES.OPS_INTELLIGENCE) ?? false),
+          predictiveOrdering: isActive && (subscription?.modules?.includes(MODULES.SUPPLIER_OPTIMISATION) ?? false),
+          gamification:       isActive,
+          suitee:             isActive && (subscription?.modules?.includes(MODULES.OPS_INTELLIGENCE) ?? false),
+          groupHQ:            isActive && (subscription?.modules?.includes(MODULES.MULTI_VENUE) ?? false),
+        },
+        accessMode: isActive ? 'full' : 'readOnly',
+        trial: {},
+      };
+    }
   } else {
     // Stripe-driven branch: all recognized pilot windows are handled by earlier branches,
     // so access here is based purely on a real Stripe subscription.
@@ -625,7 +807,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     hasModule,
     billingState,
     discountPercent,
-  }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, subscriptionOverride, isPilot, isActive, plan, ownerUid, venueCreatedAt, pilotTriggerDate, discountPercent]);
+  }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, subscriptionOverride, isPilot, isActive, plan, ownerUid, venueCreatedAt, pilotTriggerDate, discountPercent, trialState, moduleTrialState]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 

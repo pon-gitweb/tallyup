@@ -36,6 +36,11 @@ export { api } from "./api";
 // === Weekly summary email (scheduled, Monday 8am venue local time) ===
 export { weeklySummaryEmail } from "./weeklySummary";
 
+// === D-039 trial reminder (scheduled, daily 9am UTC) ===
+// Sends a "trial wrapping up" nudge when 1 stocktake remains or within 8 days of expiry.
+// Requires "trial-reminders" message stream in Postmark console.
+export { trialReminderEmail } from "./trialReminder";
+
 // === Global supplier directory — seed + contribute from invoice scans ===
 export { seedGlobalSuppliers } from "./globalSuppliers";
 
