@@ -330,7 +330,7 @@ export default function BillingPage({
           <div className={styles.comingSoonBadge}>Coming soon</div>
           <p className={styles.cardName}>Live Sales</p>
           <p className={styles.cardDesc}>
-            Real-time sales data from your POS — automatic recipe matching, live COGS, and instant variance detection as sales happen.
+            Real-time sales data from your POS — speeds up recipe matching for POS-connected items, with live COGS and instant variance detection as sales happen.
           </p>
           <p className={styles.cardPrice}>{prices.liveSales}</p>
           {prices.liveSalesNote && <p className={styles.priceNote}>{prices.liveSalesNote}</p>}

@@ -199,7 +199,7 @@ function PricingScreen() {
           Live Sales
         </Text>
         <Text style={[styles.moduleDesc, { color: c.slateMid || '#9ca3af', fontFamily: theme.fontBody }]}>
-          Real-time sales data directly from your POS — automatic recipe matching, live COGS, and instant variance detection as sales happen.
+          Real-time sales data directly from your POS — speeds up recipe matching for POS-connected items, with live COGS and instant variance detection as sales happen.
         </Text>
         <Text style={[styles.modulePrice, { color: c.slateMid || '#9ca3af', fontFamily: theme.fontTitleBold }]}>
           {billing === 'annual' ? '$63.00' : '$70.00'}<Text style={styles.modulePriceMo}>/mo excl. GST</Text>
