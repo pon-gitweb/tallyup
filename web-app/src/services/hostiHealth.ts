@@ -10,7 +10,7 @@
  *   2. All diagnostic Alert.alert and debug/checkpoint writes removed
  *   3. captureError/captureMessage replaced with console.error/console.info
  */
-import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where, Timestamp } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { generateAbductiveInsights, calcVarianceImprovementPct } from './abductiveInsights';
 import type { AbductiveInsight } from './abductiveInsights';

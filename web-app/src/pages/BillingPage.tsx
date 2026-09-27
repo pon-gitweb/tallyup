@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { User } from 'firebase/auth'
 import { doc, onSnapshot } from 'firebase/firestore'
 import { db } from '../firebase'
-import { createCheckout, addSubscriptionItem, openBillingPortal, createOneOffCheckout } from '../services/payments'
+import { openBillingPortal } from '../services/payments'
 import { MODULES } from '../services/billing/modules'
 import styles from './BillingPage.module.css'
 
@@ -10,7 +10,6 @@ import styles from './BillingPage.module.css'
 // Firebase project tallyup-f1463 (.firebaserc). Default Hosting domain = tallyup-f1463.web.app.
 // App lives under /app/ per the rewrite, so return paths must include that prefix.
 const SUCCESS_URL = 'https://tallyup-f1463.web.app/app/billing-success'
-const CANCEL_URL  = 'https://tallyup-f1463.web.app/app/billing-cancel'
 
 type BillingCycle = 'monthly' | 'annual'
 
@@ -23,10 +22,6 @@ type SubState = {
   legacyFreeAccess: boolean       // permanent full access for grandfathered venues; Console-only flag
 }
 
-/** Build a Stripe lookup key from a base string and billing cycle. */
-function lk(base: string, cycle: BillingCycle): string {
-  return cycle === 'monthly' ? `${base}_monthly_rolling` : `${base}_annual`
-}
 
 export default function BillingPage({
   venueId,
@@ -126,57 +121,6 @@ export default function BillingPage({
       delete next[key]
       return next
     })
-  }
-
-  async function handleCheckout(cardKey: string, lookupKeyBase: string) {
-    if (busy) return
-    clearError(cardKey)
-    setBusy(cardKey)
-    try {
-      const result = await createCheckout({
-        venueId,
-        lookupKey: lk(lookupKeyBase, cycle),
-        successUrl: SUCCESS_URL,
-        cancelUrl: CANCEL_URL,
-      })
-      window.location.href = result.url
-    } catch (e: any) {
-      setErrors((prev) => ({ ...prev, [cardKey]: e?.message ?? 'Something went wrong. Please try again.' }))
-      setBusy(null)
-    }
-    // No setBusy(null) on success — we're navigating away
-  }
-
-  async function handleAdd(cardKey: string, lookupKeyBase: string, quantity?: number) {
-    if (busy) return
-    clearError(cardKey)
-    setBusy(cardKey)
-    try {
-      await addSubscriptionItem({ venueId, lookupKey: lk(lookupKeyBase, cycle), quantity })
-      // onSnapshot fires automatically when the subscription webhook updates the venue doc
-    } catch (e: any) {
-      setErrors((prev) => ({ ...prev, [cardKey]: e?.message ?? 'Something went wrong. Please try again.' }))
-    }
-    setBusy(null)
-  }
-
-  async function handleOneOffCheckout(cardKey: string, lookupKey: string) {
-    if (busy) return
-    clearError(cardKey)
-    setBusy(cardKey)
-    try {
-      const result = await createOneOffCheckout({
-        venueId,
-        lookupKey,
-        successUrl: SUCCESS_URL,
-        cancelUrl: CANCEL_URL,
-      })
-      window.location.href = result.url
-    } catch (e: any) {
-      setErrors((prev) => ({ ...prev, [cardKey]: e?.message ?? 'Something went wrong. Please try again.' }))
-      setBusy(null)
-    }
-    // No setBusy(null) on success — we're navigating away
   }
 
   async function handlePortal() {

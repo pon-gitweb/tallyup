@@ -270,7 +270,6 @@ async function tagSalesOverlappingCycles(
       const data = snapDoc.data() as any
       if (!data.cycleStart?.toDate || !data.cycleEnd?.toDate) continue
       const cycleStart: Date    = data.cycleStart.toDate()
-      const cycleEnd: Date      = data.cycleEnd.toDate()
       const cycleNumber: number = data.cycleNumber ?? 0
       if (!cycleNumber) continue
       // Standard interval overlap — cycleEnd >= periodStart already guaranteed by query

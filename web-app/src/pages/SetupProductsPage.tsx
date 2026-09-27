@@ -2193,6 +2193,14 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
   // Fetch usage stats when the duplicates panel is opened. Runs once per open;
   // resets if the product list changes length so a re-open after imports/merges
   // gets fresh data.
+  const dismissedArray = useMemo(() => [...dismissedPairs], [dismissedPairs])
+  const duplicatePairs = useMemo(
+    () => findDuplicatePairs(products.filter(p => p.active !== false)).filter(
+      ([a, b]) => !dismissedArray.includes([a.id, b.id].sort().join(':'))
+    ),
+    [products, dismissedArray]
+  )
+
   const dupStatsPairCount = useRef(-1)
   useEffect(() => {
     if (!showDuplicates) return
@@ -2248,14 +2256,6 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
     setDupStats(null)
     dupStatsPairCount.current = -1
   }
-
-  const dismissedArray = useMemo(() => [...dismissedPairs], [dismissedPairs])
-  const duplicatePairs = useMemo(
-    () => findDuplicatePairs(products.filter(p => p.active !== false)).filter(
-      ([a, b]) => !dismissedArray.includes([a.id, b.id].sort().join(':'))
-    ),
-    [products, dismissedArray]
-  )
 
   return (
     <div>
