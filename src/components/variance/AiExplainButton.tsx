@@ -11,9 +11,7 @@ import {
   FlatList,
 } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
-import { getAuth } from 'firebase/auth';
 import { isEntitled } from '../../services/entitlement';
-import PaymentSheet from '../paywall/PaymentSheet';
 import { explainVariance } from '../../services/aiExplain';
 import { useToast } from '../common/Toast';
 
@@ -32,12 +30,9 @@ export default function AiExplainButton({
   label,
 }: Props) {
   const venueId = useVenueId();
-  const uid = getAuth()?.currentUser?.uid || '';
   const { showError, showInfo } = useToast();
 
   const [loading, setLoading] = useState(false);
-  const [paywallOpen, setPaywallOpen] = useState(false);
-  // BETA: bypass paywall — all venues have full access
   const [modalOpen, setModalOpen] = useState(false);
   const [result, setResult] = useState<{ explanation: string; bullets: string[] }>({
     explanation: '',
@@ -45,18 +40,15 @@ export default function AiExplainButton({
   });
 
   const onPress = useCallback(async () => {
-    if (!venueId || !uid) {
+    if (!venueId) {
       showInfo('Please sign in and try again.');
       return;
     }
 
-    // For beta, isEntitled() always resolves to true (see src/services/entitlement.ts),
-    // but we keep this call so the gate is ready for paid rollout later.
-    const ok = await isEntitled(venueId, uid);
+    // isEntitled() is currently hardcoded true (beta); gate is kept here for paid rollout.
+    const ok = await isEntitled(venueId, '');
     if (!ok) {
-      console.log('[AiExplainButton] beta mode — paywall bypassed');
-      // Progress framing — never show failure to user
-      // setPaywallOpen(true); // disabled for beta
+      showInfo('AI variance explanations require the Ops Intelligence module. Visit Settings → Billing on desktop to subscribe.');
       return;
     }
 
@@ -70,7 +62,7 @@ export default function AiExplainButton({
     } finally {
       setLoading(false);
     }
-  }, [venueId, uid, departmentId, items, sinceDays]);
+  }, [venueId, departmentId, items, sinceDays]);
 
   return (
     <View>
@@ -85,14 +77,6 @@ export default function AiExplainButton({
           <Text style={S.btnText}>{label || '🤖 Explain variance'}</Text>
         )}
       </TouchableOpacity>
-
-      {/* Paywall (would open if not entitled; in beta this should never trigger) */}
-      <PaymentSheet
-        visible={paywallOpen}
-        onClose={() => setPaywallOpen(false)}
-        uid={uid}
-        venueId={venueId || ''}
-      />
 
       {/* Result modal */}
       <Modal
