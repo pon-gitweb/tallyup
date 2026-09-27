@@ -116,6 +116,22 @@ All prices NZD, ex-GST, with GST added at checkout via Stripe Tax (`automatic_ta
 - **AI Meter Extension ($40 one-off)** is a known, still-open inconsistency: it's on a different product (not part of the Core/module set above) and its Stripe price's tax-inclusive/exclusive setting needs to match whatever the app displays before its checkout button is safe to re-enable.
 - **Checkout buttons on both `PricingScreen.tsx` (mobile) and `BillingPage.tsx` (web) are currently deliberately disabled** ("Updated plans — checkout reopening shortly"), pending a real end-to-end test purchase. The underlying `handleCheckout`/`handleAdd` functions are preserved, not deleted, for re-enabling once tested.
 
+## Invoice price-change intelligence
+
+`functions/src/priceTracking.ts` (`proposeInvoiceChanges`) — called live from three routes (`api.ts` ×2, `ocrInvoicePhoto.ts` ×1), 28/28 tests passing as of this writing. Built to catch a specific, real failure mode: an invoice line reading as a case total (e.g. "$18.00") getting compared directly against a per-unit cost (e.g. "$1.50"), producing a false, alarming price-increase flag.
+
+- **Near-duplicate matching** (`nameMatching.ts`) uses token-subset comparison, not raw substring — deliberately, since substring matching on short names caused real false positives (`"Gin"` matching inside `"Ginger Beer"`).
+- **Case-mismatch detection**: when a flagged change exceeds 50%, checks the product's own known case size first, falling back to common sizes (6/12/24) only if unknown, within a 15% tolerance band. On a match, proposes a corrected per-unit price alongside the raw one — the user decides, nothing is silently auto-corrected.
+- **Multi-signal reasoning**: for changes that survive the case-mismatch check, attaches whether the change is isolated or trending across the same invoice, whether the invoice's supplier differs from the product's usual one, and how confident the underlying name-match actually was — surfaced together, not just a bare percentage.
+
+## Stocktake correction tool
+
+Desktop-only (`web-app/src/pages/StocktakeCorrectionPage.tsx` + `web-app/src/services/stocktakeCorrection.ts`), gated to owner/manager via a dedicated Firestore rule (`stocktakeCorrections/{correctionId}`, confirmed present). Deliberately not on mobile — this corrects historical financial records, and every other action of that sensitivity in this app already lives on desktop.
+
+**Why this exists:** a miscounted stocktake entry (e.g. 85 typed instead of 0.85) doesn't just corrupt its own cycle — the *next* cycle's opening baseline is read from it, so the error compounds exactly one cycle forward before self-resolving (the cycle after that reads from a genuinely correct baseline). The tool corrects the source cycle and automatically recomputes the one downstream cycle affected, previewing the full before/after for both before anything commits.
+
+**Never overwrites silently.** Every correction is a real batch write (source cycle summary + downstream cycle summary, atomic — a rules denial on either half fails both) plus a permanent, append-only audit record (who, when, original value, corrected value, reason) at `venues/{venueId}/stocktakeCorrections/`. This mirrors D-050's forward-correction principle: a *live, operational* field like a corrected count or a recomputed `costPrice` is expected to update to the most accurate current value — what D-050 protects is a venue's own recorded history from being silently rewritten, which this tool never does.
+
 ## App Store / Play Store compliance
 
 **Path A is the confirmed, standing decision: mobile is informational-only. No purchase CTAs, no external payment links, no live checkout calls of any kind, anywhere in the mobile app.** Desktop web-app is the real payment surface, under Apple's 3.1.3(f) reader-app-style exemption. Paths B (native IAP) and C (enterprise-only gating) were considered and set aside.
@@ -137,6 +153,14 @@ Agreed phase flow: **Setup → Plan → Order → Bump-in → Live (daily loop) 
 
 **Offline outbox — complete.** Firestore's `persistentLocalCache` falls back to memory-only on React Native (no IndexedDB), so writes have no real offline persistence via the SDK itself. A custom AsyncStorage-backed outbox (`src/services/offlineOutbox.ts`) was built and migrated across all 14 identified festival screens with awaited or silently-lossy writes. Two entry types: `payload` (a fixed operation + data, safe to replay verbatim — simple `setDoc`/`updateDoc`/`deleteDoc`) and `operation` (a named, registered function re-run fresh at flush time — required for anything that reads current state before deciding what to write, e.g. `runTransaction` calls, multi-step batches). Flushes in strict FIFO order on reconnect (`NetInfo`), stopping and re-queueing on any single failure rather than losing subsequent items.
 
+## Telemetry
+
+`functions/src/analytics.ts` writes to `venues/{venueId}/analyticsEvents` on three real, exported, deployable Cloud Function triggers: `onStocktakeCompleted`, `onOrderSubmitted`, `onAiFeatureUsed` (all confirmed present in `index.ts`'s exports). This is genuine, live data collection, not a stub.
+
+**What's unconfirmed:** the code's own comment states this collection needs the Firebase Extension `firestore-bigquery-export` installed and pointed at it to actually reach BigQuery — installation status can't be confirmed from code, only from the Firebase Console's Extensions tab.
+
+**Deliberately not built yet, per a real decision (not an oversight):** a visualization/dashboard layer for Chris to view this data is explicitly deferred until 25 paid venues are reached (Telemetry & Instrumentation Spec, Notion, D-028.11 — "build for the audience that exists, instrument for the audience that might"). Don't rebuild this decision from scratch if it comes up again before that threshold.
+
 ## Email infrastructure
 
 **Postmark is already deployed — do not introduce a different email provider or the Firebase "Trigger Email" extension.** `POSTMARK_API_KEY` is a Firebase Secret Manager secret. Existing send sites: `functions/src/invites.ts` (team invites), `functions/src/weeklySummary.ts` (weekly manager/owner summary), two sites in `functions/src/api.ts`. All go direct to `https://api.postmarkapp.com/email`. Sender domain `hosti.co.nz` is already configured. New transactional email types should get their own dedicated Postmark message stream (for deliverability tracking), not reuse an existing one — created manually in the Postmark console.
@@ -148,7 +172,7 @@ Agreed phase flow: **Setup → Plan → Order → Bump-in → Live (daily loop) 
 - **New Firestore collection = matching security rules in the same commit.** Deploy order: rules → functions → app build.
 - **Additive-only Firestore schema changes** where practical.
 - **Link products/entities by ID, never by name** in any new feature.
-- **Check for an existing pattern before adding a new dependency or building new infrastructure** — the offline outbox, the email system, and the entitlement system have all been reused rather than duplicated once already discovered.
+- **Check for an existing pattern before adding a new dependency or building new infrastructure** — the offline outbox, the email system, the entitlement system, and `src/services/products/resolveProduct.ts` (the shared merge-chain resolver, correctly reused by `StockHoldingScreen.tsx`, `snapshotWriter.ts`, and `refreshPricesForDepartment.ts` rather than each maintaining its own copy — 8/8 tests passing) have all been reused rather than duplicated once already discovered.
 - Before installing any new native dependency, check its compatibility with the exact `react@19.1.0` pin and this project's New Architecture setting — don't assume `npx expo install` succeeding is sufficient; check for peer-dependency conflicts explicitly.
 - A build/deploy command reported as run is not the same as the change being live — `git push` updates GitHub only; web needs an explicit `vite build` + `firebase deploy --only hosting`; mobile needs an actual EAS build. OTA (`eas update`) has a known, unresolved Android fingerprint-drift issue between local machine and build servers and is **not** the current release path — native rebuilds are.
 
