@@ -23,6 +23,9 @@
       "**/.*",
       "**/node_modules/**"
     ],
+    "redirects": [
+      { "source": "/", "destination": "/app/", "type": 302 }
+    ],
     "rewrites": [
       { "source": "/app/**", "destination": "/app/index.html" }
     ]
