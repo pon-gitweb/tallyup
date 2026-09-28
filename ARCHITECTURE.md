@@ -15,7 +15,7 @@ A separate, related product called **Crew** (festival-first crew scheduling/staf
 - Framework: Expo (React Native), New Architecture enabled (`newArchEnabled: true` in `app.json`)
 - **`react` is pinned to an exact version (`19.1.0`) — never loosen this to a range.** A prior React/React Native version mismatch caused a production-blocking white-screen crash. Any new native dependency must be checked for peer-dependency compatibility with this exact pin before installing (`react-native-reanimated`, for example, was evaluated and rejected for a minor UX fix specifically because installing it required `--legacy-peer-deps` to bypass a conflict with this pin — not worth the risk for a small fix; a pure-JS alternative was used instead).
 - Backend: Firebase (Firestore, Auth, Storage, Cloud Functions), project `tallyup-f1463`
-- Web app: Vite + React, desktop-only web client at `web-app/`, deployed via Firebase Hosting to `tallyup-f1463.web.app`
+- Web app: Vite + React, desktop-first responsive web client at `web-app/`, deployed via Firebase Hosting to `tallyup-f1463.web.app` (responsive via `@media max-width 768px` in `DashboardLayout`, `FestivalLayout`, `SupplierLayout` — renders on phones; "desktop = payment surface" is a product decision under Path A, not a technical constraint)
 - AI: Anthropic Claude via Cloud Functions (`functions/src/api.ts`)
 - Build: EAS Build (Android AAB/APK, iOS via App Store Connect)
 - Email: Postmark (already deployed — see Email infrastructure below)
@@ -79,11 +79,11 @@ venues/{venueId}
 
 **`pilotTriggerDate`** lives in Firestore at `config/billing.pilotTriggerDate` (read live via `onSnapshot`) — not hardcoded — specifically so the actual go-live date can be adjusted without a rebuild if app store review timing shifts.
 
-**Founder UIDs** (2 accounts each, so each of the 4 people has both a primary and secondary account with founder status):
+**Founder UIDs** (6 UIDs in total — Poni and Chris each have 2 accounts in the array; Izzy and Shayle each have 1 live UID, with their second accounts as code-level TODOs not yet filled in):
 - Poni: `ChpWVbutHwSCRQKr3THR79EIw1X2`, `nIIcWSEbb2QjkKlwrALBUFXIXtu2`
 - Chris: `XdxYqrCUeQYvfHkJkptjOoXDEwl2`, `OIvPVgL6FpN960FMqTybe7aMRZG3`
-- Izzy: `DyydVaTSaPN5MWrLyHczVeZbzDv2`, (second account — check `FOUNDER_UIDS` in `VenueProvider.tsx` for the current value if not yet filled in here)
-- Shayle: `WXQtR9QUsCShHtmKzopGEwiQYLV2`, (second account — same note)
+- Izzy: `DyydVaTSaPN5MWrLyHczVeZbzDv2` (second account not yet added — TODO at `VenueProvider.tsx:37`)
+- Shayle: `WXQtR9QUsCShHtmKzopGEwiQYLV2` (second account not yet added — TODO at `VenueProvider.tsx:41`)
 
 **Matchbox venue ID:** `O9pChydjz75nwpWA81KO`
 
@@ -161,9 +161,46 @@ Agreed phase flow: **Setup → Plan → Order → Bump-in → Live (daily loop) 
 
 **Deliberately not built yet, per a real decision (not an oversight):** a visualization/dashboard layer for Chris to view this data is explicitly deferred until 25 paid venues are reached (Telemetry & Instrumentation Spec, Notion, D-028.11 — "build for the audience that exists, instrument for the audience that might"). Don't rebuild this decision from scratch if it comes up again before that threshold.
 
+## AI endpoints and metering
+
+All AI features route through `functions/src/api.ts`. Live endpoints as of this writing:
+
+- `/variance-explain` — variance-analysis persona
+- `/generate-recipe` — bar or kitchen consultant persona
+- `/budget-suggest` — budget advisor persona
+- `/ai-insights` — business advisor persona
+- `/photo-count` — inventory counter persona
+- `/suitee` — venue intelligence persona; branches at `venueType === 'festival'` (~line 3557) to a dedicated festival persona prompt (~line 5434) — that specific call chain has not been fully traced
+- `/izzy` — in-app guide persona
+
+**Metering** lives in `functions/src/services/aiMeter.ts` (`checkAiLimit`, `trackAiCall`, `PLAN_LIMITS`). Usage records land at `venues/{venueId}/aiUsage/{YYYY-MM}`. The Stripe webhook adds calls for the AI Meter Extension. **`PLAN_LIMITS` is duplicated** between `aiMeter.ts` and `src/screens/settings/AiUsageScreen.tsx` — both files carry "keep in sync" comments; update both whenever limits change.
+
+Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoice-photo` each call `checkAiLimit` + `trackAiCall`; the `ocrInvoicePhoto` callable also meters as `'invoice_ocr'`. This server-side gate is what justified removing the UI-level cost gate on `InventoryImportScreen`.
+
+**Meter coverage is not uniform** — see Open items for the confirmation gap.
+
 ## Email infrastructure
 
 **Postmark is already deployed — do not introduce a different email provider or the Firebase "Trigger Email" extension.** `POSTMARK_API_KEY` is a Firebase Secret Manager secret. Existing send sites: `functions/src/invites.ts` (team invites), `functions/src/weeklySummary.ts` (weekly manager/owner summary), two sites in `functions/src/api.ts`. All go direct to `https://api.postmarkapp.com/email`. Sender domain `hosti.co.nz` is already configured. New transactional email types should get their own dedicated Postmark message stream (for deliverability tracking), not reuse an existing one — created manually in the Postmark console.
+
+## Build commands and verification gates
+
+**Root (mobile app):**
+- `npm ci --ignore-scripts` — uses the tracked `package-lock.json`; `--ignore-scripts` avoids running postinstall hooks against a possibly-mismatched environment
+- `npm run check:renderer` — asserts the installed `react-test-renderer` exactly matches the `react@19.1.0` pin; **run this before every native build and every `eas update`** — a mismatch is the confirmed cause of the white-screen production crash
+- `npx jest --config jest.unit.config.js` — 42 suites / 366 tests as of this writing
+
+**Functions:**
+- `npm install` (no tracked lockfile — installs float; treat functions test results as approximate until the lockfile is pinned)
+- `npx jest` — 20 suites / 340 tests as of this writing
+
+**OTA baseline (`check:ota`):** compares the current Metro bundle fingerprint against `.last-android-build-fingerprint`. **This file must be updated after every Android native build** — it currently holds build 78's fingerprint and is stale for build 79 (see Open items). A stale baseline makes `check:ota` either always pass or always fail, defeating its purpose.
+
+**`deny-backups` / `deny-legacy-orders-imports`** inspect staged files only and pass trivially on a clean tree — they do not protect a branch that has already been committed.
+
+**`tsc --noEmit` from repo root is not a clean gate:** it sweeps `web-app/` and `backend/` without their own dependency trees, producing ~57 errors (~50 in `web-app/`). Only use it for errors in files outside those two directories, and read the output accordingly.
+
+**Lockfiles:** only the root `package-lock.json` is tracked in git. `functions/` and `web-app/` have none — installs float. `check-ota-safe.sh` itself cites unpinned lockfiles as the root cause of an earlier React version drift. Pinning `functions/package-lock.json` is a known gap.
 
 ## Standing engineering rules
 
@@ -175,6 +212,15 @@ Agreed phase flow: **Setup → Plan → Order → Bump-in → Live (daily loop) 
 - **Check for an existing pattern before adding a new dependency or building new infrastructure** — the offline outbox, the email system, the entitlement system, and `src/services/products/resolveProduct.ts` (the shared merge-chain resolver, correctly reused by `StockHoldingScreen.tsx`, `snapshotWriter.ts`, and `refreshPricesForDepartment.ts` rather than each maintaining its own copy — 8/8 tests passing) have all been reused rather than duplicated once already discovered.
 - Before installing any new native dependency, check its compatibility with the exact `react@19.1.0` pin and this project's New Architecture setting — don't assume `npx expo install` succeeding is sufficient; check for peer-dependency conflicts explicitly.
 - A build/deploy command reported as run is not the same as the change being live — `git push` updates GitHub only; web needs an explicit `vite build` + `firebase deploy --only hosting`; mobile needs an actual EAS build. OTA (`eas update`) has a known, unresolved Android fingerprint-drift issue between local machine and build servers and is **not** the current release path — native rebuilds are.
+
+## Known parallel implementations (keep in sync)
+
+These are confirmed to exist in more than one place. Changing one without the other will cause silent divergence:
+
+- **Hosti Health** — implemented separately on mobile (`src/`) and on web (`web-app/src/services/hostiHealth.ts`)
+- **`mergeProducts`** — implementations in both `src/services/products/` and `web-app/src/services/`; whether they have drifted is last unchecked
+- **`computeGpPercent`** — `web-app/src/pages/SetupProductsPage.tsx:119` vs `functions/src/priceTracking.ts:38`; three web-app tests define private copies of this function rather than importing it, so they test the copy, not the production one
+- **`PLAN_LIMITS`** — `functions/src/services/aiMeter.ts` and `src/screens/settings/AiUsageScreen.tsx`; both have "keep in sync" comments
 
 ## Known, deliberate accepted trade-offs (not bugs — do not "fix" without discussion)
 
@@ -198,3 +244,6 @@ Agreed phase flow: **Setup → Plan → Order → Bump-in → Live (daily loop) 
   This means any operator who receives an order manually without scanning an invoice has their order marked as received but their actual stock levels (`incomingQty`, and therefore the expected count in the next stocktake) never updated. The two paths use different status values (`'received'` vs `'invoiced'`) and are entirely unaware of each other.
   
   **Planned fix (not yet implemented):** After `persist(true)` completes, call `finalizeReceiveCore` using the order's own line quantities as the parsed lines — treating a manually confirmed receive as if it were a confirmed invoice with the ordered quantities. This creates a real invoice record and updates stock, without requiring a physical invoice document. The alternative (Option B) is to keep the paths separate and add a nudge after manual receive: "Order marked received. Scan or upload your invoice to update your stock counts." Option B requires no code change to `finalizeReceiveCore` and carries lower regression risk — preferred if this is being added pre-pilot.
+- **Stale OTA baseline:** `.last-android-build-fingerprint` holds build 78's fingerprint and must be updated to build 79's before `check:ota` is meaningful again. Run `npm run check:ota` after updating to confirm it passes cleanly. Until updated, the OTA safety check always diffs against the wrong baseline.
+- **AI meter coverage gap (confirm before assuming):** `/upload-file`, `/reconcile-invoice`, and `/writeFestivalDebrief` have no `trackAiCall` in their route bodies. `/variance-explain` and the two `/extract-festival-*` routes call `checkAiLimit` but not `trackAiCall`. 13 `trackAiCall(` calls exist in `api.ts`, 11 attributed to named routes — helpers may cover the remainder. Audit `api.ts` before concluding any route is unmetered.
+- **`DeliveryHubScreen.labels.test.ts:234`** compares the literal string `'invoices'` against `'pending'` — these can never be equal, so the assertion may not be testing what it intends. Confirm what the test was meant to assert before relying on it as a correctness signal.
