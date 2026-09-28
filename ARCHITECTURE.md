@@ -42,7 +42,7 @@ venues/{venueId}
   ownerUid                          — set at creation, used for founder-access checks
   createdAt                         — used for pilot/trial eligibility
   venueType                         — 'festival' for Festi venues, otherwise absent/other
-  totalStocktakesCompleted          — increments once per DEPARTMENT submission (not per full-venue cycle) — this is the counter used for trial stocktake limits
+  totalStocktakesCompleted          — incremented by `incrementFullStocktakeCompleted` (src/services/trialStocktake.ts; the function name is misleading — not per full-venue cycle) from three call sites: department completion (StockTakeAreaInventoryScreen) and both onboarding imports (BringYourDataScreen, InventoryImportPreviewScreen), so an import counts as a stocktake; import call sites wrap it in try/catch so a failure silently under-counts. Consumed by: D-039 trial cap, Hosti Health stage gating, and the "Based on N stocktakes" insight text in abductiveInsights.ts (which reports department submissions plus imports, not full cycles). ReportsIndexScreen.tsx ~283 has a stale comment ("only increments when ALL departments finish at once") that contradicts current behaviour — see Open items; treat the code as truth.
   trialStatus                       — denormalized copy of billing/trialState.status, so Cloud Functions can query across venues without a collection-group scan. Kept in sync at both resolution points (trial start, stocktake-limit expiry) — NOT updated on time-limit expiry (see Known accepted trade-offs)
   subscription                      — Stripe subscription state (webhook-driven)
   subscriptionOverride              — Console-only, never client-writable; explicit manual override
@@ -58,7 +58,15 @@ venues/{venueId}
   billing/trialState                — single doc: startedAt, stocktakesAtStart, stocktakesUsed, status, resolvedAt, resolvedReason, reminderSentAt
   billing/moduleTrialState          — flat map keyed by moduleId, for the one-time 14-day new-module trial
   event/details                     — festival event configuration
+  products/{id}/priceHistory        — per-product price history written by priceTracking.ts
+  priceChangeFlags                  — unresolved price-change flags awaiting operator review
+  pendingDeliveries                 — pending deliveries for the "Match to invoice" flow
+  fastReceives                      — invoice photo OCR snapshots before review (see Invoice and product intake)
+  profitRecoverySnapshots/{YYYY-MM} — monthly Hosti Health snapshot (mobile writes; see Hosti Health)
+  hostiHealthHistory/{YYYY-MM}      — monthly Hosti Health history (web writes; trend charts need two distinct months)
 ```
+
+This is a subset. `firestore.rules` is the source of truth; it declares ~100 collection matches.
 
 ## Entitlement & billing system
 
@@ -179,6 +187,33 @@ Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoi
 
 **Meter coverage is not uniform** — see Open items for the confirmation gap.
 
+## Suitee context and grounding
+
+`POST /suitee` in `functions/src/api.ts` gives the model: (a) an ambient context string built server-side over a fixed 90-day window (`ninetyDaysTs` / `ninetyDaysAgo`) and (b) 8 tools from `functions/src/suiteeTools.ts`, registered in the `tools` array (~`api.ts:4793`) and dispatched in the resolver: `get_gp_analysis`, `get_supplier_price_trend`, `get_worst_gp_recipes`, `get_supplier_compliance`, `get_gp_trend`, `get_batch_ratio_consistency`, `get_menu_engineering`, `get_price_change_detail`. `runToolLoop` hard-caps at 3 model rounds.
+
+**Grounding rules (deliberate — do not undo):**
+- Ambient context holds pre-aggregated facts only. Per-product price-change lines are intentionally NOT in ambient context; `get_price_change_detail` is the only source (uncapped; `windowChange` is earliest→latest price, never a sum of step percentages; `isHistoricalBackfill` entries excluded).
+- Every tool description carries a "relay exactly, never compute/estimate" clause. The system prompt requires the detail tool for per-product price questions and forbids claiming data is unavailable without calling a tool.
+- Price averages go through `functions/src/priceChangeSanity.ts` (`ANOMALOUS_CHANGE_THRESHOLD_PCT = 75`): `rawAverage`, `cleanAverage`, `flagged`. Used by `get_supplier_price_trend` and the ambient PRICE CHANGES line. Any new averaging of `changePercent` must use it.
+
+**Invariant:** `changePercent` must be computed from the same value stored as the new price. `priceTracking.ts` has five `changePercent` sites; the near-duplicate/WAC branch used to compute from the raw invoice price while storing `wac4.costPrice` — fixed and tested.
+
+**Known limitations:** (i) velocity/PAR lines come from the latest stocktake cycle (`lastStock` vs `parLevel`): as of last count, not live stock; (ii) their headings print counts after truncation (`BELOW PAR n` after `slice(0,8)`; slow/fast after `slice(0,10)`), so `n` can understate the total — see Open items; (iii) the HOSTI HEALTH block reads `venues/{v}/profitRecoverySnapshots/{YYYY-MM}` with no `calculatedAt` freshness check.
+
+## Hosti Health
+
+Two deliberate implementations (see also Known parallel implementations): `src/services/health/hostiHealth.ts` (mobile) and `web-app/src/services/hostiHealth.ts` (web, computes live in the browser). The Stock Accuracy curve (flat 100 to 1.5% variance, 80 at 5%, 40 at 10%, 0 at 30%) is identical in both. The "improvement vs last cycle" badge (`calcVarianceImprovementPct`, `stockAccuracyImprovementPct`) exists on web only; mobile's `abductiveInsights` still inlines the arithmetic.
+
+**Data:** mobile writes `venues/{v}/profitRecoverySnapshots/{YYYY-MM}` inside a non-fatal `try/catch` (Sentry context `hostiHealth:monthlySnapshotWrite`). Web appends `venues/{v}/hostiHealthHistory/{YYYY-MM}`; trend charts need two distinct months. Both collections: member read, manager/owner write.
+
+**Entry point:** Reports → "Hosti Health" → ProfitInsights. Not on the Dashboard.
+
+## Invoice and product intake
+
+`InventoryImportScreen` ("Add Products" → past stocktake / invoice / scan): photos go `scanInvoicePhoto` → `ocrInvoicePhoto` (Cloud Function) → persisted as a `venues/{v}/fastReceives` snapshot → `InventoryReviewModal`; PDF/CSV goes to `/api/extract-inventory`. Both return `supplierCandidate` + `newProduct` proposals via `supplierResolution.resolveSupplier` and `inventoryMatching.detectNewProducts` (single implementation; `nameMatching.ts` supplies tokenising/overlap). `normNameInline` remains in `ocrInvoicePhoto.ts` only, for supplier-name equality.
+
+Products may carry optional `homeDepartmentId` / `homeAreaId` (`EditProductScreen`, allowed in the rules' `affectedKeys`). No stocktake code reads them. Areas live at `departments/{d}/areas/{a}`.
+
 ## Email infrastructure
 
 **Postmark is already deployed — do not introduce a different email provider or the Firebase "Trigger Email" extension.** `POSTMARK_API_KEY` is a Firebase Secret Manager secret. Existing send sites: `functions/src/invites.ts` (team invites), `functions/src/weeklySummary.ts` (weekly manager/owner summary), two sites in `functions/src/api.ts`. All go direct to `https://api.postmarkapp.com/email`. Sender domain `hosti.co.nz` is already configured. New transactional email types should get their own dedicated Postmark message stream (for deliverability tracking), not reuse an existing one — created manually in the Postmark console.
@@ -199,9 +234,25 @@ Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoi
 
 **`deny-backups` / `deny-legacy-orders-imports`** inspect staged files only and pass trivially on a clean tree — they do not protect a branch that has already been committed.
 
-**`tsc --noEmit` from repo root is not a clean gate:** it sweeps `web-app/` and `backend/` without their own dependency trees, producing ~57 errors (~50 in `web-app/`). Only use it for errors in files outside those two directories, and read the output accordingly.
+**`tsc --noEmit` from repo root is not a clean gate:** it sweeps `web-app/` and `backend/` without their own dependency trees, producing dozens of errors; the count depends on which dependency trees are installed (56 with a root-only install, 34 on the dev machine at 041a795). Only use it for errors in files outside those two directories, and read the output accordingly.
 
 **Lockfiles:** tracked (verified via `git ls-files`): root `package-lock.json`, `backend/functions/`, and `server/`; whether `backend/functions/` and `server/` are still active packages is unchecked. `functions/` and `web-app/` have none — installs float. `check-ota-safe.sh` itself cites unpinned lockfiles as the root cause of an earlier React version drift. Pinning `functions/package-lock.json` is a known gap.
+
+## OTA / EAS configuration
+
+(See also `check:ota` in Build commands and verification gates.)
+
+Update config lives in three places: `app.json` (the `updates` block; per-platform `runtimeVersion`), the committed native projects (`android/` and `ios/` are tracked; EAS ignores `app.json` values they override, e.g. `android.package`), and `eas.json` profile `channel`.
+
+**Runtime versions:** iOS uses a static `"1.0.0"` (`Expo.plist` + `app.json`). Android uses the fingerprint policy (`expo_runtime_version = file:fingerprint`), so any native-affecting change yields a new runtime version and Android OTA only reaches builds whose fingerprint matches the update's.
+
+**Channel:** both native configs hard-code `expo-channel-name: production` (`AndroidManifest` `UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY`, `Expo.plist` `EXUpdatesRequestHeaders`). `eas.json` sets `channel: production` on `production`, `play-aab`, `ios-simulator`, `ios-store`; profiles `base`, `development`, `preview`, `tester-apk`, `ios-preview` declare no channel. Configuring the channel does not affect already-installed builds (noted in commit `b16b31e`).
+
+**Launch behaviour:** `checkOnLaunch` is `ALWAYS` with `launchWait: 0`; by default an update fetched on launch N applies on launch N+1.
+
+**App code:** only `SettingsScreen.tsx` touches `expo-updates` (the "OTA Update State" panel: `isEmbeddedLaunch`, `channel`, `runtimeVersion`, `updateId`). No app code triggers checks or reloads.
+
+**Status:** OTA application on real devices has not been observed working on Android build 79 / iOS build 45 despite matching fingerprint and channel. Cause unresolved. Unchecked: the channel→branch mapping (run `eas channel:view production` to confirm) and the panel readout. Source: EAS CLI output from a session, not verifiable from the repo alone — see Open items.
 
 ## Standing engineering rules
 
@@ -212,8 +263,11 @@ Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoi
 - **Link products/entities by ID, never by name** in any new feature.
 - **Check for an existing pattern before adding a new dependency or building new infrastructure** — the offline outbox, the email system, the entitlement system, and `src/services/products/resolveProduct.ts` (the shared merge-chain resolver, correctly reused by `StockHoldingScreen.tsx`, `snapshotWriter.ts`, and `refreshPricesForDepartment.ts` rather than each maintaining its own copy — 8/8 tests passing) have all been reused rather than duplicated once already discovered.
 - Before installing any new native dependency, check its compatibility with the exact `react@19.1.0` pin and this project's New Architecture setting — don't assume `npx expo install` succeeding is sufficient; check for peer-dependency conflicts explicitly.
-- A build/deploy command reported as run is not the same as the change being live — `git push` updates GitHub only; web needs an explicit `vite build` + `firebase deploy --only hosting`; mobile needs an actual EAS build. OTA (`eas update`) has a known, unresolved Android fingerprint-drift issue between local machine and build servers and is **not** the current release path — native rebuilds are.
+- A build/deploy command reported as run is not the same as the change being live — `git push` updates GitHub only; web needs an explicit `vite build` + `firebase deploy --only hosting`; mobile needs an actual EAS build. OTA application on devices is unresolved; see 'OTA / EAS configuration'.
 - **Run `npm run check:renderer` and `npm run check:undefined` before every native build and every `eas update`.** `check:renderer` would have caught the builds 76/77 white-screen crash. `check:undefined` would have caught the `75216ec` `PendingDeliveriesScreen` `FlatList` defect.
+- **Verify a removal with two methods before trusting the result.** `grep "today.s update landed"` returns 0 hits on a file containing `today's update landed` (U+2019 RIGHT SINGLE QUOTATION MARK, not U+0027 APOSTROPHE); a diagnostic banner shipped in two builds because of this. Reproduce: `git show f435237:src/screens/health/ProfitInsightsScreen.tsx | grep "today.s"` → 0 hits; `python3 -c "print('today’s update landed' in open('...').read())"` → True. Use fixed strings with the exact Unicode code points, or Python's `in`.
+- **`grep` basic regex treats `?` literally and is case-sensitive:** use `grep -niE` for extended regex and case-insensitive matching.
+- **Any list passed to a model must state total vs shown count.** Never label a post-`slice` length as the count of matching items — the heading may silently understate the real total. See the BELOW PAR / velocity headings in Suitee context and grounding.
 - **A regression test must be shown to fail on the pre-fix code before it is trusted.** Restore the parent commit's version of the file under test and rerun: if every test still passes, the test cannot detect the bug and must be replaced. A test that imports the dependency itself or mirrors the logic locally cannot detect a bug in the module it claims to cover — it tests its own copy. `15e7311` is the worked example: a 5-test suite for a missing `FlatList` import passed on the pre-fix screen because it imported `FlatList` from `react-native` directly, never from the screen, and mirrored the modal logic as a pure function; the suite was replaced with `check:undefined`, which correctly exits 1 on the pre-fix file.
 
 ## Known parallel implementations (keep in sync)
@@ -250,3 +304,7 @@ These are confirmed to exist in more than one place. Changing one without the ot
 - **Stale OTA baseline:** `.last-android-build-fingerprint` holds build 78's fingerprint and must be updated to build 79's before `check:ota` is meaningful again. Run `npm run check:ota` after updating to confirm it passes cleanly. Until updated, the OTA safety check always diffs against the wrong baseline.
 - **AI meter coverage gap (confirm before assuming):** `/upload-file`, `/reconcile-invoice`, and `/writeFestivalDebrief` have no `trackAiCall` in their route bodies. `/variance-explain` and the two `/extract-festival-*` routes call `checkAiLimit` but not `trackAiCall`. 13 `trackAiCall(` calls exist in `api.ts`, 11 attributed to named routes — helpers may cover the remainder. Audit `api.ts` before concluding any route is unmetered.
 - **`DeliveryHubScreen.labels.test.ts:234`** compares the literal string `'invoices'` against `'pending'` — these can never be equal, so the assertion may not be testing what it intends. Confirm what the test was meant to assert before relying on it as a correctness signal.
+- **`venues/{v}/gpAlerts` missing security rule (unconfirmed):** `web-app/src/pages/SetupProductsPage.tsx` has a client listener that reads and updates `gpAlerts`, but a static reading of `firestore.rules` finds no matching rule for this collection. Confirm in the Rules Playground before assuming writes succeed in production; if missing, add the rule in the same commit as any code change touching it.
+- **Suitee velocity/PAR heading counts:** `BELOW PAR n` is printed after `slice(0,8)` and slow/fast counts after `slice(0,10)`, so `n` reflects the shown count, not the total matching items — a model reading the ambient context may underestimate the scope. Fix: pass the total before slicing alongside the truncated list.
+- **Stale comment at `ReportsIndexScreen.tsx:~283`:** says `totalStocktakesCompleted` "only increments when ALL departments finish at once" — contradicts current behaviour (increments per department and per import). Treat the code as truth; remove the comment.
+- **OTA channel→branch mapping unverified:** run `eas channel:view production` and record which branch it points to. Until done, OTA targeting is unconfirmed.
