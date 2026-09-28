@@ -175,7 +175,7 @@ All AI features route through `functions/src/api.ts`. Live endpoints as of this 
 
 **Metering** lives in `functions/src/services/aiMeter.ts` (`checkAiLimit`, `trackAiCall`, `PLAN_LIMITS`). Usage records land at `venues/{venueId}/aiUsage/{YYYY-MM}`. The Stripe webhook adds calls for the AI Meter Extension. **`PLAN_LIMITS` is duplicated** between `aiMeter.ts` and `src/screens/settings/AiUsageScreen.tsx` — both files carry "keep in sync" comments; update both whenever limits change.
 
-Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoice-photo` each call `checkAiLimit` + `trackAiCall`; the `ocrInvoicePhoto` callable also meters as `'invoice_ocr'`. This server-side gate is what justified removing the UI-level cost gate on `InventoryImportScreen`.
+Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoice-photo` each call `checkAiLimit` + `trackAiCall`; the `ocrInvoicePhoto` callable also meters as `'invoice_ocr'`. This server-side metering backs the removal of the UI-level cost gate on `InventoryImportScreen`.
 
 **Meter coverage is not uniform** — see Open items for the confirmation gap.
 
@@ -187,20 +187,21 @@ Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoi
 
 **Root (mobile app):**
 - `npm ci --ignore-scripts` — uses the tracked `package-lock.json`; `--ignore-scripts` avoids running postinstall hooks against a possibly-mismatched environment
-- `npm run check:renderer` — asserts the installed `react-test-renderer` exactly matches the `react@19.1.0` pin; **run this before every native build and every `eas update`** — a mismatch is the confirmed cause of the white-screen production crash
+- `npm run check:renderer` — compares the React renderer version bundled inside `react-native` (`ReactNativeRenderer-prod.js` hard-coded version string) against the installed `react` package; **run this before every native build and every `eas update`** — a mismatch is the confirmed cause of the white-screen production crash
+- `npm run check:undefined` — runs `tsc --noEmit` and exits 1 if any `error TS2304` or `error TS2552` ("Cannot find name") line appears; **run this before every native build and every `eas update`** alongside `check:renderer` — these are the only tsc errors that signal a real missing import rather than a type mismatch
 - `npx jest --config jest.unit.config.js` — 42 suites / 366 tests as of this writing
 
 **Functions:**
-- `npm install` (no tracked lockfile — installs float; treat functions test results as approximate until the lockfile is pinned)
+- `npm install` (no tracked lockfile — installs float, affecting install reproducibility)
 - `npx jest` — 20 suites / 340 tests as of this writing
 
-**OTA baseline (`check:ota`):** compares the current Metro bundle fingerprint against `.last-android-build-fingerprint`. **This file must be updated after every Android native build** — it currently holds build 78's fingerprint and is stale for build 79 (see Open items). A stale baseline makes `check:ota` either always pass or always fail, defeating its purpose.
+**OTA baseline (`check:ota`):** per the script header, compares the last recorded Android build fingerprint against the current OTA updates; requires EAS and has not been executed here — the behaviour with a stale baseline is unverified. **`.last-android-build-fingerprint` must be updated after every Android native build** — it currently holds build 78's fingerprint and is stale for build 79 (see Open items).
 
 **`deny-backups` / `deny-legacy-orders-imports`** inspect staged files only and pass trivially on a clean tree — they do not protect a branch that has already been committed.
 
 **`tsc --noEmit` from repo root is not a clean gate:** it sweeps `web-app/` and `backend/` without their own dependency trees, producing ~57 errors (~50 in `web-app/`). Only use it for errors in files outside those two directories, and read the output accordingly.
 
-**Lockfiles:** only the root `package-lock.json` is tracked in git. `functions/` and `web-app/` have none — installs float. `check-ota-safe.sh` itself cites unpinned lockfiles as the root cause of an earlier React version drift. Pinning `functions/package-lock.json` is a known gap.
+**Lockfiles:** tracked in git: root `package-lock.json`, `backend/functions/`, and `server/` (the latter two last confirmed as tracked, not spot-checked this session). `functions/` and `web-app/` have none — installs float. `check-ota-safe.sh` itself cites unpinned lockfiles as the root cause of an earlier React version drift. Pinning `functions/package-lock.json` is a known gap.
 
 ## Standing engineering rules
 
@@ -212,6 +213,8 @@ Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoi
 - **Check for an existing pattern before adding a new dependency or building new infrastructure** — the offline outbox, the email system, the entitlement system, and `src/services/products/resolveProduct.ts` (the shared merge-chain resolver, correctly reused by `StockHoldingScreen.tsx`, `snapshotWriter.ts`, and `refreshPricesForDepartment.ts` rather than each maintaining its own copy — 8/8 tests passing) have all been reused rather than duplicated once already discovered.
 - Before installing any new native dependency, check its compatibility with the exact `react@19.1.0` pin and this project's New Architecture setting — don't assume `npx expo install` succeeding is sufficient; check for peer-dependency conflicts explicitly.
 - A build/deploy command reported as run is not the same as the change being live — `git push` updates GitHub only; web needs an explicit `vite build` + `firebase deploy --only hosting`; mobile needs an actual EAS build. OTA (`eas update`) has a known, unresolved Android fingerprint-drift issue between local machine and build servers and is **not** the current release path — native rebuilds are.
+- **Run `npm run check:renderer` and `npm run check:undefined` before every native build and every `eas update`.** Both are fast, both have caught real production breakage. `check:renderer` catches a React version mismatch that caused a white-screen crash. `check:undefined` catches missing imports (TS2304/TS2552) that only surface at runtime — not type-only errors, which tsc reports by the dozen from unrelated files.
+- **A regression test must be shown to fail on the pre-fix code before it is trusted.** Restore the parent commit's version of the file under test and rerun: if every test still passes, the test cannot detect the bug and must be replaced. A test that imports the dependency itself or mirrors the logic locally cannot detect a bug in the module it claims to cover — it tests its own copy. `15e7311` is the worked example: a 5-test suite for a missing `FlatList` import passed on the pre-fix screen because it imported `FlatList` from `react-native` directly, never from the screen, and mirrored the modal logic as a pure function; the suite was replaced with `check:undefined`, which correctly exits 1 on the pre-fix file.
 
 ## Known parallel implementations (keep in sync)
 

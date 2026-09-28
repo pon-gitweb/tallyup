@@ -15,7 +15,8 @@
     "check:no-backups": "bash scripts/deny-backups.sh",
     "check:no-legacy-orders-imports": "bash scripts/deny-legacy-orders-imports.sh",
     "check:ota": "bash scripts/check-ota-safe.sh",
-    "check:renderer": "bash scripts/check-renderer-compat.sh"
+    "check:renderer": "bash scripts/check-renderer-compat.sh",
+    "check:undefined": "bash scripts/check-undefined-identifiers.sh"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
