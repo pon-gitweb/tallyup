@@ -188,7 +188,7 @@ Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoi
 **Root (mobile app):**
 - `npm ci --ignore-scripts` — uses the tracked `package-lock.json`; `--ignore-scripts` avoids running postinstall hooks against a possibly-mismatched environment
 - `npm run check:renderer` — compares the React renderer version bundled inside `react-native` (`ReactNativeRenderer-prod.js` hard-coded version string) against the installed `react` package; **run this before every native build and every `eas update`** — a mismatch is the confirmed cause of the white-screen production crash
-- `npm run check:undefined` — runs `tsc --noEmit` and exits 1 if any `error TS2304` or `error TS2552` ("Cannot find name") line appears; **run this before every native build and every `eas update`** alongside `check:renderer` — these are the only tsc errors that signal a real missing import rather than a type mismatch
+- `npm run check:undefined` — runs `tsc --noEmit` and catches identifiers used without being defined or imported (TS2304/TS2552), which throw `ReferenceError` at runtime; exits 0 clean, 1 if undefined identifiers found, 2 if tsc could not run; **run this before every native build and every `eas update`** alongside `check:renderer`; ~30 s
 - `npx jest --config jest.unit.config.js` — 42 suites / 366 tests as of this writing
 
 **Functions:**
@@ -201,7 +201,7 @@ Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoi
 
 **`tsc --noEmit` from repo root is not a clean gate:** it sweeps `web-app/` and `backend/` without their own dependency trees, producing ~57 errors (~50 in `web-app/`). Only use it for errors in files outside those two directories, and read the output accordingly.
 
-**Lockfiles:** tracked in git: root `package-lock.json`, `backend/functions/`, and `server/` (the latter two last confirmed as tracked, not spot-checked this session). `functions/` and `web-app/` have none — installs float. `check-ota-safe.sh` itself cites unpinned lockfiles as the root cause of an earlier React version drift. Pinning `functions/package-lock.json` is a known gap.
+**Lockfiles:** tracked (verified via `git ls-files`): root `package-lock.json`, `backend/functions/`, and `server/`; whether `backend/functions/` and `server/` are still active packages is unchecked. `functions/` and `web-app/` have none — installs float. `check-ota-safe.sh` itself cites unpinned lockfiles as the root cause of an earlier React version drift. Pinning `functions/package-lock.json` is a known gap.
 
 ## Standing engineering rules
 
@@ -213,7 +213,7 @@ Photo/PDF/CSV import is server-metered: `/extract-inventory` and `/process-invoi
 - **Check for an existing pattern before adding a new dependency or building new infrastructure** — the offline outbox, the email system, the entitlement system, and `src/services/products/resolveProduct.ts` (the shared merge-chain resolver, correctly reused by `StockHoldingScreen.tsx`, `snapshotWriter.ts`, and `refreshPricesForDepartment.ts` rather than each maintaining its own copy — 8/8 tests passing) have all been reused rather than duplicated once already discovered.
 - Before installing any new native dependency, check its compatibility with the exact `react@19.1.0` pin and this project's New Architecture setting — don't assume `npx expo install` succeeding is sufficient; check for peer-dependency conflicts explicitly.
 - A build/deploy command reported as run is not the same as the change being live — `git push` updates GitHub only; web needs an explicit `vite build` + `firebase deploy --only hosting`; mobile needs an actual EAS build. OTA (`eas update`) has a known, unresolved Android fingerprint-drift issue between local machine and build servers and is **not** the current release path — native rebuilds are.
-- **Run `npm run check:renderer` and `npm run check:undefined` before every native build and every `eas update`.** Both are fast, both have caught real production breakage. `check:renderer` catches a React version mismatch that caused a white-screen crash. `check:undefined` catches missing imports (TS2304/TS2552) that only surface at runtime — not type-only errors, which tsc reports by the dozen from unrelated files.
+- **Run `npm run check:renderer` and `npm run check:undefined` before every native build and every `eas update`.** `check:renderer` would have caught the builds 76/77 white-screen crash. `check:undefined` would have caught the `75216ec` `PendingDeliveriesScreen` `FlatList` defect.
 - **A regression test must be shown to fail on the pre-fix code before it is trusted.** Restore the parent commit's version of the file under test and rerun: if every test still passes, the test cannot detect the bug and must be replaced. A test that imports the dependency itself or mirrors the logic locally cannot detect a bug in the module it claims to cover — it tests its own copy. `15e7311` is the worked example: a 5-test suite for a missing `FlatList` import passed on the pre-fix screen because it imported `FlatList` from `react-native` directly, never from the screen, and mirrored the modal logic as a pure function; the suite was replaced with `check:undefined`, which correctly exits 1 on the pre-fix file.
 
 ## Known parallel implementations (keep in sync)
