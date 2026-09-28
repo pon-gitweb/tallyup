@@ -265,7 +265,14 @@ Update config lives in three places: `app.json` (the `updates` block; per-platfo
 - Before installing any new native dependency, check its compatibility with the exact `react@19.1.0` pin and this project's New Architecture setting — don't assume `npx expo install` succeeding is sufficient; check for peer-dependency conflicts explicitly.
 - A build/deploy command reported as run is not the same as the change being live — `git push` updates GitHub only; web needs an explicit `vite build` + `firebase deploy --only hosting`; mobile needs an actual EAS build. OTA application on devices is unresolved; see 'OTA / EAS configuration'.
 - **Run `npm run check:renderer` and `npm run check:undefined` before every native build and every `eas update`.** `check:renderer` would have caught the builds 76/77 white-screen crash. `check:undefined` would have caught the `75216ec` `PendingDeliveriesScreen` `FlatList` defect.
-- **Verify a removal with two methods before trusting the result.** `grep "today.s update landed"` returns 0 hits on a file containing the text `"today"` + U+2019 + `"s update landed"` (RIGHT SINGLE QUOTATION MARK, not U+0027 APOSTROPHE); a diagnostic banner shipped in two builds because of this. Reproduce:
+- **Verify a removal with two methods before trusting the result.** `grep "today.s update landed"` is locale-dependent: `.` matches one byte in the C locale (0 hits, which is how the banner was missed in a Linux sandbox) and one character in UTF-8 locales (1 hit, the macOS default). Never use `.` to bridge a non-ASCII character: search an ASCII-only fragment, or use Python with an explicit `\u` escape. A diagnostic banner shipped in two builds because of this. Reproduce:
+  ```sh
+  git show f435237:src/screens/health/ProfitInsightsScreen.tsx > /tmp/banner.tsx
+  grep -c "update landed" /tmp/banner.tsx                     # prints 1 in every locale (ASCII-only fragment)
+  LC_ALL=C grep -c "today.s update landed" /tmp/banner.tsx    # prints 0: in the C locale "." matches one byte, not the 3-byte U+2019
+  python3 -c "print('today\u2019s update landed' in open('/tmp/banner.tsx', encoding='utf-8').read())"    # prints True
+  ```
+  Use fixed strings with the exact Unicode code points, or Python's `in`.
   ```sh
   git show f435237:src/screens/health/ProfitInsightsScreen.tsx > /tmp/banner.tsx
   grep -c "today.s update landed" /tmp/banner.tsx    # prints 0
