@@ -31,9 +31,9 @@ This exact bug stranded a real user (no path to venue/festival creation) before 
 - Where the tab's own name matched the duplicate exactly (`Orders`, `Reports`), the duplicate was simply removed — existing callers correctly fall through to the tab.
 - Where the tab's real name differed from the duplicate (`Dashboard`→tab `Home`, `FestivalBarSelection`→tab `Stock`), every caller had to be found and updated to the tab's real name *before* the duplicate could be safely removed — removing the duplicate first would have broken every caller instead of fixing them.
 
-**Rule going forward:** never register the same component, or route names that could collide, in both `MainTabs.tsx` and `MainStack.tsx`. If you need a screen reachable both as a tab's home content and as something pushed from elsewhere, give the pushed version a genuinely distinct route name.
+**Rule going forward:** the real danger is a *name* collision — a route name registered in both `MainTabs.tsx` and `MainStack.tsx` — not a component collision. Never register the same route *name* in both navigators. Component reuse is safe as long as the names are genuinely distinct. If you need a screen reachable both as a tab's home content and as something pushed from elsewhere, give the pushed version a genuinely distinct route name. **Safe exception on record:** `DepartmentSelectionScreen` is registered as tab name `"Stock"` in `MainTabs.tsx` and as stack name `"DepartmentSelection"` in `MainStack.tsx` — these names do not collide, and all 12 callers navigate to `"DepartmentSelection"` (the stack name), so no dead-end occurs.
 
-Every screen registered directly in `MainStack.tsx` uses only `{ title: '...' }` as its options (confirmed via full audit) — meaning every one gets React Navigation's default header with its automatic back button. None have `headerShown: false` set at registration, and none override their header at runtime. This structural class of dead-end is confirmed absent across the whole app as of this audit. A *behavioral* audit (does every terminal/confirmation screen actually lead somewhere sensible after success, does every form have a clean cancel path) has not yet been done and remains open.
+Every screen registered directly in `MainStack.tsx` uses only `{ title: '...' }` as its options (confirmed via full audit) — meaning every one gets React Navigation's default header with its automatic back button. **Eleven screens have `headerShown: false` set at registration:** `HomeRouter`, `MainTabs` (expected — the tab bar is its own navigation chrome), `EmailVerification`, `CreateVenue`, `SalesImport`, `Invoices`, `OnboardingRoad`, `HookScreen`, `DemoCount`, `DemoResult`, `SetupWizard`. These are the priority list for the behavioral dead-end audit. A *behavioral* audit (does every terminal/confirmation screen actually lead somewhere sensible after success, does every form have a clean cancel path) has not yet been done and remains open.
 
 ## Firestore structure (core paths)
 
@@ -171,15 +171,23 @@ Agreed phase flow: **Setup → Plan → Order → Bump-in → Live (daily loop) 
 
 ## AI endpoints and metering
 
-All AI features route through `functions/src/api.ts`. Live endpoints as of this writing:
+Most AI features route through `functions/src/api.ts` as a single Express app. Three legacy Cloud Function exports make direct Claude calls outside the Express app and are not metered: `aiVarianceExplain` (deprecated — superseded by `/variance-explain`), `processInvoicesPdf` (deprecated callable — superseded by `/process-invoices-pdf`), and `ocrSupplierCard` (`functions/src/ocr/ocrSupplierCard.ts`). Live routes in `api.ts` as of this writing:
 
 - `/variance-explain` — variance-analysis persona
 - `/generate-recipe` — bar or kitchen consultant persona
 - `/budget-suggest` — budget advisor persona
 - `/ai-insights` — business advisor persona
-- `/photo-count` — inventory counter persona
+- `/photo-count` — inventory counter persona (stocktake, shelf-scan, bottle-level, product-photo, catalogue modes)
 - `/suitee` — venue intelligence persona; branches at `venueType === 'festival'` (~line 3557) to a dedicated festival persona prompt (~line 5434) — that specific call chain has not been fully traced
 - `/izzy` — in-app guide persona
+- `/extract-inventory` — stocktake/invoice/catalogue extraction from image, PDF, or CSV
+- `/process-invoice-photo` — invoice photo → lines (Storage path, Claude Vision)
+- `/process-invoices-pdf` — PDF invoice → lines + supplier + metadata via Claude
+- `/process-sales-pdf` — POS sales report PDF → line items via Claude
+- `/refine-prediction` — festival stock prediction refinement (adjusts category market-share splits)
+- `/extract-festival-contract` — supplier contract PDF → obligations + pricing terms
+- `/extract-festival-rider` — artist rider PDF → beverage requirements
+- `/writeFestivalDebrief` — event debrief → worked-well/improve/year-2-seeds (writes to Firestore)
 
 **Metering** lives in `functions/src/services/aiMeter.ts` (`checkAiLimit`, `trackAiCall`, `PLAN_LIMITS`). Usage records land at `venues/{venueId}/aiUsage/{YYYY-MM}`. The Stripe webhook adds calls for the AI Meter Extension. **`PLAN_LIMITS` is duplicated** between `aiMeter.ts` and `src/screens/settings/AiUsageScreen.tsx` — both files carry "keep in sync" comments; update both whenever limits change.
 
@@ -252,7 +260,7 @@ Update config lives in three places: `app.json` (the `updates` block; per-platfo
 
 **App code:** only `SettingsScreen.tsx` touches `expo-updates` (the "OTA Update State" panel: `isEmbeddedLaunch`, `channel`, `runtimeVersion`, `updateId`). No app code triggers checks or reloads.
 
-**Status:** OTA application on real devices has not been observed working on Android build 79 / iOS build 45 despite matching fingerprint and channel. Cause unresolved. Unchecked: the channel→branch mapping (run `eas channel:view production` to confirm) and the panel readout. Source: EAS CLI output from a session, not verifiable from the repo alone — see Open items.
+**Status:** OTA application on real devices was not observed working on Android build 79 / iOS build 45 despite matching fingerprint and channel. Root cause confirmed (closed finding): Android uses the fingerprint policy, and the fingerprint recorded during the local EAS CLI run differed from the fingerprint computed by EAS Build servers — they hash slightly different native-project states, so the update was never applied to build 79. Always record the fingerprint from EAS Build output, not a local `eas build:inspect` run. Still unchecked: the channel→branch mapping (run `eas channel:view production` to confirm) and the panel readout. Source: EAS CLI output from a session, not verifiable from the repo alone — see Open items.
 
 ## Standing engineering rules
 
@@ -270,12 +278,6 @@ Update config lives in three places: `app.json` (the `updates` block; per-platfo
   git show f435237:src/screens/health/ProfitInsightsScreen.tsx > /tmp/banner.tsx
   grep -c "update landed" /tmp/banner.tsx                     # prints 1 in every locale (ASCII-only fragment)
   LC_ALL=C grep -c "today.s update landed" /tmp/banner.tsx    # prints 0: in the C locale "." matches one byte, not the 3-byte U+2019
-  python3 -c "print('today\u2019s update landed' in open('/tmp/banner.tsx', encoding='utf-8').read())"    # prints True
-  ```
-  Use fixed strings with the exact Unicode code points, or Python's `in`.
-  ```sh
-  git show f435237:src/screens/health/ProfitInsightsScreen.tsx > /tmp/banner.tsx
-  grep -c "today.s update landed" /tmp/banner.tsx    # prints 0
   python3 -c "print('today\u2019s update landed' in open('/tmp/banner.tsx', encoding='utf-8').read())"    # prints True
   ```
   Use fixed strings with the exact Unicode code points, or Python's `in`.
@@ -314,10 +316,10 @@ These are confirmed to exist in more than one place. Changing one without the ot
   This means any operator who receives an order manually without scanning an invoice has their order marked as received but their actual stock levels (`incomingQty`, and therefore the expected count in the next stocktake) never updated. The two paths use different status values (`'received'` vs `'invoiced'`) and are entirely unaware of each other.
   
   **Planned fix (not yet implemented):** After `persist(true)` completes, call `finalizeReceiveCore` using the order's own line quantities as the parsed lines — treating a manually confirmed receive as if it were a confirmed invoice with the ordered quantities. This creates a real invoice record and updates stock, without requiring a physical invoice document. The alternative (Option B) is to keep the paths separate and add a nudge after manual receive: "Order marked received. Scan or upload your invoice to update your stock counts." Option B requires no code change to `finalizeReceiveCore` and carries lower regression risk — preferred if this is being added pre-pilot.
-- **Stale OTA baseline:** `.last-android-build-fingerprint` holds build 78's fingerprint and must be updated to build 79's before `check:ota` is meaningful again. Run `npm run check:ota` after updating to confirm it passes cleanly. Until updated, the OTA safety check always diffs against the wrong baseline.
-- **AI meter coverage gap (confirm before assuming):** `/upload-file`, `/reconcile-invoice`, and `/writeFestivalDebrief` have no `trackAiCall` in their route bodies. `/variance-explain` and the two `/extract-festival-*` routes call `checkAiLimit` but not `trackAiCall`. 13 `trackAiCall(` calls exist in `api.ts`, 11 attributed to named routes — helpers may cover the remainder. Audit `api.ts` before concluding any route is unmetered.
-- **`DeliveryHubScreen.labels.test.ts:234`** compares the literal string `'invoices'` against `'pending'` — these can never be equal, so the assertion may not be testing what it intends. Confirm what the test was meant to assert before relying on it as a correctness signal.
-- **`venues/{v}/gpAlerts` missing security rule (unconfirmed):** `web-app/src/pages/SetupProductsPage.tsx` has a client listener that reads and updates `gpAlerts`, but a static reading of `firestore.rules` finds no matching rule for this collection. Confirm in the Rules Playground before assuming writes succeed in production; if missing, add the rule in the same commit as any code change touching it.
+- **Stale OTA baseline (low priority):** `.last-android-build-fingerprint` still holds build 78's fingerprint; build 79's was not recorded after the native build. Update it from the EAS Build output for build 79, then run `npm run check:ota` to confirm it passes. Until updated the OTA safety check diffs against the wrong baseline. The root cause of OTA failures on build 79 is now a closed finding (fingerprint drift between local machine and EAS Build servers) — this item is about keeping the safety-check baseline current, not about OTA not working.
+- **AI meter coverage gap:** `/variance-explain`, `/extract-festival-contract`, and `/extract-festival-rider` call `checkAiLimit` (enforces the cap) but never call `trackAiCall` (records usage for the usage-screen counter and Stripe metering). `/writeFestivalDebrief` makes a Claude call with no limit check and no tracking at all. All other Claude-calling routes in `api.ts` have both.
+- **`venues/{v}/gpAlerts` missing security rule (confirmed):** `web-app/src/pages/SetupProductsPage.tsx` has a client listener that reads and updates `gpAlerts`, but `firestore.rules` has no matching rule for this collection. Firestore denies by default — client reads and writes to `gpAlerts` silently fail in production; the Admin SDK (Cloud Functions) bypasses rules and succeeds regardless. Add the rule in the same commit as any code change touching `gpAlerts`.
 - **Suitee velocity/PAR heading counts:** `BELOW PAR n` is printed after `slice(0,8)` and slow/fast counts after `slice(0,10)`, so `n` reflects the shown count, not the total matching items — a model reading the ambient context may underestimate the scope. Fix: pass the total before slicing alongside the truncated list.
 - **Stale comment at `ReportsIndexScreen.tsx:~283`:** says `totalStocktakesCompleted` "only increments when ALL departments finish at once" — contradicts current behaviour (increments per department and per import). Treat the code as truth; remove the comment.
+- **Trial-reminder deploy-order risk:** `trialReminderEmail` is exported from `functions/src/index.ts` and ships on every `firebase deploy --only functions` run, even if the Postmark `trial-reminders` message stream has not yet been created in the console. The function fails safe — it throws before stamping `reminderSentAt` — so the residual risk is a successful email send followed by a failed Firestore write: one duplicate reminder on the next daily run. Mitigation: create the Postmark stream before deploying functions for the first time, or gate the function behind an env-flag until ready.
 - **OTA channel→branch mapping unverified:** run `eas channel:view production` and record which branch it points to. Until done, OTA targeting is unconfirmed.
