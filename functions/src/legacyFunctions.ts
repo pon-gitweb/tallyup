@@ -187,6 +187,8 @@ export const processInvoicesPdf = functions
     if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Auth required");
     const { venueId, storagePath } = data || {};
     if (!venueId || !storagePath) throw new functions.https.HttpsError("invalid-argument", "Missing venueId or storagePath");
+    const lcPdf = await checkAiLimit(venueId, 'invoice_ocr');
+    if (!lcPdf.allowed) throw new functions.https.HttpsError("resource-exhausted", lcPdf.limitError?.message || "AI limit reached");
     try {
       const [buf] = await admin.storage().bucket().file(storagePath).download();
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -203,6 +205,7 @@ export const processInvoicesPdf = functions
       const warnings: string[] = [];
       if (!lines.length) warnings.push("No line items detected — please review manually.");
       warnings.push("PDF parsed using text extraction (beta).");
+      await trackAiCall(venueId, 'invoice_ocr');
       return {
         ok: true,
         invoice: {

@@ -1,5 +1,6 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
+import { checkAiLimit, trackAiCall } from '../services/aiMeter';
 
 const db = admin.firestore();
 
@@ -79,6 +80,9 @@ export const ocrSupplierCard = functions
       throw new functions.https.HttpsError('invalid-argument', 'imageBase64 is required.');
     }
 
+    const lcCard = await checkAiLimit(venueId as string, 'product_photo');
+    if (!lcCard.allowed) throw new functions.https.HttpsError('resource-exhausted', lcCard.limitError?.message || 'AI limit reached');
+
     functions.logger.info('[ocrSupplierCard] start', { uid, venueId, base64Length: imageBase64.length });
 
     try {
@@ -97,6 +101,7 @@ export const ocrSupplierCard = functions
     try {
       const result = await extractCardWithClaude(imageBase64);
       functions.logger.info('[ocrSupplierCard] OK', { uid, venueId, supplierName: result.supplierName });
+      await trackAiCall(venueId as string, 'product_photo');
       return { ok: true, ...result };
     } catch (e: any) {
       functions.logger.error('[ocrSupplierCard] extraction failed', e?.message);
