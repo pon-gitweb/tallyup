@@ -361,6 +361,7 @@ app.post("/variance-explain", async (req, res) => {
     const raw = await callClaude(systemPrompt, "Explain this stock variance:\n\n" + contextLines);
     let parsed: any = {};
     try { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : {}; } catch { parsed = { summary: raw.slice(0, 300) }; }
+    if (venueIdForLimit) { await trackAiCall(venueIdForLimit, 'variance_explain'); }
     console.log("[api/variance-explain] OK", { uid, productName, variance });
     res.json({
       summary: parsed.summary || "No explanation available.",
@@ -5587,6 +5588,9 @@ app.post("/writeFestivalDebrief", async (req, res) => {
     if (!venueId || !eventId) { res.status(400).json({ ok: false, error: "Missing venueId or eventId" }); return; }
     await verifyVenueMembership(uid, venueId);
 
+    const lc = await checkAiLimit(venueId, 'ai_insights');
+    if (!lc.allowed) { res.status(429).json({ ok: false, ...lc.limitError }); return; }
+
     const db = admin.firestore();
 
     // Load historic event data
@@ -5665,6 +5669,7 @@ Each array should have 2-4 items. Be specific and actionable. Never suggest pric
     let parsed: any = {};
     try { parsed = JSON.parse(rawText); } catch { parsed = {}; }
 
+    await trackAiCall(venueId, 'ai_insights');
     const batch = db.batch();
     const writeRec = (category: string, items: any[]) => {
       (items || []).forEach((item: any, i: number) => {
@@ -7353,6 +7358,7 @@ app.post("/extract-festival-contract", async (req, res) => {
       return;
     }
 
+    await trackAiCall(venueId, 'ai_insights');
     const obligations: any[] = extracted.obligations || [];
     const rebates: any[] = extracted.rebates || [];
     const pricingTerms: any[] = extracted.pricingTerms || [];
@@ -7604,6 +7610,7 @@ app.post("/extract-festival-rider", async (req, res) => {
       return;
     }
 
+    await trackAiCall(venueId, 'ai_insights');
     await db.doc(`venues/${venueId}/riders/${riderId}`).update({
       artistName:       extracted.artistName || null,
       setTime:          extracted.setTime || null,
