@@ -5,6 +5,7 @@
 import * as functions from "firebase-functions";
 import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
+import { checkAiLimit, trackAiCall } from './services/aiMeter';
 
 const db = () => admin.firestore();
 
@@ -411,6 +412,13 @@ export const aiVarianceExplain = functions
       const uid = await verifyToken(req);
       if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
       const ctx = req.body || {};
+      const venueId: string = ctx.venueId || ctx.aiContext?.venueId || "";
+      if (venueId) {
+        const memberSnap = await admin.firestore().doc(`venues/${venueId}/members/${uid}`).get();
+        if (!memberSnap.exists) { res.status(403).json({ ok: false, error: "Not a venue member" }); return; }
+        const lc = await checkAiLimit(venueId, 'variance_explain');
+        if (!lc.allowed) { res.status(429).json(lc.limitError); return; }
+      }
       const apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
       const productName = ctx.itemName || ctx.name || ctx.productId || "Product";
@@ -443,6 +451,7 @@ export const aiVarianceExplain = functions
       const raw = data?.content?.[0]?.text || "{}";
       let parsed: any = {};
       try { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : {}; } catch { parsed = { summary: raw.slice(0, 300) }; }
+      if (venueId) { await trackAiCall(venueId, 'variance_explain'); }
       res.json({ summary: parsed.summary || "No explanation available.", factors: Array.isArray(parsed.factors) ? parsed.factors : [], confidence: Number.isFinite(parsed.confidence) ? parsed.confidence : 0.5 });
     } catch (e: any) {
       console.error("[aiVarianceExplain]", e?.message || e);
