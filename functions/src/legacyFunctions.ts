@@ -196,8 +196,10 @@ export const processInvoicesPdf = functions
       const pdfData = await pdfParse(buf);
       const text = pdfData.text || "";
       let lines: any[] = [];
+      let claudeReached = false;
       try {
         lines = await extractLinesWithClaude(text);
+        claudeReached = true;
         if (!lines.length) throw new Error("no lines");
       } catch {
         lines = extractLinesFromText(text);
@@ -205,7 +207,7 @@ export const processInvoicesPdf = functions
       const warnings: string[] = [];
       if (!lines.length) warnings.push("No line items detected — please review manually.");
       warnings.push("PDF parsed using text extraction (beta).");
-      await trackAiCall(venueId, 'invoice_ocr');
+      await trackAiCall(venueId, 'invoice_ocr', claudeReached);
       return {
         ok: true,
         invoice: {
@@ -454,7 +456,7 @@ export const aiVarianceExplain = functions
       const raw = data?.content?.[0]?.text || "{}";
       let parsed: any = {};
       try { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : {}; } catch { parsed = { summary: raw.slice(0, 300) }; }
-      if (venueId) { await trackAiCall(venueId, 'variance_explain'); }
+      if (venueId) { await trackAiCall(venueId, 'variance_explain', true); }
       res.json({ summary: parsed.summary || "No explanation available.", factors: Array.isArray(parsed.factors) ? parsed.factors : [], confidence: Number.isFinite(parsed.confidence) ? parsed.confidence : 0.5 });
     } catch (e: any) {
       console.error("[aiVarianceExplain]", e?.message || e);

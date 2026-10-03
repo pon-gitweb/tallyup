@@ -9,6 +9,8 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 type UsageData = {
   totalCalls: number;
   breakdown: Record<string, number>;
+  billableCalls?: number;
+  billableBreakdown?: Record<string, number>;
   resetAt: string;
   plan: string;
 };
@@ -116,8 +118,8 @@ function AiUsageScreen() {
   const plan = usage?.plan || 'beta';
   const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.beta;
   const totalLimit = limits.total ?? 600;
-  const totalUsed = usage?.totalCalls || 0;
-  const breakdown = usage?.breakdown || {};
+  const totalUsed = usage?.billableCalls || 0;
+  const breakdown = usage?.billableBreakdown || {};
   const totalPct = totalLimit > 0 ? Math.min(100, Math.round((totalUsed / totalLimit) * 100)) : 0;
 
   const now = new Date();

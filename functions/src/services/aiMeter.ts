@@ -95,7 +95,7 @@ export async function resolveVenuePlan(db: admin.firestore.Firestore, venueId: s
   return { plan, effectivePlan };
 }
 
-export async function trackAiCall(venueId: string, callType: AiCallType): Promise<MeterState> {
+export async function trackAiCall(venueId: string, callType: AiCallType, costIncurred = false): Promise<MeterState> {
   const db = admin.firestore();
   const now = new Date();
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -118,13 +118,18 @@ export async function trackAiCall(venueId: string, callType: AiCallType): Promis
     featureUsedAfter = (data.breakdown?.[callType] || 0) + 1;
     extensionCallsPurchased = data.extensionCallsPurchased || 0;
 
-    await usageRef.set({
+    const writeData: Record<string, unknown> = {
       totalCalls: aiUsed,
       lastCallAt: admin.firestore.FieldValue.serverTimestamp(),
       resetAt,
       plan: effectivePlan,
       breakdown: { ...data.breakdown, [callType]: featureUsedAfter },
-    }, { merge: true });
+    };
+    if (costIncurred) {
+      writeData.billableCalls = (data.billableCalls || 0) + 1;
+      writeData.billableBreakdown = { ...data.billableBreakdown, [callType]: (data.billableBreakdown?.[callType] || 0) + 1 };
+    }
+    await usageRef.set(writeData, { merge: true });
 
     // FIX 5: 80% warning
     const pct = Math.round((featureUsedAfter / featureLimit) * 100);
@@ -172,8 +177,8 @@ export async function checkAiLimit(venueId: string, callType: AiCallType): Promi
   try {
     const snap = await db.doc(`venues/${venueId}/aiUsage/${monthKey}`).get();
     const d = snap.data() || {};
-    aiUsed = d.totalCalls || 0;
-    featureUsed = d.breakdown?.[callType] || 0;
+    aiUsed = d.billableCalls || 0;
+    featureUsed = d.billableBreakdown?.[callType] || 0;
     extensionCallsPurchased = d.extensionCallsPurchased || 0;
   } catch {}
 

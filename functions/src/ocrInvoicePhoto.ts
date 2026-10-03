@@ -1691,7 +1691,7 @@ export const ocrInvoicePhoto = functions
     }
 
     // Successful vision parse — one metered call regardless of page/document count
-    await trackAiCall(venueId, 'invoice_ocr');
+    await trackAiCall(venueId, 'invoice_ocr', true);
 
     // STEP 1: classify the document (unless the client already told us what it is)
     const docTypeHint = data?.docTypeHint ? String(data.docTypeHint) : null;

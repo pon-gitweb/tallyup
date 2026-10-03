@@ -361,7 +361,7 @@ app.post("/variance-explain", async (req, res) => {
     const raw = await callClaude(systemPrompt, "Explain this stock variance:\n\n" + contextLines);
     let parsed: any = {};
     try { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : {}; } catch { parsed = { summary: raw.slice(0, 300) }; }
-    if (venueIdForLimit) { await trackAiCall(venueIdForLimit, 'variance_explain'); }
+    if (venueIdForLimit) { await trackAiCall(venueIdForLimit, 'variance_explain', true); }
     console.log("[api/variance-explain] OK", { uid, productName, variance });
     res.json({
       summary: parsed.summary || "No explanation available.",
@@ -567,7 +567,7 @@ app.post("/generate-recipe", async (req, res) => {
       recipeJson = JSON.parse(m[0]);
     }
 
-    await trackAiCall(venueId, 'recipe_generation');
+    await trackAiCall(venueId, 'recipe_generation', true);
     console.log("[api/generate-recipe] OK", { uid, venueId, name, type: recipeType });
 
     const responseBody = { ok: true, ...recipeJson };
@@ -683,7 +683,7 @@ app.post("/budget-suggest", async (req, res) => {
         return 0.30; // no order history
       })(),
     })) : [];
-    const meter = await trackAiCall(venueId, 'suggest_orders');
+    const meter = await trackAiCall(venueId, 'suggest_orders', true);
     console.log("[api/budget-suggest] OK", { uid, venueId, meter });
     res.json({ ok: true, meter, suggestions, overallNote: parsed.overallNote || null, dataQuality });
   } catch (e: any) {
@@ -779,7 +779,7 @@ app.post("/ai-insights", async (req, res) => {
       }
     }
 
-    await trackAiCall(venueId, "ai_insights");
+    await trackAiCall(venueId, "ai_insights", true);
     console.log("[api/ai-insights] OK", { uid, venueId, count: cleaned.length });
     res.json({ ok: true, insights: cleaned });
   } catch (e: any) {
@@ -963,7 +963,7 @@ app.post("/extract-inventory", async (req, res) => {
       const callTypeForMode: AiCallType =
         mode === 'shelf-scan' ? 'shelf_scan' :
         mode === 'product-photo' ? 'product_photo' : 'stocktake_photo';
-      trackAiCall(venueId, callTypeForMode).catch(() => {});
+      trackAiCall(venueId, callTypeForMode, true).catch(() => {});
     }
 
     // Parse response based on mode
@@ -1316,7 +1316,7 @@ app.post("/photo-count", async (req, res) => {
     let parsed: any = {};
     try { parsed = match ? JSON.parse(match[0]) : {}; } catch { parsed = {}; }
     // Log correction data for learning (venueId + hint + result)
-    trackAiCall(venueId, 'stocktake_photo').catch(() => {});
+    trackAiCall(venueId, 'stocktake_photo', true).catch(() => {});
 
     if (isBottleLevel) {
       console.log("[api/photo-count] OK (bottle-level)", { uid, venueId, productHint, fillLevel: parsed.fillLevel, confidence: parsed.confidence });
@@ -3557,7 +3557,7 @@ app.post("/suitee", async (req, res) => {
       const venueDoc = await db.doc(`venues/${venueId}`).get();
       if (venueDoc.exists && venueDoc.data()?.venueType === 'festival') {
         const festAnswer = await handleFestivalSuitee(venueId, question, uid!, db, history);
-        const meter = await trackAiCall(venueId, 'suitee');
+        const meter = await trackAiCall(venueId, 'suitee', true);
         res.json({ ok: true, answer: festAnswer, usageWarning: meter.usageWarning ?? null });
         return;
       }
@@ -5049,7 +5049,7 @@ ${context}`;
 
     const answer = await runToolLoop(callClaude, messages, resolveTool);
 
-    const suiteeMeter = await trackAiCall(venueId, 'suitee');
+    const suiteeMeter = await trackAiCall(venueId, 'suitee', true);
     console.log("[api/suitee] OK", { uid, venueId, questionLength: question.length });
     res.json({ ok: true, answer, usageWarning: suiteeMeter.usageWarning ?? null });
 
@@ -5140,7 +5140,7 @@ Current screen context will be provided with each message. Use it to give contex
     const data = await claudeResp.json() as any;
     const answer = data?.content?.[0]?.text || "I'm having trouble right now. Please try again.";
     let izzyWarning = null;
-    if (izzyVenueId) izzyWarning = (await trackAiCall(izzyVenueId, 'izzy')).usageWarning ?? null;
+    if (izzyVenueId) izzyWarning = (await trackAiCall(izzyVenueId, 'izzy', true)).usageWarning ?? null;
     console.log("[api/izzy] OK", { uid, questionLength: question.length });
     res.json({ ok: true, answer, usageWarning: izzyWarning });
   } catch (e: any) {
@@ -5669,7 +5669,7 @@ Each array should have 2-4 items. Be specific and actionable. Never suggest pric
     let parsed: any = {};
     try { parsed = JSON.parse(rawText); } catch { parsed = {}; }
 
-    await trackAiCall(venueId, 'ai_insights');
+    await trackAiCall(venueId, 'ai_insights', true);
     const batch = db.batch();
     const writeRec = (category: string, items: any[]) => {
       (items || []).forEach((item: any, i: number) => {
@@ -6373,6 +6373,7 @@ app.post("/process-invoices-csv", async (req, res) => {
       proposals: priceResult.proposals,
     };
 
+    // CSV processing never calls Claude — costIncurred defaults to false (usage-only, never counts toward billable gate).
     trackAiCall(venueId, 'invoice_ocr').catch(() => {});
     console.log("[api/process-invoices-csv] OK", { uid, venueId, storagePath, linesCount: lines.length, proposals: priceResult.proposals.length });
     res.json(payload);
@@ -6434,8 +6435,10 @@ app.post("/process-invoices-pdf", async (req, res) => {
     // Single comprehensive Claude extraction — supplier + customer + metadata + lines
     let invoiceData: CompleteInvoiceExtraction | null = null;
     let lines: any[] = [];
+    let claudeReached = false;
     try {
       invoiceData = await extractInvoiceComplete(text);
+      claudeReached = true;
       lines = filterInvoiceLines(invoiceData.lines);
       if (!lines.length) throw new Error("No lines extracted");
     } catch (claudeErr: any) {
@@ -6517,7 +6520,7 @@ app.post("/process-invoices-pdf", async (req, res) => {
       proposals: priceResultPdf.proposals,
     };
 
-    trackAiCall(venueId, 'invoice_ocr').catch(() => {});
+    trackAiCall(venueId, 'invoice_ocr', claudeReached).catch(() => {});
     console.log("[api/process-invoices-pdf] OK", { uid, venueId, storagePath, linesCount: lines.length, poNumber, supplierName: resolvedSupplierNamePdf, proposals: priceResultPdf.proposals.length });
     res.json(payload);
 
@@ -6803,6 +6806,8 @@ ${pdfText.slice(0, 8000)}`,
     const claudeData = await claudeRes.json() as any;
     const rawText: string = claudeData.content?.[0]?.text ?? "";
 
+    trackAiCall(venueId, "sales_report", true).catch(() => {});
+
     let extracted: any = { period: {}, lines: [], warnings: [] };
     try {
       const cleaned = rawText.replace(/```json\n?|\n?```/g, "").trim();
@@ -6819,7 +6824,6 @@ ${pdfText.slice(0, 8000)}`,
     }
 
     const lines = (extracted.lines || []).filter((l: any) => l.name && Number(l.qtySold) > 0);
-    trackAiCall(venueId, "sales_report").catch(() => {});
 
     res.json({
       ok: true,
@@ -7100,6 +7104,8 @@ Rules: Include every product line. qty must be a positive number. unitPrice is t
     const claudeData = await claudeRes.json() as any;
     const rawText: string = claudeData.content?.[0]?.text ?? "";
 
+    trackAiCall(venueId, "invoice_ocr", true).catch(() => {});
+
     let extracted: { supplierName?: string; invoiceNumber?: string; poNumber?: string; lines: any[] } = { lines: [] };
     try {
       const cleaned = rawText.replace(/```json\n?|\n?```/g, "").trim();
@@ -7113,8 +7119,6 @@ Rules: Include every product line. qty must be a positive number. unitPrice is t
     const lines = (extracted.lines || []).filter((l: any) => l.name && Number(l.qty) > 0);
     const warnings: string[] = [];
     if (!lines.length) warnings.push("No product lines detected — try a clearer, well-lit photo of the invoice");
-
-    trackAiCall(venueId, "invoice_ocr").catch(() => {});
 
     res.json({
       ok: true,
@@ -7181,6 +7185,8 @@ app.post("/refine-prediction", async (req, res) => {
     const aiData = await resp.json() as any;
     const rawText = aiData?.content?.[0]?.text || "{}";
 
+    const meter = await trackAiCall(venueId, "prediction_refinement", true);
+
     let refinement: any;
     try {
       const clean = rawText.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
@@ -7193,8 +7199,6 @@ app.post("/refine-prediction", async (req, res) => {
       });
       return;
     }
-
-    const meter = await trackAiCall(venueId, "prediction_refinement");
     console.log("[api/refine-prediction] ok", { uid, venueId, historyUsed: context.hasHistory, products: mathResults.length });
     res.json({ ok: true, refinement, historyUsed: context.hasHistory, meter });
 
@@ -7342,6 +7346,8 @@ app.post("/extract-festival-contract", async (req, res) => {
     const aiData = await resp.json() as any;
     const rawJson = aiData?.content?.[0]?.text || "{}";
 
+    await trackAiCall(venueId, 'ai_insights', true);
+
     let extracted: any = {};
     try {
       // Strip markdown code fences if present
@@ -7358,7 +7364,6 @@ app.post("/extract-festival-contract", async (req, res) => {
       return;
     }
 
-    await trackAiCall(venueId, 'ai_insights');
     const obligations: any[] = extracted.obligations || [];
     const rebates: any[] = extracted.rebates || [];
     const pricingTerms: any[] = extracted.pricingTerms || [];
@@ -7597,6 +7602,8 @@ app.post("/extract-festival-rider", async (req, res) => {
     const aiData = await resp.json() as any;
     const rawJson = aiData?.content?.[0]?.text || "{}";
 
+    await trackAiCall(venueId, 'ai_insights', true);
+
     let extracted: any = {};
     try {
       const clean = rawJson.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
@@ -7610,7 +7617,6 @@ app.post("/extract-festival-rider", async (req, res) => {
       return;
     }
 
-    await trackAiCall(venueId, 'ai_insights');
     await db.doc(`venues/${venueId}/riders/${riderId}`).update({
       artistName:       extracted.artistName || null,
       setTime:          extracted.setTime || null,

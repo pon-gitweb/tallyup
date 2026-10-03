@@ -101,7 +101,7 @@ export const ocrSupplierCard = functions
     try {
       const result = await extractCardWithClaude(imageBase64);
       functions.logger.info('[ocrSupplierCard] OK', { uid, venueId, supplierName: result.supplierName });
-      await trackAiCall(venueId as string, 'product_photo');
+      await trackAiCall(venueId as string, 'product_photo', true);
       return { ok: true, ...result };
     } catch (e: any) {
       functions.logger.error('[ocrSupplierCard] extraction failed', e?.message);
