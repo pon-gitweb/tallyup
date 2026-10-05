@@ -35,9 +35,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon-foreground.png",
-        "backgroundColor": "#0B132B",
-        "monochromeImage": "./assets/adaptive-icon-monochrome.png"
+        "foregroundImage": "./assets/android-adaptive-foreground.png",
+        "backgroundColor": "#3B3F4A"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.hostistock.tallyup",
@@ -54,7 +53,8 @@
       ],
       "runtimeVersion": {
         "policy": "fingerprint"
-      }
+      },
+      "icon": "./assets/play-store-icon-512.png"
     },
     "web": {
       "favicon": "./assets/favicon.png"
