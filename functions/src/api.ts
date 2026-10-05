@@ -1682,7 +1682,7 @@ app.get("/stripe/portal", async (req, res) => {
     if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      return_url: returnUrl || "https://hostistock.com",
+      return_url: returnUrl || "https://app.hosti.co.nz/app/",
     });
     console.log("[api/stripe/portal] OK", { uid, venueId });
     res.json({ ok: true, url: portalSession.url });
