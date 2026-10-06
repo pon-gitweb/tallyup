@@ -1289,6 +1289,11 @@ service cloud.firestore {
         allow read, write: if isVenueMember(venueId);
       }
 
+      match /billing/{docId} {
+        allow read: if isVenueMember(venueId);
+        allow write: if false;
+      }
+
       // ═══════════════════════════════════════════════════════════════
       // FESTIVAL MODE — additive only
       // All existing venue rules unchanged above

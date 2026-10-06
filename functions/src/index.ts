@@ -41,6 +41,11 @@ export { weeklySummaryEmail } from "./weeklySummary";
 // Requires "trial-reminders" message stream in Postmark console.
 export { trialReminderEmail } from "./trialReminder";
 
+// === D-039 trial lifecycle (server-side, australia-southeast1) ===
+// onVenueCreated: starts trial for eligible new venues.
+// onVenueUpdated: keeps stocktakesUsed in sync and expires at 3.
+export { onVenueCreated, onVenueUpdated } from "./trial";
+
 // === Global supplier directory — seed + contribute from invoice scans ===
 export { seedGlobalSuppliers } from "./globalSuppliers";
 
