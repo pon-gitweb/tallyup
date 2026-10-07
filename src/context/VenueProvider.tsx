@@ -12,7 +12,7 @@ import { BillingState, defaultBillingState } from '../services/billing/entitleme
 import { MODULE_INTRODUCED_AT } from '../services/billing/modules';
 import { resolveEntitlements } from '../services/billing/resolveEntitlements';
 
-type TrialStateDoc = {
+export type TrialStateDoc = {
   startedAt: { toMillis: () => number } | null;
   stocktakesAtStart: number;
   stocktakesUsed: number;
@@ -70,6 +70,7 @@ type VenueCtx = {
   enforceReadOnly: boolean;
   /** mirrors venue.stocktakeActive — true while a stocktake cycle is in progress */
   stocktakeActive: boolean;
+  trialState: TrialStateDoc | null | undefined;
 };
 
 const Ctx = createContext<VenueCtx>({
@@ -79,6 +80,7 @@ const Ctx = createContext<VenueCtx>({
   refresh: () => {}, attachVenueIfMissing: async () => {},
   subscription: null, subscriptionOverride: null, isPilot: true, isActive: false, plan: null, hasModule: () => false,
   billingState: defaultBillingState, discountPercent: 0, ready: false, enforceReadOnly: false, stocktakeActive: false,
+  trialState: undefined,
 });
 
 export function VenueProvider({ children }: { children: React.ReactNode }) {
@@ -115,7 +117,6 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const userSnapshotFailsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks which venueId we've already attempted trial init for — prevents
   // double-write across React Strict Mode double-invoke or rapid re-renders.
-  const trialInitiatedRef = useRef<string | null>(null);
 
   function clearUserSnapshotFailsafe() {
     if (userSnapshotFailsafeRef.current) {
@@ -454,46 +455,6 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     return () => { unsub1(); unsub2(); };
   }, [venueId]);
 
-  // ── D-039 trial init ─────────────────────────────────────────────────────
-  // Runs once when we confirm the trial doc is absent for an eligible venue
-  // (created on/after pilotTriggerDate). Uses runTransaction so two devices
-  // racing to create the doc produce one winner and one no-op: the transaction
-  // reads first and writes only if the doc is still missing. The client-side
-  // trialInitiatedRef prevents a second async attempt in the same app session
-  // even if the snapshot re-fires before the write propagates back.
-  useEffect(() => {
-    if (!venueId) return;
-    if (trialState !== null) return;           // undefined = loading; object = exists
-    if (venueCreatedAt === null || pilotTriggerDate === null) return;
-    if (venueCreatedAt < pilotTriggerDate) return; // older venue — not this branch
-    if (trialInitiatedRef.current === venueId) return;
-    trialInitiatedRef.current = venueId;
-
-    const trialRef = doc(db, 'venues', venueId, 'billing', 'trialState');
-    const venueRef = doc(db, 'venues', venueId);
-    (async () => {
-      try {
-        await runTransaction(db, async (tx) => {
-          const [snap, venueSnap] = await Promise.all([tx.get(trialRef), tx.get(venueRef)]);
-          if (snap.exists()) return; // another device raced us — nothing to do
-          const stocktakesAtStart: number = venueSnap.data()?.totalStocktakesCompleted ?? 0;
-          tx.set(trialRef, {
-            startedAt: serverTimestamp(),
-            venueCreatedAt: venueSnap.data()?.createdAt ?? null,
-            stocktakesAtStart,
-            stocktakesUsed: 0,
-            status: 'active',
-          });
-          // Denormalize trialStatus onto the venue doc so the CF can query
-          // venues in trial without a collectionGroup scan.
-          tx.update(venueRef, { trialStatus: 'active' });
-        });
-      } catch (e) {
-        console.warn('[VenueProvider] trial init failed:', e);
-        trialInitiatedRef.current = null; // allow retry on next render
-      }
-    })();
-  }, [venueId, trialState, venueCreatedAt, pilotTriggerDate]);
 
   // ── D-039 new-module trial creation ─────────────────────────────────────
   // For each module whose catalog-introduction date is AFTER this venue's
@@ -605,6 +566,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     ready,
     enforceReadOnly,
     stocktakeActive,
+    trialState,
   }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, subscriptionOverride, isPilot, isActive, plan, ownerUid, venueCreatedAt, pilotTriggerDate, discountPercent, trialState, moduleTrialState, venueDocVenueId, ready, enforceReadOnly, stocktakeActive]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

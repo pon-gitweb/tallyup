@@ -35,6 +35,7 @@ import { listSuppliers } from '../../services/suppliers/listSuppliers';
 import { getAuth } from 'firebase/auth';
 import { getApp } from 'firebase/app';
 import { useVenueCountry } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useToast } from '../../components/common/Toast';
 import { _overlapQty } from '../../services/orders/receive';
 import { quickAddProduct } from '../../services/products/quickAddProduct';
@@ -91,6 +92,7 @@ export default function AcceptOrderButton({
   variant = 'compact',
 }: Props) {
   const venueCountry = useVenueCountry();
+  const invoiceGuard = useWriteGuard('INVOICE_POST');
   const { showSuccess, showError, showInfo } = useToast();
   const db = getFirestore(getApp());
 
@@ -196,6 +198,7 @@ export default function AcceptOrderButton({
   // ── Step 6 — match lines to products ─────────────────────────────────────
   const startAcceptOrder = useCallback(async () => {
     if (!venueId || isDisabled) return;
+    if (!invoiceGuard.allowed) { showError('This venue is read-only, so this action is unavailable.'); return; }
     const lines = item?.payload?.lines || [];
     if (lines.length === 0) {
       showError('No lines in this snapshot — cannot create an order.');
@@ -259,7 +262,7 @@ export default function AcceptOrderButton({
     } finally {
       setAcceptBusy(false);
     }
-  }, [venueId, db, item, isDisabled, doAcceptCreate, showError]);
+  }, [venueId, db, item, isDisabled, doAcceptCreate, showError, invoiceGuard]);
 
   // ── Step 7 — finalise after unmatched lines review ────────────────────────
   const finalizeAcceptReview = useCallback(async () => {

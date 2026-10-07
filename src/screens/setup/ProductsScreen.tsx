@@ -23,6 +23,7 @@ import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/nativ
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp, query, where, deleteDoc, limit } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useColours } from '../../context/ThemeContext';
 import { listProducts, deleteProductById } from '../../services/products';
 import { mergeProducts } from '../../services/products/mergeProducts';
@@ -224,6 +225,7 @@ export default function ProductsScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueId = useVenueId();
+  const productWriteGuard = useWriteGuard('PRODUCT_WRITE');
   const colours = useColours();
   const { showError, showSuccess } = useToast();
   const { confirm, modal } = useConfirmModal();
@@ -378,6 +380,7 @@ export default function ProductsScreen() {
 
   async function handleAdoptCatalogue(supplier: GlobalSupplier) {
     if (!venueId || adoptingId) return;
+    if (!productWriteGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     confirm({
       title: 'Add catalogue?',
       message: `This will add ${supplier.name}'s products to your venue.\n\nExisting products are kept.`,
@@ -421,6 +424,7 @@ export default function ProductsScreen() {
   }
 
   function onDelete(p: any) {
+    if (!productWriteGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     (async () => {
       if (!venueId || !p.id) return;
       const db2 = getFirestore();
@@ -625,6 +629,7 @@ export default function ProductsScreen() {
 
   async function executeAssign(supplier: { id: string; name: string }) {
     if (!venueId || selectedIds.size === 0) return;
+    if (!productWriteGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     setAssigning(true);
     setSupplierPickerOpen(false);
     try {
@@ -701,6 +706,7 @@ export default function ProductsScreen() {
 
   async function doAddToArea(config: CountingUnitConfig) {
     if (!venueId || !pendingAreaAssign || selectedIds.size === 0) return;
+    if (!productWriteGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     const { deptId, areaId, areaName } = pendingAreaAssign;
     setCountingUnitPickerOpen(false);
     setAddingToArea(true);

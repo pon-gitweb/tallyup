@@ -9,6 +9,7 @@ import { getFirestore, addDoc, collection, serverTimestamp } from 'firebase/fire
 import { useVenueId } from '../../context/VenueProvider';
 import IzzyAssistant, { openIzzy } from '../../components/IzzyAssistant';
 import { ReadOnlyInfoBanner } from '../../components/billing/ReadOnlyInfoBanner';
+import { TrialCountBanner } from '../../components/billing/TrialCountBanner';
 import MainTabs from './MainTabs';
 
 // Core
@@ -183,6 +184,7 @@ export default function MainStack() {
   return (
     <View style={{ flex: 1 }}>
     <ReadOnlyInfoBanner />
+    <TrialCountBanner />
     <Stack.Navigator
       screenOptions={{
         headerRight: () => (

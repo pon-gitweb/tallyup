@@ -18,6 +18,7 @@ import {
 import { db } from '../../services/firebase';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from '../../services/nameMatching';
 import { useToast } from '../common/Toast';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,7 @@ export default function BarcodeScannerModal({
   areaItems, onProductAddedToArea, onOpenPhotoModal, onManualEntry, onBeforeAddToArea, onFocusItem,
 }: Props) {
   const { showError } = useToast();
+  const productWriteGuard = useWriteGuard('PRODUCT_WRITE');
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>('scanning');
   const [torchOn, setTorchOn] = useState(false);
@@ -261,6 +263,7 @@ export default function BarcodeScannerModal({
 
   async function addGlobalProductToVenueAndArea(g: GlobalProduct) {
     if (!venueId) return;
+    if (!productWriteGuard.allowed) { showError('This venue is read-only, so this action is unavailable.'); return; }
     setAdding(true);
     try {
       // Write to venue products

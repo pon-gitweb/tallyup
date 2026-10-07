@@ -1,12 +1,13 @@
 // @ts-nocheck
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, ScrollView, TextInput, TouchableOpacity,
+  Alert, View, Text, ScrollView, TextInput, TouchableOpacity,
   SafeAreaView, ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 
@@ -15,6 +16,7 @@ type Product = { id: string; name: string; unit?: string | null; category?: stri
 export default function BatchPriceEntryScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const productWriteGuard = useWriteGuard('PRODUCT_WRITE');
   const c = useColours();
   const { showSuccess, showError } = useToast();
   const db = getFirestore();
@@ -56,6 +58,7 @@ export default function BatchPriceEntryScreen() {
 
   const handleSave = async () => {
     if (!venueId || filledCount === 0) return;
+    if (!productWriteGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     setSaving(true);
     try {
       const batch = writeBatch(db);

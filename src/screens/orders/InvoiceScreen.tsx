@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, ScrollView, TextInput, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, ScrollView, TextInput, TouchableOpacity } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { db } from '../../services/firebase';
@@ -53,6 +54,7 @@ export default function InvoiceScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
   const venueId = useVenueId();
+  const invoiceGuard = useWriteGuard('INVOICE_POST');
   const colours = useColours();
   const { showError, showSuccess } = useToast();
   const orderId: string = route.params?.orderId;
@@ -127,6 +129,7 @@ export default function InvoiceScreen() {
 
   async function saveInvoice() {
     if (!venueId || !orderId || !order) return;
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     if (!invoiceNo.trim()) {
       showError('Please enter an invoice number.');
       return;

@@ -1,12 +1,13 @@
 // @ts-nocheck
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView, TextInput,
+  Alert, View, Text, TouchableOpacity, ScrollView, TextInput,
   Modal, FlatList, SafeAreaView, ActivityIndicator,
 } from 'react-native';
 import { collection, getDocs, addDoc, query, where, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId, useVenue } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { MockPOSAdapter } from '../../services/pos/adapters/MockPOSAdapter';
 import { getCurrentAdapter } from '../../services/pos/POSRegistry';
 import { suggestMatch } from '../../services/pos/posMatching';
@@ -36,6 +37,7 @@ type PickerEntry = { id: string; name: string; type: 'product' | 'recipe' };
 export default function POSMappingScreen() {
   const venueId = useVenueId();
   const { user } = useVenue();
+  const productWriteGuard = useWriteGuard('PRODUCT_WRITE');
   const { showSuccess, showError } = useToast();
 
   const [loading, setLoading] = useState(true);
@@ -154,6 +156,7 @@ export default function POSMappingScreen() {
       showError('Select a product or recipe first');
       return;
     }
+    if (!productWriteGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       const isProduct = item.resolvedType === 'product';
       const ratio = isProduct ? (parseFloat(item.conversionQty) || 1) : null;
@@ -191,6 +194,7 @@ export default function POSMappingScreen() {
   }
 
   async function skipItem(idx: number) {
+    if (!productWriteGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     const item = items[idx];
     try {
       await addDoc(collection(db, 'venues', venueId, 'posProductMappings'), {

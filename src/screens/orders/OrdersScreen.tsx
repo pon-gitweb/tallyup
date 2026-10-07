@@ -22,6 +22,7 @@ import {
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
@@ -90,6 +91,7 @@ function StatusBadge({ status }: { status: string }) {
 export default function OrdersScreen(){
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const orderGuard = useWriteGuard('ORDER_WRITE');
   const colours = useColours();
   const insets = useSafeAreaInsets();
   const db = getFirestore();
@@ -116,6 +118,7 @@ export default function OrdersScreen(){
 
   const approveOrder = useCallback(async(orderId: string) => {
     if (!venueId) return;
+    if (!orderGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     const uid = getAuth().currentUser?.uid;
     try {
       await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
@@ -129,10 +132,11 @@ export default function OrdersScreen(){
     } catch(e:any) {
       showError('Could not approve order.');
     }
-  }, [venueId, db, showError]);
+  }, [venueId, db, showError, orderGuard]);
 
   const rejectOrder = useCallback(async(orderId: string) => {
     if (!venueId) return;
+    if (!orderGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     confirm({
       title: 'Reject order?',
       message: 'This will return the order to draft status.',
@@ -151,7 +155,7 @@ export default function OrdersScreen(){
         }
       },
     });
-  }, [venueId, db, confirm, showError]);
+  }, [venueId, db, confirm, showError, orderGuard]);
 
   useEffect(()=>{
     if(!venueId) return;

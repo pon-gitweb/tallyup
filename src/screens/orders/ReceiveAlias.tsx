@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, FlatList } from 'react-native';
+import { Alert, View, Text, TouchableOpacity, ActivityIndicator, FlatList } from 'react-native';
 import { useToast } from '../../components/common/Toast';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { getApp } from 'firebase/app';
@@ -9,6 +9,7 @@ import {
   collection, getDocs, writeBatch, serverTimestamp, setDoc
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useColours } from '../../context/ThemeContext';
 import { captureMultiPagePhotos } from '../../services/fastReceive/captureMultiPagePhotos';
 import { scanInvoicePhoto } from '../../services/fastReceive/scanInvoicePhoto';
@@ -37,6 +38,7 @@ export default function ReceiveAlias() {
   const route = useRoute<any>();
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const invoiceGuard = useWriteGuard('INVOICE_POST');
   const colours = useColours();
   const { showError, showSuccess, showInfo } = useToast();
 
@@ -120,6 +122,7 @@ export default function ReceiveAlias() {
   // persist helper (keeps submitted) or finalize (received) — no-scan path, unchanged
   const persist = useCallback(async (finalize: boolean) => {
     if (!venueId || !orderId) return;
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       setSaving(true);
       const db = getFirestore(getApp());
@@ -164,7 +167,7 @@ export default function ReceiveAlias() {
     } finally {
       setSaving(false);
     }
-  }, [venueId, orderId, lines, nav]);
+  }, [venueId, orderId, lines, nav, invoiceGuard]);
 
   // Scan invoice: capture pages → OCR → reconcile preview (non-committing)
   const scanInvoice = useCallback(async () => {

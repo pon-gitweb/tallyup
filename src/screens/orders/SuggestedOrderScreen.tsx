@@ -292,7 +292,6 @@ export default function SuggestedOrderScreen(){
       try{
         await loadSuppliers();
         await loadDepartments();
-        setEntitled(hasModule(MODULES.SUPPLIER_OPTIMISATION));
         await doRefreshRaw();
       } finally { setRefreshing(false); }
     })();

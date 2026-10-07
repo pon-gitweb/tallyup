@@ -14,7 +14,6 @@ export async function incrementFullStocktakeCompleted(venueId: string): Promise<
   // Atomically update the D-039 trial counter if the venue has an active trial.
   // Uses a transaction so the read + write are atomic and the "reaches 3" branch
   // can't race with a simultaneous stocktake on another device.
-  const venueRef = doc(db, 'venues', venueId);
   const trialRef = doc(db, 'venues', venueId, 'billing', 'trialState');
   try {
     await runTransaction(db, async (tx) => {
@@ -29,9 +28,6 @@ export async function incrementFullStocktakeCompleted(venueId: string): Promise<
         update.status = 'expired';
         update.resolvedAt = serverTimestamp();
         update.resolvedReason = 'stocktake_limit';
-        // Keep the denormalized flag on the venue doc in sync so the reminder
-        // CF's trialStatus:'active' query drops this venue on the next run.
-        tx.update(venueRef, { trialStatus: 'expired' });
       }
       tx.update(trialRef, update);
     });

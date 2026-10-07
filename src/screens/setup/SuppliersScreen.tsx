@@ -27,6 +27,7 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, query, where, limit, serverTimestamp as fsServerTimestamp, doc, setDoc } from 'firebase/firestore';
 
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useNavigation } from '@react-navigation/native';
 import {
   listSuppliers,
@@ -52,6 +53,7 @@ function isValidHHmm(s: string) {
 
 export default function SuppliersScreen() {
   const venueId = useVenueId();
+  const structureGuard = useWriteGuard('STRUCTURE_WRITE');
   const nav = useNavigation<any>();
   const { showError, showSuccess, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
@@ -234,6 +236,7 @@ export default function SuppliersScreen() {
       showInfo('Attach or create a venue first.');
       return;
     }
+    if (!structureGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     if (!name.trim()) {
       showInfo('Enter supplier name.');
       return;

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useMemo, useState, useEffect } from 'react';
 import {
+  Alert,
   View,
   Text,
   StyleSheet,
@@ -19,6 +20,7 @@ import {
 } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 import { useVenueId } from '../../../context/VenueProvider';
+import { useWriteGuard } from '../../../hooks/useWriteGuard';
 import { useColours } from '../../../context/ThemeContext';
 import { useToast } from '../../../components/common/Toast';
 
@@ -50,6 +52,7 @@ export default function ManualReceiveScreen({
 }: Props) {
   const venueIdFromHook = useVenueId();
   const venueId = propVenueId || venueIdFromHook;
+  const invoiceGuard = useWriteGuard('INVOICE_POST');
   const colours = useColours();
   const { showError } = useToast();
 
@@ -230,6 +233,7 @@ export default function ManualReceiveScreen({
         showError('Attach a venue first.');
         return;
       }
+      if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
       const db = getFirestore(getApp());
       const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
       const batch = writeBatch(db);

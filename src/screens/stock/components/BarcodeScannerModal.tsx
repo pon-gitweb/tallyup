@@ -12,6 +12,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { addDoc, collection, getDocs, query, serverTimestamp, where } from 'firebase/firestore';
 import { db } from '../../../services/firebase';
 import { useToast } from '../../../components/common/Toast';
+import { useWriteGuard } from '../../../hooks/useWriteGuard';
 
 type Props = {
   visible: boolean;
@@ -31,6 +32,7 @@ type Props = {
 
 export default function BarcodeScannerModal({ visible, onClose, venueId, onFound, onNotFound }: Props) {
   const { showError } = useToast();
+  const productWriteGuard = useWriteGuard('PRODUCT_WRITE');
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -123,7 +125,7 @@ export default function BarcodeScannerModal({ visible, onClose, venueId, onFound
                     const existingSnap = await getDocs(
                       query(collection(db, 'venues', venueId!, 'products'), where('barcode', '==', data))
                     );
-                    if (existingSnap.empty) {
+                    if (existingSnap.empty && productWriteGuard.allowed) {
                       await addDoc(collection(db, 'venues', venueId!, 'products'), {
                         name: gp.name,
                         brand: gp.brand ?? null,

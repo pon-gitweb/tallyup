@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import { searchProducts, quickCreateProduct } from '../../services/products';
 import { savedToast } from '../../utils/toast';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 
 type Props = {
   venueId: string;
@@ -20,6 +21,7 @@ type Props = {
 
 export default function AddLineToDraft(props: Props) {
   const { venueId, orderId, compact } = props;
+  const orderGuard = useWriteGuard('ORDER_WRITE');
   const [visible, setVisible] = useState(false);
   const [order, setOrder] = useState<any>(null);
   const [loadingOrder, setLoadingOrder] = useState(false);
@@ -99,6 +101,7 @@ function PickerModal({ venueId, orderId, supplierId, supplierName, onClose, onAd
 
   async function addToDraft(product: { id: string; name?: string }) {
     if (!venueId || !orderId) return;
+    if (!orderGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     const n = Number(String(qty).trim());
     if (!Number.isFinite(n) || n <= 0) { Alert.alert('Add item', 'Enter a positive quantity.'); return; }
 
