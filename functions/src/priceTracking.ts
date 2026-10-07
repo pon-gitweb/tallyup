@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { classifyLine, summarizeExcludedLines, ExcludedLineSummary } from './classifyLine';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from "./nameMatching";
+import { buildCaseMismatchFields, CaseMismatchReason } from './detectCaseMismatch';
 
 export interface InvoiceLine {
   name: string;
@@ -377,6 +378,7 @@ export type ProposedAction =
       caseMismatchGuess?: number | null;
       correctedUnitPrice?: number | null;
       correctedChangePercent?: number | null;
+      caseMismatchReason?: CaseMismatchReason | null;
       useCorrectedPrice?: boolean;
       reasoning?: {
         isolatedVsTrend: "isolated" | "trending";
@@ -581,39 +583,19 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
         if (pctDiff > 0.01) {
           // Price change â waits for user confirmation
           const changePercent = Math.round(((unitPrice - existing) / existing) * 10000) / 100;
-          // Case-mismatch detection â only fires for suspiciously large changes (>50%)
-          let caseMismatchFields: {
-            possibleCaseMismatch?: boolean;
-            caseMismatchGuess?: number | null;
-            correctedUnitPrice?: number | null;
-            correctedChangePercent?: number | null;
-          } = {};
-          if (pctDiff > 0.5) {
-            const knownCaseSize =
-              typeof matched.caseSize === "number" && matched.caseSize > 0
-                ? matched.caseSize as number
-                : null;
-            const candidates = knownCaseSize != null ? [knownCaseSize] : [6, 12, 24];
-            const ratio = unitPrice / existing;
-            let matchedCandidate: number | null = null;
-            for (const candidate of candidates) {
-              if (Math.abs(ratio - candidate) / candidate <= 0.15) {
-                matchedCandidate = candidate;
-                break;
-              }
-            }
-            if (matchedCandidate != null) {
-              const correctedUnitPrice = unitPrice / matchedCandidate;
-              const correctedChangePercent =
-                Math.round(((correctedUnitPrice - existing) / existing) * 10000) / 100;
-              caseMismatchFields = {
-                possibleCaseMismatch: true,
-                caseMismatchGuess: matchedCandidate,
-                correctedUnitPrice,
-                correctedChangePercent,
-              };
-            }
-          }
+          // Case-mismatch detection — delegates to buildCaseMismatchFields;
+          // tries the invoice line name first (may carry pack notation like "4x6"),
+          // falls back to the product name.
+          const caseMismatchFields = pctDiff > 0.5
+            ? buildCaseMismatchFields({
+                lineName: line.name,
+                productName: matched.name || line.name,
+                unitPrice,
+                existing,
+                productCaseSize: typeof matched.caseSize === "number" && matched.caseSize > 0
+                  ? matched.caseSize as number : null,
+              })
+            : {};
           const priceChangeId = `${invoiceId}:priceChange:${matched.id}`;
           const direction: "increase" | "decrease" = unitPrice > existing ? "increase" : "decrease";
           const supplierMismatch =
