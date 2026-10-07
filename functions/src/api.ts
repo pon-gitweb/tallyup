@@ -5,7 +5,7 @@ import express = require("express");
 import cors = require("cors");
 import Stripe from "stripe";
 import { proposeInvoiceChanges, commitInvoiceChanges, computeGpPercent } from "./priceTracking";
-import { checkCheckoutEligibility, VenueForEligibility } from "./checkoutEligibility";
+import { checkCheckoutEligibility, isValidVenueId, VenueForEligibility } from "./checkoutEligibility";
 import { contributeToGlobalCatalogItem } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
@@ -1378,6 +1378,11 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
     const { venueId, priceId, lookupKey, successUrl, cancelUrl, quantity: rawQuantity } = req.body || {};
     if (!venueId || !lookupKey || !successUrl || !cancelUrl) {
       res.status(400).json({ ok: false, error: "Missing venueId, lookupKey, successUrl, or cancelUrl" });
+      return;
+    }
+    // Reject a bad venueId before building any Firestore path from it
+    if (!isValidVenueId(venueId)) {
+      res.status(400).json({ ok: false, error: "Invalid venue" });
       return;
     }
     // Eligibility + format checks: read venue + trialState, then gate before any Stripe call

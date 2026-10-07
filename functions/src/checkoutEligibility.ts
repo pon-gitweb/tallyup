@@ -33,6 +33,10 @@ const ALLOWED_LOOKUP_KEYS = new Set(['core_monthly_rolling', 'core_annual']);
 const ALLOWED_HOSTS = new Set(['tallyup-f1463.web.app', 'app.hosti.co.nz']);
 const VENUE_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
 
+export function isValidVenueId(id: unknown): id is string {
+  return typeof id === 'string' && VENUE_ID_RE.test(id);
+}
+
 function isValidReturnUrl(url: string): boolean {
   try {
     const u = new URL(url);

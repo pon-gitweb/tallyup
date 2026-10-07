@@ -1,4 +1,4 @@
-import { checkCheckoutEligibility, EligibilityInput, VenueForEligibility } from '../checkoutEligibility';
+import { checkCheckoutEligibility, isValidVenueId, EligibilityInput, VenueForEligibility } from '../checkoutEligibility';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -312,5 +312,35 @@ describe('checkCheckoutEligibility — rule priority', () => {
     }))).toEqual({
       ok: false, status: 400, error: 'This plan is not available for purchase yet',
     });
+  });
+});
+
+// ── isValidVenueId ────────────────────────────────────────────────────────────
+
+describe('isValidVenueId', () => {
+  it.each([
+    ['',                 'empty string'],
+    ['a/b',             'contains slash'],
+    ['../x',            'path traversal'],
+    ['ab',              'too short (2 chars)'],
+    ['a'.repeat(65),    '65-char id (> 64)'],
+  ])('%j (%s) → false', (id) => {
+    expect(isValidVenueId(id)).toBe(false);
+  });
+
+  it('non-string (number) → false', () => {
+    expect(isValidVenueId(123 as any)).toBe(false);
+  });
+
+  it('non-string (null) → false', () => {
+    expect(isValidVenueId(null as any)).toBe(false);
+  });
+
+  it('valid 6-char id → true', () => {
+    expect(isValidVenueId('ab1234')).toBe(true);
+  });
+
+  it('valid 64-char id → true', () => {
+    expect(isValidVenueId('a'.repeat(64))).toBe(true);
   });
 });
