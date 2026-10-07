@@ -8,6 +8,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { getFirestore, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import IzzyAssistant, { openIzzy } from '../../components/IzzyAssistant';
+import { ReadOnlyInfoBanner } from '../../components/billing/ReadOnlyInfoBanner';
 import MainTabs from './MainTabs';
 
 // Core
@@ -181,6 +182,7 @@ const Stack = createNativeStackNavigator();
 export default function MainStack() {
   return (
     <View style={{ flex: 1 }}>
+    <ReadOnlyInfoBanner />
     <Stack.Navigator
       screenOptions={{
         headerRight: () => (

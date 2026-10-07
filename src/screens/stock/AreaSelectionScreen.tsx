@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated, View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
-  Modal, Pressable, RefreshControl, ActivityIndicator
+  Modal, Pressable, RefreshControl, ActivityIndicator, Alert,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { db } from '../../services/firebase';
@@ -18,6 +18,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 
 type Params = { venueId: string; departmentId: string };
 type AreaRow = {
@@ -85,6 +86,7 @@ function AreaSelectionInner() {
   const styles = makeStyles(colours);
 
   const uid = getAuth().currentUser?.uid || null;
+  const structureGuard = useWriteGuard('STRUCTURE_WRITE');
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
 
@@ -130,6 +132,7 @@ function AreaSelectionInner() {
   const [renaming, setRenaming] = useState(false);
 
   function openRename(area: AreaRow) {
+    if (!structureGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     setRenameId(area.id);
     setRenameName(area.name || '');
     setShowRename(true);
@@ -223,6 +226,7 @@ function AreaSelectionInner() {
   }, [nav, venueId, departmentId, uid]);
 
   const deleteArea = useCallback((id: string, name: string) => {
+    if (!structureGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     confirm({
       title: `Delete ${name}?`,
       message: 'Any counted stock in this area will be lost.',
@@ -236,7 +240,7 @@ function AreaSelectionInner() {
         }
       },
     });
-  }, [venueId, departmentId, confirm, showError]);
+  }, [venueId, departmentId, confirm, showError, structureGuard]);
 
   function forceReleaseLock(area: AreaRow) {
     const lock = (area.currentLock || {}) as any;
@@ -275,6 +279,7 @@ function AreaSelectionInner() {
   }
 
   async function addArea() {
+    if (!structureGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     if (!newName.trim()) {
       showInfo('Name required — please enter an area name.');
       return;

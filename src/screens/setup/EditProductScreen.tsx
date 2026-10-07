@@ -13,10 +13,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  Alert,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import AutoFillFromCatalog from '../../components/products/AutoFillFromCatalog';
 import { searchGlobalCatalogByNamePrefix, catalogHitToProductPatch, CatalogHit } from '../../services/globalCatalog';
 import { useColours } from '../../context/ThemeContext';
@@ -97,6 +99,7 @@ export default function EditProductScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueId = useVenueId();
+  const productWriteGuard = useWriteGuard('PRODUCT_WRITE');
   const colours = useColours();
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
@@ -407,6 +410,10 @@ export default function EditProductScreen() {
   async function save() {
     if (!venueId) {
       showInfo('No venue selected.');
+      return;
+    }
+    if (!productWriteGuard.allowed) {
+      Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.');
       return;
     }
     if (!canSave) {

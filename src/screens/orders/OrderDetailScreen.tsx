@@ -4,6 +4,7 @@ import { OrdersService } from '../../domain/orders';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Modal } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
@@ -109,6 +110,7 @@ export default function OrderDetailScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
   const venueId = useVenueId();
+  const invoiceGuard = useWriteGuard('INVOICE_POST');
   const colours = useColours();
   const orderId = (route.params as any)?.orderId as string;
 
@@ -496,6 +498,10 @@ export default function OrderDetailScreen() {
   // helper to post a CSV review (used by auto-confirm + button)
   const postCsvReview = useCallback(async () => {
     if (!csvReview) return;
+    if (!invoiceGuard.allowed) {
+      Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.');
+      return;
+    }
     autoConfirmedRef.current = true;
     try{
       const result = await OrdersService.finalizeReceiveFromCsv({
@@ -546,11 +552,15 @@ export default function OrderDetailScreen() {
         showError(humanizeInvoiceError(e));
       }
     }
-  }, [csvReview, venueId, orderId, nav, showSuccess, showError]);
+  }, [csvReview, venueId, orderId, nav, showSuccess, showError, invoiceGuard]);
 
   // helper to post a PDF review (manual confirm only)
   const postPdfReview = useCallback(async () => {
     if (!pdfReview) return;
+    if (!invoiceGuard.allowed) {
+      Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.');
+      return;
+    }
     try{
       const result = await OrdersService.finalizeReceiveFromPdf({
         venueId,
@@ -599,7 +609,7 @@ export default function OrderDetailScreen() {
         showError(humanizeInvoiceError(e));
       }
     }
-  }, [pdfReview, venueId, orderId, nav, showSuccess, showError]);
+  }, [pdfReview, venueId, orderId, nav, showSuccess, showError, invoiceGuard]);
 
   // Auto-confirm CSV on very high confidence, *unless* invoice looks weird
   useEffect(()=>{

@@ -1051,3 +1051,71 @@ describe('seeded randomized sweep (20,000 iterations)', () => {
     expect(privilegedReadOnly).toBe(0);
   });
 });
+
+// ── Venue switching — transition state safety ─────────────────────────────────
+// When the user switches venues, VenueProvider sets venueDocVenueId=null until the
+// new venue's snapshot fires. It therefore passes:
+//   subscription: undefined   (not-yet-loaded)
+//   venueType:    null         (not-yet-loaded)
+// This block proves that EVERY transition scenario results in ready=false and a
+// generous (non-readOnly) billingState, so nobody is ever locked out mid-switch.
+
+describe('venue switching — transition state is safe', () => {
+  // Shared transition inputs: venueDocVenueId !== venueId → VenueProvider passes these.
+  const transition = (overrides: Partial<ResolveEntitlementsInput> = {}): ResolveEntitlementsInput => ({
+    ...base,
+    venueType: null,          // venueDocVenueId guard: not loaded yet
+    subscription: undefined,  // venueDocVenueId guard: not loaded yet
+    trialState: undefined,    // reset on venueId change in VenueProvider
+    ...overrides,
+  });
+
+  it('festival → normal: ready=false, not blocked', () => {
+    // Old venue was festival. New venue is normal (AFTER_PILOT, trial branch).
+    const r = resolveEntitlements(transition({ venueCreatedAt: AFTER_PILOT, nowMs: NOW_IN_YEAR }));
+    expect(r.ready).toBe(false);
+    // Generous while loading — never readOnly with ready=false
+    expect(r.billingState.accessMode).toBe('full');
+  });
+
+  it('normal → festival: ready=false, no festival access yet', () => {
+    // Old venue was normal. New venue is festival — but venueType=null until snapshot.
+    const r = resolveEntitlements(transition({ venueCreatedAt: AFTER_PILOT, nowMs: NOW_IN_YEAR }));
+    expect(r.ready).toBe(false);
+    // Not in festival branch (venueType is null, not 'festival')
+    expect(r.billingState.accessMode).toBe('full');
+  });
+
+  it('expired trial → founder venue: ready=false (venueType guard fires)', () => {
+    // Switching to a founder's venue. The founder branch sets ready=true internally,
+    // but the final return applies `ready && venueType !== null` — null → false.
+    const r = resolveEntitlements(transition({ ownerUid: FOUNDER_UID }));
+    expect(r.ready).toBe(false);
+    expect(r.billingState.accessMode).toBe('full'); // founder branch is always full
+  });
+
+  it('founder venue → expired trial: ready=false', () => {
+    // Switching from a founder venue to one with an expired trial.
+    const r = resolveEntitlements(transition({
+      ownerUid: 'non-founder-user',
+      venueCreatedAt: AFTER_PILOT,
+      nowMs: NOW_IN_YEAR,
+    }));
+    expect(r.ready).toBe(false);
+    expect(r.billingState.accessMode).toBe('full'); // trial branch generous while loading
+  });
+
+  it('no transition scenario produces readOnly with ready=true', () => {
+    // Exhaustive check: none of the four transitions should have ready=true AND readOnly.
+    const scenarios: Array<Partial<ResolveEntitlementsInput>> = [
+      { venueCreatedAt: AFTER_PILOT, nowMs: NOW_IN_YEAR },                    // festival→normal
+      { venueCreatedAt: AFTER_PILOT, nowMs: NOW_IN_YEAR },                    // normal→festival
+      { ownerUid: FOUNDER_UID },                                               // expired→founder
+      { ownerUid: 'non-founder-user', venueCreatedAt: AFTER_PILOT, nowMs: NOW_IN_YEAR }, // founder→expired
+    ];
+    for (const overrides of scenarios) {
+      const r = resolveEntitlements(transition(overrides));
+      expect(r.ready && r.billingState.accessMode === 'readOnly').toBe(false);
+    }
+  });
+});

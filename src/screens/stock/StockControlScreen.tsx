@@ -10,12 +10,14 @@ import {
   ScrollView,
   ActivityIndicator,
   TextInput,
+  Alert,
 } from 'react-native';
 import { useToast, ToastHost } from '../../components/common/Toast';
 import { useNavigation } from '@react-navigation/native';
 import IdentityBadge from '../../components/IdentityBadge';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 
 // Firestore
@@ -69,6 +71,7 @@ export default function StockControlScreen() {
   const auth = getAuth();
   const user = auth.currentUser;
   const venueId = useVenueId();
+  const productWriteGuard = useWriteGuard('PRODUCT_WRITE');
   const { name: venueName } = useVenueInfo(venueId);
   const { showError, showInfo } = useToast();
 
@@ -330,6 +333,10 @@ export default function StockControlScreen() {
 
   const saveEditProduct = useCallback(async () => {
     if (!venueId || !editProduct) return;
+    if (!productWriteGuard.allowed) {
+      Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.');
+      return;
+    }
     try {
       setEditBusy(true);
 
@@ -373,7 +380,7 @@ export default function StockControlScreen() {
     } finally {
       setEditBusy(false);
     }
-  }, [venueId, editProduct, editPar, editCost, editPackSize, loadResolverProducts]);
+  }, [venueId, editProduct, editPar, editCost, editPackSize, loadResolverProducts, productWriteGuard]);
 
   const ResolverRow = ({ item }: { item: ResolverProduct }) => {
     const assigning = resolverAssigningId === item.id;

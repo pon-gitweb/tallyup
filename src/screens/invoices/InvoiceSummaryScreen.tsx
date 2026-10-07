@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState } from 'react';
 import {
-  ScrollView, Text, TouchableOpacity, View,
+  ScrollView, Text, TouchableOpacity, View, Alert,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
@@ -9,6 +9,7 @@ import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import { useColours } from '../../context/ThemeContext';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useToast } from '../../components/common/Toast';
 
@@ -85,6 +86,7 @@ function InvoiceSummaryScreen() {
   const route = useRoute<any>();
   const colours = useColours();
   const venueId = useVenueId();
+  const invoiceGuard = useWriteGuard('INVOICE_POST');
   const { showError } = useToast();
   const params: InvoiceSummaryParams = route.params || {};
 
@@ -128,6 +130,7 @@ function InvoiceSummaryScreen() {
 
   async function flagDispute(pc: any) {
     if (!venueId) return;
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       await addDoc(collection(db, 'venues', venueId, 'priceDisputes'), {
         productId: pc.productId || null,
@@ -152,6 +155,7 @@ function InvoiceSummaryScreen() {
 
   async function acceptPrice(pc: any) {
     if (!venueId || !pc.productId) return;
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       await updateDoc(doc(db, 'venues', venueId, 'products', pc.productId), {
         costPrice: pc.newPrice,
@@ -167,6 +171,7 @@ function InvoiceSummaryScreen() {
 
   async function acceptCorrectedPrice(pc: any) {
     if (!venueId || !pc.productId) return;
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       await updateDoc(doc(db, 'venues', venueId, 'products', pc.productId), {
         costPrice: pc.correctedUnitPrice,

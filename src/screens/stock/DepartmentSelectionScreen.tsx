@@ -9,7 +9,7 @@ import React, {
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, RefreshControl, ActivityIndicator,
-  Modal, Pressable,
+  Modal, Pressable, Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -22,6 +22,7 @@ import {
 import { getAuth } from 'firebase/auth';
 
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import IdentityBadge from '../../components/IdentityBadge';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import OfflineBanner from '../../components/OfflineBanner';
@@ -142,6 +143,7 @@ async function enrichDepartmentsWithAreaStatus(
 function DepartmentSelectionScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const structureGuard = useWriteGuard('STRUCTURE_WRITE');
   const colours = useColours();
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
@@ -219,8 +221,14 @@ function DepartmentSelectionScreen() {
   const [editName, setEditName] = useState('');
   const [saving, setSaving] = useState(false);
 
-  function openCreate() { setEditId(null); setEditName(''); setShowEdit(true); }
-  function openRename(d: DeptRow) { setEditId(d.id); setEditName(d.name || ''); setShowEdit(true); }
+  function openCreate() {
+    if (!structureGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
+    setEditId(null); setEditName(''); setShowEdit(true);
+  }
+  function openRename(d: DeptRow) {
+    if (!structureGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
+    setEditId(d.id); setEditName(d.name || ''); setShowEdit(true);
+  }
 
   async function onSave() {
     const name = editName.trim();
@@ -243,6 +251,7 @@ function DepartmentSelectionScreen() {
   }
 
   function onDelete(d: DeptRow) {
+    if (!structureGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     confirm({
       title: `Delete ${d.name}?`,
       message: 'This will remove all areas inside it.',

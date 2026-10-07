@@ -9,6 +9,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { captureMultiPagePhotos } from '../../services/fastReceive/captureMultiPagePhotos';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { uploadFastInvoice } from '../../services/fastReceive/uploadFastInvoice';
 import { scanInvoicePhoto } from '../../services/fastReceive/scanInvoicePhoto';
 import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
@@ -19,6 +20,7 @@ import { invoiceFingerprint, checkProcessed, writeProcessed, confirmDuplicateImp
 
 export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
   const venueId = useVenueId();
+  const invoiceGuard = useWriteGuard('INVOICE_POST');
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
   const [busy, setBusy] = useState(false);
@@ -51,6 +53,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
   // CAMERA: capture, scan invoice with Claude, persist snapshot
   const takePhoto = useCallback(async () => {
     if (busy) return;
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       setBusy(true);
       if (!venueId) throw new Error('Not ready: no venue selected');
@@ -69,11 +72,12 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [venueId, showInfo, showError, processScannedPhoto, busy]);
+  }, [venueId, showInfo, showError, processScannedPhoto, busy, invoiceGuard]);
 
   // LIBRARY: pick existing photo, scan invoice with Claude, persist snapshot
   const pickPhotoFromLibrary = useCallback(async () => {
     if (busy) return;
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       setBusy(true);
       if (!venueId) throw new Error('Not ready: no venue selected');
@@ -98,11 +102,12 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [venueId, showInfo, showError, processScannedPhoto, busy]);
+  }, [venueId, showInfo, showError, processScannedPhoto, busy, invoiceGuard]);
 
   // CSV/PDF upload
   const pickAndProcess = useCallback(async () => {
     if (busy) return;
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       setBusy(true);
       const res = await DocumentPicker.getDocumentAsync({
@@ -204,7 +209,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [venueId, onClose, busy]);
+  }, [venueId, onClose, busy, invoiceGuard]);
 
   const quickTip = useMemo(() => {
     return "Tip: If the scan finds ≥5 lines and ≥50 items, we'll prompt for item check-off. Fewer lines/items can be quick-confirmed.";

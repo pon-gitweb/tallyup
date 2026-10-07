@@ -1,13 +1,14 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, ActivityIndicator, Alert,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation } from '@react-navigation/native';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { createCreditNote, type CreditNoteLineInput } from '../../services/invoices/creditNotes';
@@ -35,6 +36,7 @@ const emptyLine = (): LineDraft => ({ name: '', qtyReturned: 0, creditAmountPerU
 export default function CreditNoteFormScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const invoiceGuard = useWriteGuard('INVOICE_POST');
   const c = useColours();
   const { showSuccess, showError } = useToast();
 
@@ -76,6 +78,10 @@ export default function CreditNoteFormScreen() {
 
   async function handleSave() {
     if (!venueId) return;
+    if (!invoiceGuard.allowed) {
+      Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.');
+      return;
+    }
     setSaving(true);
     try {
       const result = await createCreditNote({

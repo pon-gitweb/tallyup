@@ -66,6 +66,10 @@ type VenueCtx = {
   billingState: BillingState;
   discountPercent: number; // 0 = no discount; 50 = 50% off Core (Matchbox/pilot period)
   ready: boolean; // false while any entitlement input is still loading
+  /** true only when the config/billing doc explicitly sets enforceReadOnly=true */
+  enforceReadOnly: boolean;
+  /** mirrors venue.stocktakeActive — true while a stocktake cycle is in progress */
+  stocktakeActive: boolean;
 };
 
 const Ctx = createContext<VenueCtx>({
@@ -74,7 +78,7 @@ const Ctx = createContext<VenueCtx>({
   switchVenue: async () => {},
   refresh: () => {}, attachVenueIfMissing: async () => {},
   subscription: null, subscriptionOverride: null, isPilot: true, isActive: false, plan: null, hasModule: () => false,
-  billingState: defaultBillingState, discountPercent: 0, ready: false,
+  billingState: defaultBillingState, discountPercent: 0, ready: false, enforceReadOnly: false, stocktakeActive: false,
 });
 
 export function VenueProvider({ children }: { children: React.ReactNode }) {
@@ -94,9 +98,14 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   // undefined = snapshot not yet fired (loading); null = doc doesn't exist; object = loaded
   const [trialState, setTrialState] = useState<TrialStateDoc | null | undefined>(undefined);
   const [moduleTrialState, setModuleTrialState] = useState<Record<string, ModuleTrialEntry> | null>(null);
-  // false until the first venue-doc snapshot arrives; used to pass subscription as undefined
-  // until the snapshot fires so ready is meaningful (null subscription is ambiguous otherwise)
-  const [venueLoaded, setVenueLoaded] = useState(false);
+  // Records which venueId the venue-doc snapshot (subscription, venueType, etc.) belongs to.
+  // null until the first snapshot for the CURRENT venueId fires. Prevents stale state from
+  // a previously-active venue from being evaluated while loading the new venue.
+  const [venueDocVenueId, setVenueDocVenueId] = useState<string | null>(null);
+  // Master enforcement switch — off by default; on only when config/billing sets it true.
+  const [enforceReadOnly, setEnforceReadOnly] = useState(false);
+  // true while venue.stocktakeActive is set on the venue doc (a cycle is in progress).
+  const [stocktakeActive, setStocktakeActive] = useState(false);
 
   const triedAutoAttachForUid = useRef<string | null>(null);
   const lastVenueIdRef = useRef<string | null>(undefined as any);
@@ -258,16 +267,21 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   }, [nonce]);
 
   useEffect(() => {
-    setVenueLoaded(false);
+    // Reset per-venue state so stale data from the previous venue is never evaluated.
+    setVenueDocVenueId(null);
+    lastVenueTypeRef.current = null; // never inherit venueType across venue boundaries
     if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
-    if (!venueId) { setSubscription(null); setSubscriptionOverride(null); setLegacyFreeAccess(false); setOwnerUid(null); setVenueCreatedAt(null); setVenueType(null); setVenueCountry('NZ'); lastVenueTypeRef.current = null; return; }
+    if (!venueId) { setSubscription(null); setSubscriptionOverride(null); setLegacyFreeAccess(false); setOwnerUid(null); setVenueCreatedAt(null); setVenueType(null); setVenueCountry('NZ'); setStocktakeActive(false); return; }
     unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
       if (!snap.exists()) {
         // Venue doc not yet written — keep loading, don't flip to null/festival
         return;
       }
       const data = snap.data();
-      setVenueLoaded(true);
+      // Mark venue-doc snapshot as belonging to the current venueId so resolveEntitlements
+      // and useWriteGuard know the data is for the venue currently being viewed.
+      setVenueDocVenueId(venueId);
+      setStocktakeActive(data?.stocktakeActive === true);
       // The venue doc updates for reasons unrelated to venueType too (e.g.
       // totalStocktakesCompleted incrementing after a stocktake). Only adopt a new
       // venueType when this snapshot actually carries one — never overwrite a known
@@ -338,13 +352,16 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       doc(db, 'config', 'billing'),
       (snap) => {
         if (snap.exists()) {
-          const ts = snap.data()?.pilotTriggerDate;
+          const d = snap.data();
+          const ts = d?.pilotTriggerDate;
           setPilotTriggerDate(ts?.toDate ? ts.toDate() : null);
+          setEnforceReadOnly(d?.enforceReadOnly === true);
         } else {
           setPilotTriggerDate(null);
+          setEnforceReadOnly(false);
         }
       },
-      () => setPilotTriggerDate(null),
+      () => { setPilotTriggerDate(null); setEnforceReadOnly(false); },
     );
     return unsubConfig;
   }, []);
@@ -515,10 +532,14 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     pilotTriggerDate,
     legacyFreeAccess,
     subscriptionOverride,
-    subscription: venueLoaded ? subscription : undefined,
+    // Pass undefined (not-yet-loaded) unless the snapshot belongs to the current venue.
+    // This prevents stale subscription data from a previously-active venue being used.
+    subscription: venueDocVenueId === venueId ? subscription : undefined,
     trialState,
     moduleTrialState,
-    venueType,
+    // Pass null (loading) unless the snapshot belongs to the current venue.
+    // Prevents stale venueType (e.g. 'festival') from a previous venue leaking in.
+    venueType: venueDocVenueId === venueId ? venueType : null,
   });
 
   const value = useMemo(() => ({
@@ -582,7 +603,9 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     billingState,
     discountPercent,
     ready,
-  }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, subscriptionOverride, isPilot, isActive, plan, ownerUid, venueCreatedAt, pilotTriggerDate, discountPercent, trialState, moduleTrialState, venueLoaded, ready]);
+    enforceReadOnly,
+    stocktakeActive,
+  }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, subscriptionOverride, isPilot, isActive, plan, ownerUid, venueCreatedAt, pilotTriggerDate, discountPercent, trialState, moduleTrialState, venueDocVenueId, ready, enforceReadOnly, stocktakeActive]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 
