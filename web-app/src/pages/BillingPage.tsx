@@ -4,7 +4,7 @@ import { doc, onSnapshot } from 'firebase/firestore'
 import { db } from '../firebase'
 import { createCheckout, openBillingPortal } from '../services/payments'
 import { MODULES } from '../services/billing/modules'
-import { deriveCoreView } from '../services/billing/coreView'
+import { deriveCoreView, moduleActive } from '../services/billing/coreView'
 import styles from './BillingPage.module.css'
 
 // Confirmed from firebase.json: hosting.public = "web", rewrites /app/** → /app/index.html.
@@ -107,7 +107,12 @@ export default function BillingPage({
   })
 
   const hasModule = (id: string) =>
-    !!(isPilot || coreState === 'included' || (venueData?.modules.includes(id) ?? false))
+    moduleActive({
+      legacyFreeAccess: venueData?.legacyFreeAccess ?? false,
+      isPilot,
+      modules: venueData?.modules ?? [],
+      id,
+    })
 
   // SO + Ops combo: active when both constituent modules are included
   const comboActive =

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveCoreView } from './coreView'
+import { deriveCoreView, moduleActive } from './coreView'
 import type { CoreViewInput, CoreViewResult } from './coreView'
 
 function row(overrides: Partial<CoreViewInput> = {}): CoreViewInput {
@@ -97,5 +97,37 @@ describe('deriveCoreView', () => {
     expect(deriveCoreView(row({ legacyFreeAccess: true, venueType: 'festival' }))).toEqual<CoreViewResult>({
       coreState: 'included', isPilot: false, coreActive: true,
     })
+  })
+})
+
+// ── moduleActive ──────────────────────────────────────────────────────────────
+
+describe('moduleActive', () => {
+  it('legacyFreeAccess true → any module id is true', () => {
+    expect(moduleActive({ legacyFreeAccess: true, isPilot: false, modules: [], id: 'supplier_optimisation' })).toBe(true)
+    expect(moduleActive({ legacyFreeAccess: true, isPilot: false, modules: [], id: 'ops_intelligence' })).toBe(true)
+  })
+
+  it('isPilot true → any module id is true', () => {
+    expect(moduleActive({ legacyFreeAccess: false, isPilot: true, modules: [], id: 'supplier_optimisation' })).toBe(true)
+    expect(moduleActive({ legacyFreeAccess: false, isPilot: true, modules: [], id: 'ops_intelligence' })).toBe(true)
+  })
+
+  it('override venue with modules ["ops_intelligence"] → only ops_intelligence true', () => {
+    const m = (id: string) => moduleActive({ legacyFreeAccess: false, isPilot: false, modules: ['ops_intelligence'], id })
+    expect(m('ops_intelligence')).toBe(true)
+    expect(m('supplier_optimisation')).toBe(false)
+  })
+
+  it('active subscription with ["supplier_optimisation"] → only that one true', () => {
+    const m = (id: string) => moduleActive({ legacyFreeAccess: false, isPilot: false, modules: ['supplier_optimisation'], id })
+    expect(m('supplier_optimisation')).toBe(true)
+    expect(m('ops_intelligence')).toBe(false)
+  })
+
+  it('trial-path venue with no subscription → all modules false', () => {
+    const m = (id: string) => moduleActive({ legacyFreeAccess: false, isPilot: false, modules: [], id })
+    expect(m('supplier_optimisation')).toBe(false)
+    expect(m('ops_intelligence')).toBe(false)
   })
 })

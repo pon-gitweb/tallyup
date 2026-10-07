@@ -47,3 +47,17 @@ export function deriveCoreView(input: CoreViewInput): CoreViewResult {
   // pilot, founder, Matchbox, or any other unrecognised path
   return { coreState: 'included', isPilot: true, coreActive: true }
 }
+
+export function moduleActive({
+  legacyFreeAccess,
+  isPilot,
+  modules,
+  id,
+}: {
+  legacyFreeAccess: boolean
+  isPilot: boolean
+  modules: string[]
+  id: string
+}): boolean {
+  return !!(legacyFreeAccess || isPilot || modules.includes(id))
+}
