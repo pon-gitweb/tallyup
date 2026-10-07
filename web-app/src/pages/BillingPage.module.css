@@ -386,6 +386,39 @@
   font-family: Inter, system-ui, sans-serif;
 }
 
+/* Primary CTA button (Subscribe to Core) */
+.btnPrimary {
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: #1a1a1a;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: Inter, system-ui, sans-serif;
+  margin-top: 12px;
+  transition: background 0.15s;
+}
+
+.btnPrimary:hover:not(:disabled) {
+  background: #374151;
+}
+
+.btnPrimary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Non-owner message for Core subscribe */
+.ownerOnly {
+  font-size: 13px;
+  color: #6B7280;
+  font-family: Inter, system-ui, sans-serif;
+  margin: 12px 0 0;
+  font-style: italic;
+}
+
 /* ── Active status ─────────────────────────────────────────────────────────── */
 
 .activeStatus {
