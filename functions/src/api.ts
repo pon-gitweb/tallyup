@@ -5,6 +5,7 @@ import express = require("express");
 import cors = require("cors");
 import Stripe from "stripe";
 import { proposeInvoiceChanges, commitInvoiceChanges, computeGpPercent } from "./priceTracking";
+import { checkCheckoutEligibility, isValidVenueId, VenueForEligibility } from "./checkoutEligibility";
 import { contributeToGlobalCatalogItem } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
@@ -1375,29 +1376,52 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
     const uid = await verifyToken(req);
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
     const { venueId, priceId, lookupKey, successUrl, cancelUrl, quantity: rawQuantity } = req.body || {};
-    if (!venueId || (!priceId && !lookupKey) || !successUrl || !cancelUrl) {
-      res.status(400).json({ ok: false, error: "Missing venueId, successUrl, or cancelUrl; and either priceId or lookupKey" });
+    if (!venueId || !lookupKey || !successUrl || !cancelUrl) {
+      res.status(400).json({ ok: false, error: "Missing venueId, lookupKey, successUrl, or cancelUrl" });
       return;
     }
-    // Validate quantity: must be a positive integer; default to 1 if absent or invalid.
-    const quantity = (typeof rawQuantity === "number" && Number.isInteger(rawQuantity) && rawQuantity >= 1)
-      ? rawQuantity
-      : 1;
+    // Reject a bad venueId before building any Firestore path from it
+    if (!isValidVenueId(venueId)) {
+      res.status(400).json({ ok: false, error: "Invalid venue" });
+      return;
+    }
+    // Eligibility + format checks: read venue + trialState, then gate before any Stripe call
+    const db = admin.firestore();
+    const [venueSnap, trialStateSnap] = await Promise.all([
+      db.doc(`venues/${venueId}`).get(),
+      db.doc(`venues/${venueId}/billing/trialState`).get(),
+    ]);
+    const eligibility = checkCheckoutEligibility({
+      priceId: priceId ?? null,
+      venueId: venueId ?? '',
+      quantity: rawQuantity ?? null,
+      successUrl: successUrl ?? '',
+      cancelUrl: cancelUrl ?? '',
+      uid,
+      venue: venueSnap.exists ? venueSnap.data() as VenueForEligibility : null,
+      lookupKey: lookupKey ?? '',
+      hasTrialState: trialStateSnap.exists,
+    });
+    if (!eligibility.ok) {
+      // strict:false + TS5.9 does not narrow through !ok on a discriminated union — cast explicitly
+      const refused = eligibility as { ok: false; status: number; error: string };
+      console.log("[api/stripe/create-checkout-session] REFUSED", { uid, venueId, lookupKey, reason: refused.error });
+      res.status(refused.status).json({ ok: false, error: refused.error });
+      return;
+    }
     if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
     let resolvedPriceId: string;
     try {
-      resolvedPriceId = await resolvePriceId(stripe, priceId, lookupKey);
+      resolvedPriceId = await resolvePriceId(stripe, undefined, lookupKey);
     } catch (e: any) {
-      res.status(400).json({ ok: false, error: e?.message || "Invalid priceId or lookupKey" });
+      res.status(400).json({ ok: false, error: e?.message || "Invalid lookupKey" });
       return;
     }
-    const db = admin.firestore();
-    const venueSnap = await db.doc(`venues/${venueId}`).get();
     const existingCustomerId: string | undefined = venueSnap.data()?.subscription?.stripeCustomerId;
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
-      line_items: [{ price: resolvedPriceId, quantity }],
+      line_items: [{ price: resolvedPriceId, quantity: 1 }],
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: venueId,
