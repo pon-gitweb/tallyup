@@ -8,10 +8,11 @@
 import React, { useCallback, useState } from 'react';
 import { getFirestore, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import {
-  ActivityIndicator, Linking, Modal,
+  ActivityIndicator, Alert, Linking, Modal,
   ScrollView, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useColours } from '../../context/ThemeContext';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 
@@ -61,11 +62,13 @@ export default function OrderDispatchModal({
 }: Props) {
   const [busy, setBusy] = useState(false);
   const colours = useColours();
+  const orderGuard = useWriteGuard('ORDER_WRITE');
   const db = getFirestore();
   const { showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
 
   const markPlaced = useCallback(async (method: string) => {
+    if (!orderGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
         status: 'submitted',
@@ -75,7 +78,7 @@ export default function OrderDispatchModal({
     } catch (e) {
       console.log('[OrderDispatch] markPlaced error', e);
     }
-  }, [db, venueId, orderId]);
+  }, [db, venueId, orderId, orderGuard]);
 
   const onEmail = useCallback(async () => {
     if (!supplierEmail) {

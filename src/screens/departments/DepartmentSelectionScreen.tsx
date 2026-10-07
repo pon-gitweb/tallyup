@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, Modal, Pressable, ActivityIndicator } from 'react-native';
+import { Alert, View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, Modal, Pressable, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { collection, getDocs, query, orderBy, limit, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
@@ -15,6 +16,7 @@ export default function DepartmentSelectionScreen() {
   const nav = useNavigation<any>();
   const c = useColours();
   const venueId = useVenueId();
+  const structureGuard = useWriteGuard('STRUCTURE_WRITE');
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const { showError } = useToast();
@@ -55,6 +57,7 @@ export default function DepartmentSelectionScreen() {
   async function onSave() {
     const name = editName.trim();
     if (!venueId || !name) { showError('Enter a department name.'); return; }
+    if (!structureGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       if (editId) {
         // rename (update)
@@ -75,6 +78,7 @@ export default function DepartmentSelectionScreen() {
 
   async function onDelete(d: Dept) {
     if (!venueId) return;
+    if (!structureGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     confirm({
       title: 'Delete department',
       message: `Delete “${d.name}”?`,

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { getApp } from 'firebase/app';
 import {
   getFirestore,
@@ -16,6 +16,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import SupplierBadge from '../SupplierBadge';
 import { savedToast } from '../../utils/toast';
 import { useToast } from '../common/Toast';
@@ -26,6 +27,7 @@ type Props = { orderId: string; onSubmitted?: () => void };
 export default function OrderEditor({ orderId, onSubmitted }: Props) {
   const { showSuccess, showError, showInfo } = useToast();
   const venueId = useVenueId();
+  const orderGuard = useWriteGuard('ORDER_WRITE');
   const [order, setOrder] = useState<any>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,6 +66,7 @@ export default function OrderEditor({ orderId, onSubmitted }: Props) {
 
   const bumpQty = useCallback(async (productId: string, delta: number) => {
     if (!orderRef) return;
+    if (!orderGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     const lr = doc(orderRef, 'lines', productId);
     const snap = await getDoc(lr);
     const prev = Number(snap.exists() ? (snap.data() as any)?.qty ?? 0 : 0);
@@ -75,17 +78,19 @@ export default function OrderEditor({ orderId, onSubmitted }: Props) {
       await setDoc(lr, { qty: next, updatedAt: serverTimestamp() }, { merge: true });
       savedToast('Draft updated');
     }
-  }, [orderRef]);
+  }, [orderRef, orderGuard]);
 
   const deleteLine = useCallback(async (productId: string) => {
     if (!orderRef) return;
+    if (!orderGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     await deleteDoc(doc(orderRef, 'lines', productId));
     savedToast('Line removed');
-  }, [orderRef]);
+  }, [orderRef, orderGuard]);
 
   const submit = useCallback(async () => {
     try {
       if (!orderRef) throw new Error('No order');
+      if (!orderGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
       if (!lines.length) {
         showInfo('This draft has no lines.');
         return;
@@ -101,7 +106,7 @@ export default function OrderEditor({ orderId, onSubmitted }: Props) {
     } catch (e: any) {
       showError(e?.message ?? 'Failed to submit order.');
     }
-  }, [orderRef, lines, onSubmitted]);
+  }, [orderRef, lines, onSubmitted, orderGuard]);
 
   if (!venueId) {
     return <View style={{ padding: 16 }}><Text>No venue selected.</Text></View>;

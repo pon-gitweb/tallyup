@@ -24,6 +24,7 @@ import { db } from '../../services/firebase';
 import HintBubble from '../../components/hints/HintBubble';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId, useVenueCountry } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { throttleAction } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
@@ -1647,6 +1648,7 @@ function StockTakeAreaInventoryScreen() {
   const [localStartedAtMs, setLocalStartedAtMs] = React.useState<number|null>(null);
   const startedAtMs = localStartedAtMs ?? (areaMeta?.startedAt?.toMillis ? areaMeta.startedAt.toMillis() : (areaMeta?.startedAt?._seconds ? areaMeta.startedAt._seconds * 1000 : null));
   const areaStarted = !!startedAtMs;
+  const startCountGuard = useWriteGuard('START_COUNT', { areaStarted });
 
   // Edit window computed state
   const isSubmitted = !!areaMeta?.completedAt;
@@ -1785,6 +1787,10 @@ function StockTakeAreaInventoryScreen() {
 
   const ensureAreaStarted = async () => {
     if (startedAtMs) return;
+    if (!startCountGuard.allowed) {
+      Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.');
+      return;
+    }
     try {
       const a = await getDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId));
       const data = a.data() as AreaDoc | undefined;

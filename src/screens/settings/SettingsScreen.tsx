@@ -41,6 +41,7 @@ import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 import { usePendingAdjustmentsCount } from '../../hooks/usePendingAdjustments';
 import { usePendingBudgetApprovalsCount } from '../../hooks/usePendingBudgetApprovals';
 import { useVenueId, useVenueType, useVenueCountry } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 
@@ -78,6 +79,7 @@ export default function SettingsScreen() {
   const user = auth.currentUser;
   const venueId = useVenueId();
   const venueType = useVenueType();
+  const resetGuard = useWriteGuard('RESET_STOCKTAKE');
   const venueCountry = useVenueCountry();
   const isFestival = venueType === 'festival';
 
@@ -491,6 +493,10 @@ export default function SettingsScreen() {
 
   async function doResetCycle() {
     if (!venueId) return;
+    if (!resetGuard.allowed) {
+      Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.');
+      return;
+    }
 
     const performReset = async () => {
       setResettingCycle(true);

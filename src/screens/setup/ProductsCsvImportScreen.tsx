@@ -4,11 +4,12 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
+import { Alert, View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { useToast } from '../../components/common/Toast';
 import { getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, serverTimestamp, writeBatch, doc, setDoc } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { parseCsv, toObjects, autoHeaderMap, remapObjects } from '../../services/imports/csv';
 import { guessCategory } from '../../services/festival/purchasingPrediction';
 import { uploadText } from '../../services/firebase/storage';
@@ -38,6 +39,7 @@ function slugId(s:string){
 
 export default function ProductsCsvImportScreen(){
   const venueId = useVenueId();
+  const productWriteGuard = useWriteGuard('PRODUCT_WRITE');
   const db = getFirestore(getApp());
   const { showError, showSuccess } = useToast();
 
@@ -127,11 +129,12 @@ export default function ProductsCsvImportScreen(){
   const canUpload = useMemo(()=>{
     const nameSrc = map['name'];
     return !!nameSrc && parsedRows.length>0 && !busy && !!venueId;
-  },[map, parsedRows, busy, venueId]);
+  },[map, parsedRows, busy, venueId, productWriteGuard]);
 
   const onUpload = useCallback(async()=>{
     if(!venueId) { showError('No venue selected.'); return; }
     if(!canUpload) return;
+    if(!productWriteGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
 
     setBusy(true);
     try{

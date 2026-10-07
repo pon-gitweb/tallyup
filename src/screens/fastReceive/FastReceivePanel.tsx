@@ -1,11 +1,12 @@
 // @ts-nocheck
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 import { useVenueId } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { uploadFastInvoice } from '../../services/fastReceive/uploadFastInvoice';
 import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
 import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
@@ -44,6 +45,7 @@ export async function clearOfflineInvoiceQueue() {
 
 export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
   const venueId = useVenueId();
+  const invoiceGuard = useWriteGuard('INVOICE_POST');
   const [busy, setBusy] = useState(false);
   const { showSuccess, showError, showInfo } = useToast();
 
@@ -129,6 +131,7 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
   }, [venueId, onClose]);
 
   const takePhoto = useCallback(async () => {
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
@@ -144,6 +147,7 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
   }, [uploadPhoto]);
 
   const pickFromLibrary = useCallback(async () => {
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
@@ -160,6 +164,7 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
 
   // CSV/PDF flow (unchanged)
   const pickAndProcess = useCallback(async ()=>{
+    if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try{
       const res = await DocumentPicker.getDocumentAsync({
         type: ['text/csv','application/pdf'],

@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { useVenueId, useSubscription } from '../../context/VenueProvider';
+import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { MODULES } from '../../services/billing/modules';
 import IdentityBadge from '../../components/IdentityBadge';
 import { OrdersService } from '../../domain/orders';
@@ -68,6 +69,7 @@ export function __showSuggestToast(msg:string){
 export default function SuggestedOrderScreen(){
   const nav=useNavigation<any>();
   const venueId=useVenueId();
+  const orderGuard=useWriteGuard('ORDER_WRITE');
   const { hasModule }=useSubscription();
   const db=getFirestore();
   const uid=getAuth()?.currentUser?.uid||'dev';
@@ -290,7 +292,6 @@ export default function SuggestedOrderScreen(){
       try{
         await loadSuppliers();
         await loadDepartments();
-        setEntitled(hasModule(MODULES.SUPPLIER_OPTIMISATION));
         await doRefreshRaw();
       } finally { setRefreshing(false); }
     })();
@@ -452,6 +453,7 @@ export default function SuggestedOrderScreen(){
 
   const createDraftForPreview=useCallback(async()=>{
     if(!venueId||!supplierPreview||!snapshot)return;
+    if(!orderGuard.allowed){Alert.alert('Read-only','This venue is read-only, so this action is unavailable.');return;}
 
     // HARD GUARD: if this suggestionKey is already present for this cycle, do nothing.
     const sKey = supplierPreview.suggestionKey;
@@ -532,7 +534,7 @@ export default function SuggestedOrderScreen(){
     }catch(e:any){
       showError(e?.message||'Could not create draft. Please try again.');
     }
-  },[venueId,supplierPreview,uid,findExistingDraftForSupplier,mergeIntoExistingDraft,snapshot,selectedDeptId,existingKeys]);
+  },[venueId,supplierPreview,uid,findExistingDraftForSupplier,mergeIntoExistingDraft,snapshot,selectedDeptId,existingKeys,orderGuard]);
 
   // Quick-assign supplier for a product (from Unassigned preview)
   const openAssignForProduct = useCallback(async(productId:string)=>{
