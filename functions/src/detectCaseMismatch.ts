@@ -27,22 +27,23 @@ export function parsePackUnits(name: string): PackUnitsResult | null {
   const s = name.toLowerCase();
 
   // ── NxM patterns ────────────────────────────────────────────────────────────
-  // Matches: integer [whitespace] [x/×/X] [whitespace] integer [optional unit]
-  // A volume/weight suffix on the SECOND side means the first number is the pack count.
-  // A dimension suffix (cm, mm, m, in) on the SECOND side means it's a physical size —
-  //   skip the entire match ("30x50cm" is not a pack of 30).
-  // No unit suffix on either side means multiply both numbers.
+  // Iterates all NxM matches (g flag) so a skipped match doesn't block a later good one.
+  // Skips when the second number's suffix is:
+  //   '%'  — alcohol percentage e.g. "6 x 4.5% 330ml" (would multiply to wrong answer)
+  //   DIM  — physical size e.g. "30x50cm", "6x6 inch", "2x4ft"
+  // Volume/weight suffix on the second side → first number is the pack count.
+  // No suffix on either side → multiply both numbers.
   const VOLUME_SUFFIX = /^(ml|cl|fl|oz|l\b|ltr\b|kg\b|g\b|mg\b)/i;
-  const DIM_SUFFIX = /^(cm\b|mm\b|m\b|in\b)/i;
-  const xRe = /(?<![a-z\d])(\d+)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*([a-z]+)?/;
-  const xMatch = s.match(xRe);
-  if (xMatch) {
+  const DIM_SUFFIX = /^(cm\b|mm\b|m\b|in\b|inch\b|inches\b|ft\b|yd\b|")/i;
+  // Also captures % and " so we can detect alcohol marks and inch symbols
+  const xRe = /(?<![a-z\d])(\d+)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*([%a-z"][a-z%"]*)?/g;
+  for (const xMatch of s.matchAll(xRe)) {
     const a = parseInt(xMatch[1], 10);
     const bRaw = xMatch[2];
     const suffix = xMatch[3] ?? '';
-    if (DIM_SUFFIX.test(suffix)) {
-      // physical dimension — not a pack count, fall through to explicit patterns
-    } else if (VOLUME_SUFFIX.test(suffix)) {
+    if (suffix.startsWith('%')) continue; // "6 x 4.5%" — skip, may find better match later
+    if (DIM_SUFFIX.test(suffix)) continue; // physical dimension — skip
+    if (VOLUME_SUFFIX.test(suffix)) {
       // "24 x 330ml" → pack count is a
       if (a >= 2 && a <= 96) return { units: a, source: 'count' };
     } else {
@@ -60,7 +61,7 @@ export function parsePackUnits(name: string): PackUnitsResult | null {
     /\bctn\s+(\d+)/,
     /(\d+)\s*pk\b/,
     /(\d+)\s+pack\b/,
-    /\bx\s*(\d+)\b/,
+    /\bx\s*(\d+)(?!\.\d)\b/,  // "x24"; (?!\.\d) avoids matching "x 4" from "x 4.5%"
     /(\d+)\s+cases?\b/,
   ];
   for (const re of EXPLICIT) {

@@ -66,10 +66,13 @@ describe('parsePackUnits — null cases (ambiguous or out of range)', () => {
 
 describe('parsePackUnits — dimension suffix (NxM skipped, not a pack count)', () => {
   it.each([
-    ['Wipes Roll Heavy Duty Blue 30x50cm 90pc'],  // physical size, not 30 packs
-    ['12x330mm'],                                  // mm is a dimension
-    ['Cloth 2x3m'],                                // m is a dimension
-    ['Panel 4x8in'],                               // in is a dimension
+    ['Wipes Roll Heavy Duty Blue 30x50cm 90pc'],  // cm dimension
+    ['12x330mm'],                                  // mm dimension
+    ['Cloth 2x3m'],                                // m dimension
+    ['Panel 4x8in'],                               // in dimension
+    ['Glass 6x6 inch'],                            // "inch" dimension
+    ['Shelf 2x4ft'],                               // ft dimension
+    ['Panel 6x6"'],                                // double-quote inch mark
   ])('%s → null', (name) => {
     expect(parsePackUnits(name)).toBeNull();
   });
@@ -79,6 +82,33 @@ describe('parsePackUnits — dimension suffix (NxM skipped, not a pack count)', 
     expect(r).not.toBeNull();
     expect(r!.units).toBe(24);
     expect(r!.source).toBe('count');
+  });
+});
+
+describe('parsePackUnits — alcohol percentage in NxM (skipped, not a pack multiply)', () => {
+  it('"Beer 6 x 4.5% 330ml" → null (% skipped, no further pack info)', () => {
+    // Old code gave 24 (6 × 4 from parseInt("4.5")). Correct answer is null.
+    expect(parsePackUnits('Beer 6 x 4.5% 330ml')).toBeNull();
+  });
+
+  it('"Lager 4.5% 6x330ml" → 6, count (% precedes the real NxM)', () => {
+    const r = parsePackUnits('Lager 4.5% 6x330ml');
+    expect(r).not.toBeNull();
+    expect(r!.units).toBe(6);
+    expect(r!.source).toBe('count');
+  });
+
+  it('"Coke 24 x 330ml CAN" → still 24 (regression)', () => {
+    const r = parsePackUnits('Coke 24 x 330ml CAN');
+    expect(r).not.toBeNull();
+    expect(r!.units).toBe(24);
+  });
+
+  it('"Schweppes Soda Water 4x6" → still 24 (regression)', () => {
+    const r = parsePackUnits('Schweppes Soda Water 4x6');
+    expect(r).not.toBeNull();
+    expect(r!.units).toBe(24);
+    expect(r!.source).toBe('multiplied');
   });
 });
 
