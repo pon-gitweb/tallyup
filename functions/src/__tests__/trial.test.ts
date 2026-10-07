@@ -13,12 +13,16 @@ const baseParams = {
 
 describe("shouldStartTrial", () => {
   test.each([
-    ["pre-trigger venue",  { ...baseParams, venueCreatedAt: new Date("2025-09-01") },       false],
-    ["founder UID",        { ...baseParams, ownerUid: "ChpWVbutHwSCRQKr3THR79EIw1X2" },    false],
-    ["legacy flag",        { ...baseParams, legacyFreeAccess: true as any },                false],
-    ["missing config",     { ...baseParams, pilotTriggerDate: null },                       false],
-    ["null createdAt",     { ...baseParams, venueCreatedAt: null },                         false],
-    ["eligible venue",     baseParams,                                                       true],
+    ["pre-trigger venue",       { ...baseParams, venueCreatedAt: new Date("2025-09-01") },    false],
+    ["founder UID",             { ...baseParams, ownerUid: "ChpWVbutHwSCRQKr3THR79EIw1X2" }, false],
+    ["legacy flag",             { ...baseParams, legacyFreeAccess: true as any },             false],
+    ["missing config",          { ...baseParams, pilotTriggerDate: null },                    false],
+    ["null createdAt",          { ...baseParams, venueCreatedAt: null },                      false],
+    ["eligible venue",          baseParams,                                                    true],
+    // Festival exemption
+    ["festival venueType",      { ...baseParams, venueType: "festival" },                     false],
+    ["venue venueType",         { ...baseParams, venueType: "venue" },                        true],
+    ["null venueType (loading)",{ ...baseParams, venueType: null },                           true],
   ] as const)("%s", (_, params, expected) => {
     expect(shouldStartTrial(params)).toBe(expected);
   });

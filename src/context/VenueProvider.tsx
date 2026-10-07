@@ -518,6 +518,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     subscription: venueLoaded ? subscription : undefined,
     trialState,
     moduleTrialState,
+    venueType,
   });
 
   const value = useMemo(() => ({

@@ -1,6 +1,6 @@
 import { BillingState } from './entitlements';
 import { MODULES, MODULE_INTRODUCED_AT, ModuleId } from './modules';
-import { SubscriptionData, SubscriptionOverride } from '../../context/VenueProvider';
+import type { SubscriptionData, SubscriptionOverride } from '../../context/VenueProvider';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 // Mirrors the private shapes in VenueProvider; defined here so the pure
@@ -54,6 +54,8 @@ export interface ResolveEntitlementsInput {
   /** undefined = Firestore snapshot not yet received; null = doc absent (pending server trigger) */
   trialState: TrialStateDoc | null | undefined;
   moduleTrialState: Record<string, ModuleTrialEntry> | null;
+  /** null = venue-doc snapshot not yet received; 'festival' = festival venue */
+  venueType: string | null;
   /** Overridable for deterministic tests; defaults to Date.now() */
   nowMs?: number;
 }
@@ -90,6 +92,7 @@ export function resolveEntitlements({
   subscription,
   trialState,
   moduleTrialState,
+  venueType,
   nowMs: nowMsInput,
 }: ResolveEntitlementsInput): ResolveEntitlementsOutput {
   const nowMs = nowMsInput ?? Date.now();
@@ -118,6 +121,27 @@ export function resolveEntitlements({
         gamification:       true,
         suitee:             subscriptionOverride.modules.includes(MODULES.OPS_INTELLIGENCE),
         groupHQ:            subscriptionOverride.modules.includes(MODULES.MULTI_VENUE),
+      },
+      accessMode: 'full',
+      trial: {},
+    };
+    ready = true;
+
+  } else if (venueType === 'festival') {
+    // Festival branch: festival venues get permanent full access to every module,
+    // regardless of subscription or trial state.
+    isPilot = false;
+    isActive = true;
+    plan = 'core_plus';
+    hasModule = () => true;
+    billingState = {
+      plan: 'core_plus',
+      addons: {
+        aiReporting:        true,
+        predictiveOrdering: true,
+        gamification:       true,
+        suitee:             true,
+        groupHQ:            true,
       },
       accessMode: 'full',
       trial: {},
@@ -310,5 +334,7 @@ export function resolveEntitlements({
     ready = pilotTriggerDate !== null && subscription !== undefined;
   }
 
-  return { isPilot, isActive, plan, hasModule, billingState, discountPercent, ready };
+  // ready is false while venueType is not yet known (null = venue-doc not loaded).
+  // A festival venue must not be treated as read-only during the brief loading window.
+  return { isPilot, isActive, plan, hasModule, billingState, discountPercent, ready: ready && venueType !== null };
 }

@@ -50,6 +50,7 @@ const base: ResolveEntitlementsInput = {
   subscription: null,
   trialState: null,
   moduleTrialState: null,
+  venueType: 'venue',
   nowMs: NOW_IN_YEAR,
 };
 
@@ -847,5 +848,206 @@ describe('differential: resolveEntitlements === original VenueProvider chain', (
     for (const moduleId of ALL_MODULE_IDS) {
       expect(extracted.hasModule(moduleId)).toBe(legacy.hasModule(moduleId));
     }
+  });
+});
+
+// ── Festival branch tests ─────────────────────────────────────────────────────
+// festival x every subscription / trialState / time combination → always full.
+
+const festivalBase: ResolveEntitlementsInput = {
+  ...base,
+  venueType: 'festival',
+};
+
+const FESTIVAL_GRID: GridRow[] = [
+  // subscription variants
+  ['festival/no-sub',          { ...festivalBase, venueCreatedAt: BEFORE_PILOT, subscription: SUB_NULL }],
+  ['festival/active-core',     { ...festivalBase, venueCreatedAt: BEFORE_PILOT, subscription: SUB_ACTIVE_CORE }],
+  ['festival/active-core_plus',{ ...festivalBase, venueCreatedAt: BEFORE_PILOT, subscription: SUB_ACTIVE_CORE_PLUS }],
+  ['festival/trialing',        { ...festivalBase, venueCreatedAt: BEFORE_PILOT, subscription: SUB_TRIALING }],
+  ['festival/canceled',        { ...festivalBase, venueCreatedAt: BEFORE_PILOT, subscription: SUB_CANCELED }],
+  ['festival/past_due',        { ...festivalBase, venueCreatedAt: BEFORE_PILOT, subscription: SUB_PAST_DUE }],
+  // trialState variants (festival ignores all of them)
+  ['festival/ts-undefined',    { ...festivalBase, venueCreatedAt: AFTER_PILOT,  trialState: TS_UNDEF, nowMs: NOW_DAY_5 }],
+  ['festival/ts-null',         { ...festivalBase, venueCreatedAt: AFTER_PILOT,  trialState: TS_NULL,  nowMs: NOW_DAY_5 }],
+  ['festival/ts-active',       { ...festivalBase, venueCreatedAt: AFTER_PILOT,  trialState: TS_ACTIVE_2, nowMs: NOW_DAY_5 }],
+  ['festival/ts-expired-count',{ ...festivalBase, venueCreatedAt: AFTER_PILOT,  trialState: TS_EXPIRED_3, subscription: SUB_NULL, nowMs: NOW_DAY_5 }],
+  ['festival/ts-expired-time', { ...festivalBase, venueCreatedAt: AFTER_PILOT,  trialState: TS_ACTIVE_0_TIMED, nowMs: NOW_DAY_31, subscription: SUB_NULL }],
+  // time variants
+  ['festival/in-year',         { ...festivalBase, venueCreatedAt: BEFORE_PILOT, nowMs: NOW_IN_YEAR }],
+  ['festival/after-year',      { ...festivalBase, venueCreatedAt: BEFORE_PILOT, nowMs: NOW_AFTER_YEAR }],
+  ['festival/at-day-30',       { ...festivalBase, venueCreatedAt: AFTER_PILOT,  trialState: TS_ACTIVE_0_TIMED, nowMs: NOW_DAY_30, subscription: SUB_NULL }],
+  // other edge cases
+  ['festival/old-venue',       { ...festivalBase, venueCreatedAt: null, subscription: SUB_NULL }],
+  ['festival/null-pilot-date', { ...festivalBase, pilotTriggerDate: null, subscription: SUB_NULL }],
+  ['festival/null-sub-undef',  { ...festivalBase, venueCreatedAt: AFTER_PILOT, subscription: undefined, trialState: TS_UNDEF }],
+];
+
+describe('festival branch', () => {
+  it.each(FESTIVAL_GRID)('%s always resolves to full access', (_label, input) => {
+    const result = resolveEntitlements({ ...input, nowMs: input.nowMs ?? NOW_IN_YEAR });
+
+    expect(result.billingState.accessMode).toBe('full');
+    expect(result.billingState.plan).toBe('core_plus');
+    expect(result.billingState.addons.aiReporting).toBe(true);
+    expect(result.billingState.addons.predictiveOrdering).toBe(true);
+    expect(result.billingState.addons.gamification).toBe(true);
+    expect(result.billingState.addons.suitee).toBe(true);
+    expect(result.billingState.addons.groupHQ).toBe(true);
+    expect(result.ready).toBe(true);
+    expect(result.hasModule(MODULES.PERFORMANCE_INCENTIVES)).toBe(true);
+    expect(result.hasModule(MODULES.OPS_INTELLIGENCE)).toBe(true);
+    expect(result.hasModule(MODULES.SUPPLIER_OPTIMISATION)).toBe(true);
+  });
+});
+
+describe('venueType null (loading)', () => {
+  it('ready=false even in override branch when venueType is null', () => {
+    const result = resolveEntitlements({
+      ...base,
+      venueType: null,
+      subscriptionOverride: { plan: 'core_plus', modules: [] },
+    });
+
+    // Access is still full (override fires) but ready=false until type loads
+    expect(result.billingState.accessMode).toBe('full');
+    expect(result.ready).toBe(false);
+  });
+
+  it('ready=false in legacy branch when venueType is null', () => {
+    const result = resolveEntitlements({ ...base, venueType: null, legacyFreeAccess: true });
+    expect(result.billingState.accessMode).toBe('full');
+    expect(result.ready).toBe(false);
+  });
+
+  it('ready=false in pilot branch when venueType is null', () => {
+    const result = resolveEntitlements({ ...base, venueType: null, nowMs: NOW_IN_YEAR });
+    expect(result.billingState.accessMode).toBe('full');
+    expect(result.ready).toBe(false);
+  });
+});
+
+// ── Permanent seeded randomized sweep ─────────────────────────────────────────
+// Confirms resolveEntitlements === legacyResolve over 20,000 random inputs
+// (venueType drawn from ['venue', null] only — festival is tested separately).
+// Also asserts the never-readOnly invariant: override, legacy-free and founder
+// inputs must ALWAYS resolve to full access.
+
+function mulberry32(seed: number): () => number {
+  let s = seed;
+  return () => {
+    s = (s + 0x6D2B79F5) | 0;
+    let z = Math.imul(s ^ (s >>> 15), 1 | s);
+    z = z + Math.imul(z ^ (z >>> 7), 61 | z) ^ z;
+    return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+type SweepInput = ResolveEntitlementsInput & { nowMs: number };
+
+function generateSweepInput(rand: () => number): SweepInput {
+  const pick = <T>(arr: readonly T[]): T => arr[Math.floor(rand() * arr.length)];
+
+  const VENUE_TYPES: Array<string | null> = ['venue', null];
+  const SUBSCRIPTIONS = [
+    null,
+    SUB_ACTIVE_CORE,
+    SUB_ACTIVE_CORE_PLUS,
+    SUB_ACTIVE_SUPPLIER,
+    SUB_TRIALING,
+    SUB_CANCELED,
+    SUB_PAST_DUE,
+  ] as const;
+  const TRIAL_STATES = [
+    undefined, null,
+    TS_ACTIVE_0, TS_ACTIVE_1, TS_ACTIVE_2, TS_EXPIRED_3, TS_ACTIVE_0_TIMED,
+  ] as const;
+  const NOW_OPTIONS = [
+    PILOT_DATE.getTime() - ONE_DAY_MS,
+    PILOT_DATE.getTime() + 90  * ONE_DAY_MS,
+    PILOT_DATE.getTime() + ONE_YEAR_MS + ONE_DAY_MS,
+    TRIAL_START_MS + 5  * ONE_DAY_MS,
+    TRIAL_START_MS + 29 * ONE_DAY_MS,
+    TRIAL_START_MS + 31 * ONE_DAY_MS,
+    NOW_DAY_30_MINUS_1,
+    NOW_DAY_30,
+  ] as const;
+  const VENUE_CREATED_OPTIONS: Array<Date | null> = [
+    null,
+    BEFORE_PILOT,
+    ON_PILOT,
+    AFTER_PILOT,
+    new Date(PILOT_DATE.getTime() + 5 * ONE_DAY_MS),
+  ];
+
+  const hasOverride  = rand() < 0.15;
+  const isLegacy     = !hasOverride && rand() < 0.10;
+  const founderUidList = [...FOUNDER_UIDS];
+  const isFounder    = !hasOverride && !isLegacy && rand() < 0.10;
+  const isMatchbox   = !hasOverride && !isLegacy && !isFounder && rand() < 0.05;
+
+  return {
+    venueId: isMatchbox ? MATCHBOX_VENUE_ID
+           : (rand() < 0.05 ? null : `venue-${Math.floor(rand() * 100)}`),
+    ownerUid: isFounder
+      ? founderUidList[Math.floor(rand() * founderUidList.length)]
+      : (rand() < 0.05 ? null : `user-${Math.floor(rand() * 1000)}`),
+    venueCreatedAt: pick(VENUE_CREATED_OPTIONS),
+    pilotTriggerDate: rand() < 0.10 ? null : PILOT_DATE,
+    legacyFreeAccess: isLegacy,
+    subscriptionOverride: hasOverride ? pick([
+      { plan: 'core' as const, modules: [] },
+      { plan: 'core_plus' as const, modules: [MODULES.OPS_INTELLIGENCE] },
+    ]) : null,
+    subscription: pick(SUBSCRIPTIONS),
+    trialState: pick(TRIAL_STATES),
+    moduleTrialState: null,
+    venueType: pick(VENUE_TYPES),
+    nowMs: pick(NOW_OPTIONS),
+  };
+}
+
+describe('seeded randomized sweep (20,000 iterations)', () => {
+  it('resolveEntitlements matches legacyResolve and never-readOnly invariant holds', () => {
+    const rand = mulberry32(0xDEADBEEF);
+    const ITERATIONS = 20_000;
+    let divergences = 0;
+    let privilegedReadOnly = 0;
+
+    for (let i = 0; i < ITERATIONS; i++) {
+      const input = generateSweepInput(rand);
+      const legacy    = legacyResolve(input);
+      const extracted = resolveEntitlements(input);
+
+      // Differential comparison (ready excluded — it's new)
+      if (extracted.isActive    !== legacy.isActive)    { divergences++; continue; }
+      if (extracted.isPilot     !== legacy.isPilot)     { divergences++; continue; }
+      if (extracted.plan        !== legacy.plan)        { divergences++; continue; }
+      if (extracted.billingState.accessMode !== legacy.billingState.accessMode) { divergences++; continue; }
+      if (extracted.billingState.plan       !== legacy.billingState.plan)       { divergences++; continue; }
+      if (extracted.billingState.trial.stocktakesRemaining !==
+          legacy.billingState.trial.stocktakesRemaining) { divergences++; continue; }
+      if (extracted.discountPercent !== legacy.discountPercent) { divergences++; continue; }
+
+      const addonKeys = Object.keys(legacy.billingState.addons) as Array<keyof typeof legacy.billingState.addons>;
+      for (const k of addonKeys) {
+        if (extracted.billingState.addons[k] !== legacy.billingState.addons[k]) { divergences++; break; }
+      }
+      for (const moduleId of ALL_MODULE_IDS) {
+        if (extracted.hasModule(moduleId) !== legacy.hasModule(moduleId)) { divergences++; break; }
+      }
+
+      // Never-readOnly invariant: override, legacy-free and founder must always be full
+      const isPrivileged =
+        input.subscriptionOverride !== null ||
+        input.legacyFreeAccess ||
+        (input.ownerUid !== null && input.ownerUid !== undefined && FOUNDER_UIDS.has(input.ownerUid));
+
+      if (isPrivileged && extracted.billingState.accessMode !== 'full') privilegedReadOnly++;
+      if (isPrivileged && legacy.billingState.accessMode    !== 'full') privilegedReadOnly++;
+    }
+
+    expect(divergences).toBe(0);
+    expect(privilegedReadOnly).toBe(0);
   });
 });

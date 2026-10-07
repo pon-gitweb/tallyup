@@ -20,17 +20,20 @@ export function shouldStartTrial({
   ownerUid,
   legacyFreeAccess,
   founderUids,
+  venueType,
 }: {
   venueCreatedAt: Date | null;
   pilotTriggerDate: Date | null;
   ownerUid: string;
   legacyFreeAccess: boolean | null | undefined;
   founderUids: ReadonlySet<string>;
+  venueType?: string | null;
 }): boolean {
   if (!pilotTriggerDate || !venueCreatedAt) return false;
   if (venueCreatedAt < pilotTriggerDate) return false;
   if (founderUids.has(ownerUid)) return false;
   if (legacyFreeAccess === true) return false;
+  if (venueType === 'festival') return false;
   return true;
 }
 
@@ -75,6 +78,9 @@ export const onVenueCreated = onDocumentCreated(
       ? venueCreatedAtTs.toDate()
       : null;
 
+    const venueType: string | null =
+      typeof venueData.venueType === "string" ? venueData.venueType : null;
+
     if (
       !shouldStartTrial({
         venueCreatedAt,
@@ -82,6 +88,7 @@ export const onVenueCreated = onDocumentCreated(
         ownerUid: venueData.ownerUid ?? "",
         legacyFreeAccess: venueData.legacyFreeAccess,
         founderUids: FOUNDER_UIDS,
+        venueType,
       })
     ) {
       return;
