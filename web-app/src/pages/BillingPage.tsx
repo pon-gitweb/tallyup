@@ -2,30 +2,33 @@ import { useEffect, useState } from 'react'
 import type { User } from 'firebase/auth'
 import { doc, onSnapshot } from 'firebase/firestore'
 import { db } from '../firebase'
-import { openBillingPortal } from '../services/payments'
+import { createCheckout, openBillingPortal } from '../services/payments'
 import { MODULES } from '../services/billing/modules'
+import { deriveCoreView, moduleActive } from '../services/billing/coreView'
 import styles from './BillingPage.module.css'
 
 // Confirmed from firebase.json: hosting.public = "web", rewrites /app/** → /app/index.html.
 // Firebase project tallyup-f1463 (.firebaserc). Default Hosting domain = tallyup-f1463.web.app.
 // App lives under /app/ per the rewrite, so return paths must include that prefix.
 const SUCCESS_URL = 'https://tallyup-f1463.web.app/app/billing-success'
+const CANCEL_URL  = 'https://tallyup-f1463.web.app/app/billing-cancel'
 
 type BillingCycle = 'monthly' | 'annual'
 
-type SubState = {
+type VenueData = {
+  override: unknown
+  legacyFreeAccess: boolean
+  venueType: string | null
+  ownerUid: string | null
   plan: string | null
   modules: string[]
-  status: string | null           // 'active' | 'trialing' | other
+  status: string | null
   stripeCustomerId: string | null
-  isPilot: boolean                // mirrors mobile: !subscription || status not active/trialing
-  legacyFreeAccess: boolean       // permanent full access for grandfathered venues; Console-only flag
 }
-
 
 export default function BillingPage({
   venueId,
-  user: _user,
+  user,
   billingReturnStatus,
   onClearStatus,
 }: {
@@ -34,82 +37,84 @@ export default function BillingPage({
   billingReturnStatus: 'success' | 'cancel' | null
   onClearStatus: () => void
 }) {
-  const [sub, setSub] = useState<SubState | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [cycle, setCycle] = useState<BillingCycle>('monthly')
-  const [busy, setBusy] = useState<string | null>(null)
-  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [venueData, setVenueData]     = useState<VenueData | null>(null)
+  const [venueReady, setVenueReady]   = useState(false)
+  const [trialPath, setTrialPath]     = useState(false)
+  const [trialReady, setTrialReady]   = useState(false)
+  const [cycle, setCycle]             = useState<BillingCycle>('monthly')
+  const [busy, setBusy]               = useState<string | null>(null)
+  const [errors, setErrors]           = useState<Record<string, string>>({})
 
-  // Live venue doc. Three-way precedence, matching mobile VenueProvider:
-  //   1. subscriptionOverride present → explicit entitlement (reviewer / pilot-with-override)
-  //   2. legacyFreeAccess true → permanent full access for grandfathered pilot venues (Console-only flag)
-  //   3. subscription.status active/trialing → real paid subscription
-  //   4. otherwise → implicit pilot (no subscription data at all, or lapsed/cancelled)
-  //      mobile: isPilot = !subscription || !['active','trialing'].includes(subscription.status)
+  // Live venue doc
   useEffect(() => {
     const unsub = onSnapshot(
       doc(db, 'venues', venueId),
       (snap) => {
         if (snap.exists()) {
           const d = snap.data() as any
-          const override = d?.subscriptionOverride
           const s = d?.subscription
-          if (override) {
-            // Case 1: explicit entitlement override (reviewer / seeded pilot account)
-            setSub({
-              plan: override.plan ?? null,
-              modules: Array.isArray(override.modules) ? override.modules : [],
-              status: 'active',
-              stripeCustomerId: s?.stripeCustomerId ?? null,
-              isPilot: false,
-              legacyFreeAccess: false,
-            })
-          } else if (d?.legacyFreeAccess === true) {
-            // Case 2: grandfathered pilot venue — permanent full access.
-            // Flag is set via Firebase Console only; never client-writable (protected by
-            // omission from the venue hasOnlyFields allowlist in firestore.rules).
-            // Independent branch so this survives any future restructure of the isPilot formula.
-            setSub({
-              plan: 'core_plus',
-              modules: [],        // legacyFreeAccess drives hasModule directly; modules list unused
-              status: 'active',
-              stripeCustomerId: s?.stripeCustomerId ?? null,
-              isPilot: false,
-              legacyFreeAccess: true,
-            })
-          } else {
-            // Cases 3 & 4: real subscription or implicit pilot
-            const reallyActive = s?.status === 'active' || s?.status === 'trialing'
-            setSub({
-              plan: s?.plan ?? null,
-              modules: Array.isArray(s?.modules) ? s.modules : [],
-              status: s?.status ?? null,
-              stripeCustomerId: s?.stripeCustomerId ?? null,
-              isPilot: !s || !reallyActive,  // matches mobile line 385
-              legacyFreeAccess: false,
-            })
-          }
+          const override = d?.subscriptionOverride
+          setVenueData({
+            override: override ?? null,
+            legacyFreeAccess: d?.legacyFreeAccess === true,
+            venueType: d?.venueType ?? null,
+            ownerUid: d?.ownerUid ?? null,
+            plan: override ? (override.plan ?? null) : (s?.plan ?? null),
+            modules: override
+              ? (Array.isArray(override.modules) ? override.modules : [])
+              : (Array.isArray(s?.modules) ? s.modules : []),
+            status: override ? 'active' : (s?.status ?? null),
+            stripeCustomerId: s?.stripeCustomerId ?? null,
+          })
         } else {
-          setSub({ plan: null, modules: [], status: null, stripeCustomerId: null, isPilot: false, legacyFreeAccess: false })
+          setVenueData(null)
         }
-        setLoading(false)
+        setVenueReady(true)
       },
-      () => setLoading(false),
+      () => setVenueReady(true),
     )
     return unsub
   }, [venueId])
 
+  // Live trialState doc — members can read this
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'venues', venueId, 'billing', 'trialState'),
+      (snap) => {
+        setTrialPath(snap.exists())
+        setTrialReady(true)
+      },
+      () => setTrialReady(true),
+    )
+    return unsub
+  }, [venueId])
+
+  // Hold loading state until both snapshots are resolved to avoid button flash
+  const loading = !venueReady || !trialReady
   if (loading) return <p className={styles.loading}>Loading billing…</p>
 
   // ── Entitlement derivation ────────────────────────────────────────────────
-  // legacyFreeAccess and isPilot both short-circuit everything: full access, no subscribe buttons.
-  const legacyFreeAccess = sub?.legacyFreeAccess ?? false
-  const isPilot    = sub?.isPilot ?? false
-  const isActive   = legacyFreeAccess || isPilot || sub?.status === 'active' || sub?.status === 'trialing'
-  const coreActive = legacyFreeAccess || isPilot || (isActive && !!sub?.plan)
-  const hasModule  = (id: string) => legacyFreeAccess || isPilot || (sub?.modules.includes(id) ?? false)
+  const isOwner = !!(venueData?.ownerUid && venueData.ownerUid === user.uid)
 
-  // SO + Ops combo: active when both constituent modules are included (P&I is now free in Core)
+  const { coreState, isPilot, coreActive } = deriveCoreView({
+    override: venueData?.override,
+    legacyFreeAccess: venueData?.legacyFreeAccess,
+    venueType: venueData?.venueType,
+    subscriptionStatus: venueData?.status,
+    subscriptionPlan: venueData?.plan,
+    trialPath,
+    isOwner,
+  })
+
+  const hasModule = (id: string) =>
+    moduleActive({
+      legacyFreeAccess: venueData?.legacyFreeAccess ?? false,
+      isPilot,
+      modules: venueData?.modules ?? [],
+      id,
+    })
+
+  // SO + Ops combo: active when both constituent modules are included
   const comboActive =
     hasModule(MODULES.SUPPLIER_OPTIMISATION) &&
     hasModule(MODULES.OPS_INTELLIGENCE)
@@ -121,6 +126,20 @@ export default function BillingPage({
       delete next[key]
       return next
     })
+  }
+
+  async function handleCoreCheckout() {
+    if (busy) return
+    clearError('core')
+    setBusy('core')
+    try {
+      const lookupKey = cycle === 'monthly' ? 'core_monthly_rolling' : 'core_annual'
+      const result = await createCheckout({ venueId, lookupKey, successUrl: SUCCESS_URL, cancelUrl: CANCEL_URL })
+      window.location.href = result.url
+    } catch (e: any) {
+      setErrors((prev) => ({ ...prev, core: e?.message ?? 'Could not start checkout. Please try again.' }))
+      setBusy(null)
+    }
   }
 
   async function handlePortal() {
@@ -205,12 +224,19 @@ export default function BillingPage({
         <div className={styles.heroRight}>
           <p className={styles.heroPrice}>{prices.core}</p>
           {prices.coreNote && <p className={styles.priceNote}>{prices.coreNote}</p>}
-          {coreActive ? (
+          {coreState === 'included' || coreState === 'active' ? (
             <p className={styles.activeStatus}>✓ Active</p>
+          ) : coreState === 'owner_only' ? (
+            <p className={styles.ownerOnly}>Only the venue owner can subscribe.</p>
           ) : (
             <>
-              <button type="button" className={styles.btnGhost} disabled>
-                Updated plans — checkout reopening shortly
+              <button
+                type="button"
+                className={styles.btnPrimary}
+                onClick={handleCoreCheckout}
+                disabled={!!busy}
+              >
+                {busy === 'core' ? 'Opening checkout…' : 'Subscribe to Core'}
               </button>
               {errors.core && <p className={styles.cardError}>{errors.core}</p>}
             </>
