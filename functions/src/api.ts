@@ -5,6 +5,7 @@ import express = require("express");
 import cors = require("cors");
 import Stripe from "stripe";
 import { proposeInvoiceChanges, commitInvoiceChanges, computeGpPercent } from "./priceTracking";
+import { checkCheckoutEligibility, VenueForEligibility } from "./checkoutEligibility";
 import { contributeToGlobalCatalogItem } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
@@ -1383,6 +1384,25 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
     const quantity = (typeof rawQuantity === "number" && Number.isInteger(rawQuantity) && rawQuantity >= 1)
       ? rawQuantity
       : 1;
+    // Eligibility: read venue + trialState, then gate before any Stripe call
+    const db = admin.firestore();
+    const [venueSnap, trialStateSnap] = await Promise.all([
+      db.doc(`venues/${venueId}`).get(),
+      db.doc(`venues/${venueId}/billing/trialState`).get(),
+    ]);
+    const eligibility = checkCheckoutEligibility({
+      uid,
+      venue: venueSnap.exists ? venueSnap.data() as VenueForEligibility : null,
+      lookupKey: lookupKey ?? '',
+      hasTrialState: trialStateSnap.exists,
+    });
+    if (!eligibility.ok) {
+      // strict:false + TS5.9 does not narrow through !ok on a discriminated union — cast explicitly
+      const refused = eligibility as { ok: false; status: number; error: string };
+      console.log("[api/stripe/create-checkout-session] REFUSED", { uid, venueId, lookupKey, reason: refused.error });
+      res.status(refused.status).json({ ok: false, error: refused.error });
+      return;
+    }
     if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
     let resolvedPriceId: string;
     try {
@@ -1391,8 +1411,6 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       res.status(400).json({ ok: false, error: e?.message || "Invalid priceId or lookupKey" });
       return;
     }
-    const db = admin.firestore();
-    const venueSnap = await db.doc(`venues/${venueId}`).get();
     const existingCustomerId: string | undefined = venueSnap.data()?.subscription?.stripeCustomerId;
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
