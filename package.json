@@ -18,7 +18,8 @@
     "check:renderer": "bash scripts/check-renderer-compat.sh",
     "check:undefined": "bash scripts/check-undefined-identifiers.sh",
     "check:write-guards": "node scripts/check-write-guards.js",
-    "preflight": "npm run check:undefined && npm run check:write-guards"
+    "preflight": "npm run check:undefined && npm run check:write-guards",
+    "eas-build-post-install": "npm run preflight"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",

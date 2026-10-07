@@ -6,7 +6,7 @@ import { View, TouchableOpacity, Text, ActivityIndicator } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { getFirestore, addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { useVenueId } from '../../context/VenueProvider';
+import { useVenueId, useVenue } from '../../context/VenueProvider';
 import IzzyAssistant, { openIzzy } from '../../components/IzzyAssistant';
 import { ReadOnlyInfoBanner } from '../../components/billing/ReadOnlyInfoBanner';
 import { TrialCountBanner } from '../../components/billing/TrialCountBanner';
@@ -181,12 +181,26 @@ import SuppliersScreen from '../../screens/setup/SuppliersScreen';
 const Stack = createNativeStackNavigator();
 
 export default function MainStack() {
+  const { enforceReadOnly, ready, billingState, venueType, trialState } = useVenue();
+
+  const readOnlyBannerVisible =
+    enforceReadOnly && ready && billingState.accessMode === 'readOnly' && venueType !== 'festival';
+  const trialBannerVisible =
+    enforceReadOnly &&
+    ready &&
+    !!trialState &&
+    trialState.status === 'active' &&
+    Math.max(0, 3 - (trialState.stocktakesUsed ?? 0)) > 0 &&
+    billingState.accessMode !== 'readOnly';
+  const anyBannerVisible = readOnlyBannerVisible || trialBannerVisible;
+
   return (
     <View style={{ flex: 1 }}>
     <ReadOnlyInfoBanner />
     <TrialCountBanner />
     <Stack.Navigator
       screenOptions={{
+        headerTopInsetEnabled: !anyBannerVisible,
         headerRight: () => (
           <TouchableOpacity onPress={openIzzy} style={{ marginRight: 16, padding: 4 }}>
             <Text style={{ color: '#1b4f72', fontSize: 18, fontWeight: '600' }}>✦</Text>
