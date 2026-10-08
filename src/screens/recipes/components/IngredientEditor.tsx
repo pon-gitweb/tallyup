@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Modal } from 'react-native';
+import DecimalInput from '../../../components/common/DecimalInput';
 import { getApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, orderBy, startAt, endAt, limit, query } from 'firebase/firestore';
 import { useVenueId } from '../../../context/VenueProvider';
@@ -47,7 +48,7 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
   // Search UI state only
   const [term, setTerm] = useState('');
   const defaultUnit:'ml'|'g'|'each' = (category === 'beverage' ? 'ml' : 'g') as any;
-  const [qty, setQty]   = useState<string>('');
+  const [qty, setQty]   = useState<number | null>(null);
   const [unit, setUnit] = useState<'ml'|'g'|'each'>(defaultUnit);
   const [unitPickerOpen, setUnitPickerOpen] = useState(false);
 
@@ -122,7 +123,7 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
   };
 
   const addLinked = (p:ProductHit) => {
-    const chosenQty = qty ? Number(qty) : (defaultUnit==='ml' ? 30 : defaultUnit==='g' ? 5 : 1);
+    const chosenQty = qty ?? (defaultUnit==='ml' ? 30 : defaultUnit==='g' ? 5 : 1);
     const r = {
       key: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
       name: p.name,
@@ -131,11 +132,11 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
       link: { productId: p.id, size: p.size ?? null, costPrice: p.costPrice ?? null }
     };
     onItemsChange([r, ...items]);
-    setTerm(''); setQty('');
+    setTerm(''); setQty(null);
   };
 
   const addMisc = (label?:string) => {
-    const chosenQty = qty ? Number(qty) : (defaultUnit==='ml' ? 30 : defaultUnit==='g' ? 5 : 1);
+    const chosenQty = qty ?? (defaultUnit==='ml' ? 30 : defaultUnit==='g' ? 5 : 1);
     const name = (label ?? term).trim() || 'Misc';
     const pu = estimateMaxUnitPrice(unit);
     const r = {
@@ -146,7 +147,7 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
       link: pu > 0 ? { productId: 'misc', size: `1${unit}`, costPrice: pu } : undefined
     };
     onItemsChange([r, ...items]);
-    setTerm(''); setQty('');
+    setTerm(''); setQty(null);
   };
 
   const commit = () => {
@@ -154,7 +155,7 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
     if (lex) {
       const b = toBaseUnit(lex.unit) || defaultUnit;
       setUnit(b as any);
-      setQty(String(lex.qty));
+      setQty(lex.qty);
       addMisc(lex.label);
       return;
     }
@@ -229,13 +230,13 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
       {/* qty chips + lexicon */}
       <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
         {chips.map(v => (
-          <TouchableOpacity key={`chip-${v}`} onPress={()=>setQty(String(v))}
+          <TouchableOpacity key={`chip-${v}`} onPress={()=>setQty(v)}
             style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:999, backgroundColor:'#F3F4F6' }}>
             <Text style={{ fontWeight:'700' }}>{v}</Text>
           </TouchableOpacity>
         ))}
         {LEXICON.filter(l => (category==='beverage' ? l.unit==='ml' : l.unit==='g')).map(l => (
-          <TouchableOpacity key={l.label} onPress={() => { setTerm(l.label); setQty(String(l.qty)); const b = toBaseUnit(l.unit)||defaultUnit; setUnit(b as any); }}
+          <TouchableOpacity key={l.label} onPress={() => { setTerm(l.label); setQty(l.qty); const b = toBaseUnit(l.unit)||defaultUnit; setUnit(b as any); }}
             style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:999, backgroundColor:'#FEF3C7' }}>
             <Text style={{ fontWeight:'700' }}>{l.label}</Text>
           </TouchableOpacity>
@@ -244,11 +245,11 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
 
       {/* qty + unit (single chip, long-press to choose) */}
       <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
-        <TextInput
+        <DecimalInput
           value={qty}
-          onChangeText={setQty}
+          onChangeNumber={setQty}
           placeholder="Qty"
-          keyboardType="numeric"
+          maxDecimals={3}
           style={{ width:100, borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10, backgroundColor:'#fff' }}
         />
         <TouchableOpacity
@@ -302,10 +303,10 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
                   </Text>
                 )}
               </View>
-              <TextInput
-                value={String(r.qty)}
-                onChangeText={(v) => onItemsChange(items.map(i => i.key === r.key ? { ...i, qty: Number(v) || 0 } : i))}
-                keyboardType="numeric"
+              <DecimalInput
+                value={r.qty}
+                onChangeNumber={(n) => onItemsChange(items.map(i => i.key === r.key ? { ...i, qty: n ?? 0 } : i))}
+                maxDecimals={3}
                 style={{ flex:2, borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10, backgroundColor:'#fff' }}
               />
               <Text style={{ flex:2 }}>{r.unit}</Text>

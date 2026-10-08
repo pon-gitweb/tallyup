@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator } from 'react-native';
+import DecimalInput from '../common/DecimalInput';
 import { useProductSearch } from '../../services/hooks/useProductSearch';
 
 type Props = {
@@ -38,7 +39,7 @@ function toBaseUnit(u:string):'ml'|'g'|'each'{
 
 export default function IngredientQuickAdd({ venueId, category, onAddLinked, onAddMisc }:Props) {
   const [term, setTerm] = useState('');
-  const [qty, setQty] = useState<string>('');
+  const [qty, setQty] = useState<number | null>(null);
   const [unit, setUnit] = useState<'ml'|'g'|'each'>(familyDefault(category));
   const [requireInventory, setRequireInventory] = useState(true);
 
@@ -46,18 +47,18 @@ export default function IngredientQuickAdd({ venueId, category, onAddLinked, onA
   const unitSet = UNIT_CHIPS[category];
 
   const commit = (selected?: any) => {
-    const qtyNum = qty ? Number(qty) : (unitSet.qtys[0] ?? 1);
+    const qtyNum = qty ?? (unitSet.qtys[0] ?? 1);
     if (!selected) {
       const lex = LEXICON.find(l => l.label.toLowerCase() === term.trim().toLowerCase());
       if (lex) {
         onAddMisc({ name: lex.label, qty: lex.toQty, unit: toBaseUnit(lex.unit) });
-        setTerm(''); setQty('');
+        setTerm(''); setQty(null);
         return;
       }
       if (requireInventory) return;
       const name = term.trim() || 'Misc';
       onAddMisc({ name, qty: qtyNum, unit });
-      setTerm(''); setQty('');
+      setTerm(''); setQty(null);
       return;
     }
     onAddLinked({
@@ -71,7 +72,7 @@ export default function IngredientQuickAdd({ venueId, category, onAddLinked, onA
         packPrice: selected.packPrice ?? null
       }
     });
-    setTerm(''); setQty('');
+    setTerm(''); setQty(null);
   };
 
   return (
@@ -116,13 +117,13 @@ export default function IngredientQuickAdd({ venueId, category, onAddLinked, onA
 
       <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
         {unitSet.qtys.map(v => (
-          <TouchableOpacity key={v} onPress={()=>setQty(String(v))}
+          <TouchableOpacity key={v} onPress={()=>setQty(v)}
             style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:999, backgroundColor:'#F3F4F6' }}>
             <Text style={{ fontWeight:'700' }}>{v}</Text>
           </TouchableOpacity>
         ))}
         {LEXICON.filter(l => (category==='beverage' ? l.unit==='ml' : l.unit==='g')).map(l => (
-          <TouchableOpacity key={l.label} onPress={() => { setTerm(l.label); setQty(String(l.toQty)); setUnit(toBaseUnit(l.unit)); }}
+          <TouchableOpacity key={l.label} onPress={() => { setTerm(l.label); setQty(l.toQty); setUnit(toBaseUnit(l.unit)); }}
             style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:999, backgroundColor:'#FEF3C7' }}>
             <Text style={{ fontWeight:'700' }}>{l.label}</Text>
           </TouchableOpacity>
@@ -130,7 +131,7 @@ export default function IngredientQuickAdd({ venueId, category, onAddLinked, onA
       </View>
 
       <View style={{ flexDirection:'row', gap:8 }}>
-        <TextInput value={qty} onChangeText={setQty} keyboardType="numeric" placeholder="Qty"
+        <DecimalInput value={qty} onChangeNumber={setQty} maxDecimals={3} placeholder="Qty"
           style={{ width:100, borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10 }} />
         <TouchableOpacity onPress={() => setUnit('ml')}
           style={{ padding:10, borderRadius:8, borderWidth:1, borderColor: unit==='ml' ? '#111' : '#E5E7EB', backgroundColor: unit==='ml' ? '#111' : '#fff' }}>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import DecimalInput from '../../../components/common/DecimalInput';
 import { addQuickItem } from '../../../services/areaInventory';
 import { useToast } from '../../../components/common/Toast';
 
@@ -13,17 +14,14 @@ type Props = {
 export default function FastAddInline({ venueId, departmentId, areaId, onAdded }: Props) {
   const [name, setName] = useState('');
   const [unit, setUnit] = useState('');
-  const [qty, setQty] = useState('');
+  const [qty, setQty] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const { showError, showSuccess } = useToast();
 
   async function onAdd() {
     const n = name.trim();
     if (!n) { showError('Please enter an item name.'); return; }
-    const initialQty = qty.trim() === '' ? null : Number(qty);
-    if (qty.trim() !== '' && Number.isNaN(initialQty)) {
-      showError('Quantity must be a number.'); return;
-    }
+    const initialQty = qty;
     try {
       setBusy(true);
       await addQuickItem(venueId, departmentId, areaId, {
@@ -31,7 +29,7 @@ export default function FastAddInline({ venueId, departmentId, areaId, onAdded }
         unit: unit.trim() || null,
         initialQty: initialQty as number | null
       });
-      setName(''); setUnit(''); setQty('');
+      setName(''); setUnit(''); setQty(null);
       onAdded?.();
       showSuccess('Item created.');
     } catch (e: any) {
@@ -47,7 +45,7 @@ export default function FastAddInline({ venueId, departmentId, areaId, onAdded }
       <View style={S.row}>
         <TextInput style={[S.input, { flex: 1.6 }]} placeholder="Item name" value={name} onChangeText={setName} />
         <TextInput style={[S.input, { flex: 0.8 }]} placeholder="Unit (optional)" value={unit} onChangeText={setUnit} />
-        <TextInput style={[S.input, { width: 90 }]} placeholder="Qty" keyboardType="numeric" value={qty} onChangeText={setQty} />
+        <DecimalInput style={[S.input, { width: 90 }]} placeholder="Qty" maxDecimals={3} value={qty} onChangeNumber={setQty} />
       </View>
       <TouchableOpacity
         style={[S.primary, (!name.trim() || busy) && S.disabled]}

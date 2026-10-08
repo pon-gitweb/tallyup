@@ -175,6 +175,7 @@ function InvoiceSummaryScreen() {
     try {
       await updateDoc(doc(db, 'venues', venueId, 'products', pc.productId), {
         costPrice: pc.correctedUnitPrice,
+        caseSize: pc.caseMismatchGuess,
         priceAcceptedAt: serverTimestamp(),
         priceAcceptedBy: getAuth().currentUser?.uid || null,
         priceChanged: false,
