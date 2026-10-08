@@ -10,6 +10,7 @@ import {
   View, ActivityIndicator, StyleSheet,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { hapticMedium } from '../../utils/haptics';
 import {
   collection, doc, getDocs, query, serverTimestamp,
@@ -61,6 +62,7 @@ export default function BarcodeScannerModal({
   areaItems, onProductAddedToArea, onOpenPhotoModal, onManualEntry, onBeforeAddToArea, onFocusItem,
 }: Props) {
   const { showError } = useToast();
+  const insets = useSafeAreaInsets();
   const productWriteGuard = useWriteGuard('PRODUCT_WRITE');
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>('scanning');
@@ -473,8 +475,8 @@ export default function BarcodeScannerModal({
           onBarcodeScanned={phase === 'scanning' ? onBarcodeScanned : undefined}
         />
 
-        {/* Top bar */}
-        <View style={S.topBar}>
+        {/* Top bar — paddingTop respects the device notch/island */}
+        <View style={[S.topBar, { paddingTop: insets.top + 16 }]}>
           <TouchableOpacity onPress={onClose} style={S.topBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <Text style={S.topBtnText}>✕</Text>
           </TouchableOpacity>
@@ -587,7 +589,7 @@ const S = StyleSheet.create({
 
   topBar: {
     position: 'absolute', top: 0, left: 0, right: 0,
-    paddingTop: 52, paddingBottom: 16, paddingHorizontal: 20,
+    paddingBottom: 16, paddingHorizontal: 20,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: 'rgba(0,0,0,0.55)',
   },

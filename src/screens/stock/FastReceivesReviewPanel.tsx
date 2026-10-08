@@ -12,6 +12,7 @@ import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attach
 import { attachPendingToOrder } from '../../services/fastReceive/attachPendingToOrder';
 import FastReceiveDetailModal from './FastReceiveDetailModal';
 import AcceptOrderButton from '../../components/receiving/AcceptOrderButton';
+import FullScreenModalFrame from '../../components/common/FullScreenModalFrame';
 
 type FastRec = {
   id: string;
@@ -458,12 +459,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
 
       {/* Attach chooser */}
       <Modal visible={chooserOpen} animationType="slide" onRequestClose={closeChooser}>
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: '#fff',
-          }}
-        >
+        <FullScreenModalFrame background="#fff">
           <View
             style={{
               padding: 16,
@@ -537,7 +533,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
               <Text style={{ color: '#111', fontWeight: '800', textAlign: 'center' }}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </FullScreenModalFrame>
       </Modal>
 
       {modal}

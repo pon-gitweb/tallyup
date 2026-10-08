@@ -16,6 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { analyzePhotoForCount, recordPhotoCountCorrection } from '../../../services/vision/photoCount';
 import { useVenueId } from '../../../context/VenueProvider';
 import { useColours } from '../../../context/ThemeContext';
+import FullScreenModalFrame from '../../common/FullScreenModalFrame';
 
 type Props = {
   visible: boolean;
@@ -126,9 +127,9 @@ export default function PhotoCountModal({ visible, onClose, productName, product
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onRequestClose}>
-      <View style={{ flex: 1, backgroundColor: '#fff' }}>
+      <FullScreenModalFrame background="#fff">
         {/* Header */}
-        <View style={{ backgroundColor: '#111', padding: 16, paddingTop: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View style={{ backgroundColor: '#111', padding: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View>
             <Text style={{ color: '#fff', fontSize: 18, fontWeight: '900' }}>📷 Photo Count</Text>
             {productName ? <Text style={{ color: '#9CA3AF', fontSize: 13, marginTop: 2 }}>{productName}</Text> : null}
@@ -258,7 +259,7 @@ export default function PhotoCountModal({ visible, onClose, productName, product
             </View>
           )}
         </ScrollView>
-      </View>
+      </FullScreenModalFrame>
     </Modal>
   );
 }

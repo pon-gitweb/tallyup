@@ -19,7 +19,8 @@
     "check:undefined": "bash scripts/check-undefined-identifiers.sh",
     "check:undefined-nocheck": "node scripts/check-undefined-nocheck.js",
     "check:write-guards": "node scripts/check-write-guards.js",
-    "preflight": "npm run check:undefined && npm run check:undefined-nocheck && npm run check:write-guards",
+    "check:modal-safe-area": "node scripts/check-modal-safe-area.js",
+    "preflight": "npm run check:undefined && npm run check:undefined-nocheck && npm run check:write-guards && npm run check:modal-safe-area",
     "eas-build-post-install": "npm run preflight"
   },
   "dependencies": {

@@ -28,6 +28,7 @@ import { stocktakeFingerprint, checkProcessed, writeProcessed, confirmDuplicateI
 import { scanInvoicePhoto } from '../../services/fastReceive/scanInvoicePhoto';
 import { persistFastReceiveSnapshot } from '../../services/invoices/reconciliationStore';
 import { commitInvoiceDecisions } from '../../services/fastReceive/commitInvoiceDecisions';
+import FullScreenModalFrame from '../../components/common/FullScreenModalFrame';
 
 const EXTRACT_URL = `${AI_BASE_URL}/api/extract-inventory`;
 
@@ -648,7 +649,7 @@ function InventoryReviewModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: '#fff' }}>
+      <FullScreenModalFrame background="#fff">
         {/* Header */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
                        padding: 16, borderBottomWidth: 1, borderColor: '#E5E7EB' }}>
@@ -853,7 +854,7 @@ function InventoryReviewModal({
             </View>
           </View>
         </Modal>
-      </View>
+      </FullScreenModalFrame>
     </Modal>
   );
 }

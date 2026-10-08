@@ -2,6 +2,7 @@
 import React from 'react';
 import { Modal, View, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import EditProductScreen from '../../screens/setup/EditProductScreen';
+import FullScreenModalFrame from '../common/FullScreenModalFrame';
 
 type Props = {
   visible: boolean;
@@ -25,12 +26,14 @@ export default function InlineEditProductModal({ visible, onClose, productId, pr
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={S.wrap}>
-        <View style={S.sheet}>
-          {/* Mount the real, full editor */}
-          <EditProductScreen navigation={navigation} route={route} />
-        </View>
-      </KeyboardAvoidingView>
+      <FullScreenModalFrame>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={S.wrap}>
+          <View style={S.sheet}>
+            {/* Mount the real, full editor */}
+            <EditProductScreen navigation={navigation} route={route} />
+          </View>
+        </KeyboardAvoidingView>
+      </FullScreenModalFrame>
     </Modal>
   );
 }

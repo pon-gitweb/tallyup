@@ -9,6 +9,7 @@ import {
   Alert, Modal, Text, TextInput, TouchableOpacity, View, ActivityIndicator, Vibration,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { addDoc, collection, getDocs, query, serverTimestamp, where } from 'firebase/firestore';
 import { db } from '../../../services/firebase';
 import { useToast } from '../../../components/common/Toast';
@@ -32,6 +33,7 @@ type Props = {
 
 export default function BarcodeScannerModal({ visible, onClose, venueId, onFound, onNotFound }: Props) {
   const { showError } = useToast();
+  const insets = useSafeAreaInsets();
   const productWriteGuard = useWriteGuard('PRODUCT_WRITE');
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(true);
@@ -248,9 +250,9 @@ export default function BarcodeScannerModal({ visible, onClose, venueId, onFound
         {/* Overlay */}
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'space-between' }}>
 
-          {/* Top bar with torch toggle */}
+          {/* Top bar — paddingTop respects the device notch/island */}
           <View style={{
-            backgroundColor: 'rgba(0,0,0,0.6)', padding: 16, paddingTop: 52,
+            backgroundColor: 'rgba(0,0,0,0.6)', padding: 16, paddingTop: insets.top + 16,
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
           }}>
             <View style={{ width: 36 }} />
