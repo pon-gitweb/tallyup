@@ -3,7 +3,7 @@ import React, { useCallback, useState } from 'react';
 import { Image, Modal, Text, TouchableOpacity, View } from 'react-native';
 import { useToast } from '../../../components/common/Toast';
 import * as ImagePicker from 'expo-image-picker';
-import FullScreenModalFrame from '../../common/FullScreenModalFrame';
+import FullScreenModalFrame from '../../../components/common/FullScreenModalFrame';
 
 export default function ShelfPhotoModal({ visible, onClose, onCapture }: any) {
   const [busy, setBusy] = useState(false);

@@ -16,7 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { analyzePhotoForCount, recordPhotoCountCorrection } from '../../../services/vision/photoCount';
 import { useVenueId } from '../../../context/VenueProvider';
 import { useColours } from '../../../context/ThemeContext';
-import FullScreenModalFrame from '../../common/FullScreenModalFrame';
+import FullScreenModalFrame from '../../../components/common/FullScreenModalFrame';
 
 type Props = {
   visible: boolean;
