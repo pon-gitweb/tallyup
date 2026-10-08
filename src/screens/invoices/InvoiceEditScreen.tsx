@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import DecimalInput from '../../components/common/DecimalInput';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
@@ -87,8 +88,8 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
     return () => { mounted = false; };
   }, [venueId, orderId]);
 
-  const onChangeLine = (lineId: string, field: 'qty'|'cost', value: string) => {
-    setLines(curr => curr.map(l => l.lineId === lineId ? { ...l, [field]: field === 'qty' ? Number(value) : Number(value) } : l));
+  const onChangeLine = (lineId: string, field: 'qty'|'cost', value: number | null) => {
+    setLines(curr => curr.map(l => l.lineId === lineId ? { ...l, [field]: value ?? 0 } : l));
   };
 
   const subtotal = useMemo(() => lines.reduce((s, l) => s + (Number(l.qty)||0)*(Number(l.cost)||0), 0), [lines]);
@@ -179,19 +180,19 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 12, opacity: 0.7 }}>Qty</Text>
-                <TextInput
-                  value={String(item.qty ?? 0)}
-                  keyboardType="numeric"
-                  onChangeText={(t) => onChangeLine(item.lineId, 'qty', t)}
+                <DecimalInput
+                  maxDecimals={3}
+                  value={item.qty ?? 0}
+                  onChangeNumber={(n) => onChangeLine(item.lineId, 'qty', n)}
                   style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8 }}
                 />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 12, opacity: 0.7 }}>Unit Cost</Text>
-                <TextInput
-                  value={String(item.cost ?? 0)}
-                  keyboardType="numeric"
-                  onChangeText={(t) => onChangeLine(item.lineId, 'cost', t)}
+                <DecimalInput
+                  maxDecimals={4}
+                  value={item.cost ?? 0}
+                  onChangeNumber={(n) => onChangeLine(item.lineId, 'cost', n)}
                   style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8 }}
                 />
               </View>

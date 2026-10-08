@@ -6,6 +6,7 @@ import { collection, getDocs, orderBy, query, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { summarize } from '../../services/analytics/reconciliationAnalytics';
+import FullScreenModalFrame from '../../components/common/FullScreenModalFrame';
 
 type Rec = {
   id: string;
@@ -172,7 +173,7 @@ export default function ReconciliationsPanel() {
 
     return (
       <Modal visible={detailOpen} animationType="slide" onRequestClose={()=>setDetailOpen(false)}>
-        <View style={{ flex:1, backgroundColor:'#fff' }}>
+        <FullScreenModalFrame background="#fff">
           <View style={{ padding:16, borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#e5e7eb' }}>
             <Text style={{ fontSize:18, fontWeight:'900' }}>Reconciliation Details</Text>
             <Text style={{ color:'#6B7280', marginTop:4 }}>
@@ -204,7 +205,7 @@ export default function ReconciliationsPanel() {
               <Text style={{ color:'#fff', textAlign:'center', fontWeight:'800' }}>Close</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </FullScreenModalFrame>
       </Modal>
     );
   };

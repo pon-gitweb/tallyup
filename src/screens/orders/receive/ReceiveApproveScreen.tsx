@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { View, Text, Modal, StyleSheet, TouchableOpacity, TextInput, FlatList, Alert, ActivityIndicator } from 'react-native';
+import DecimalInput from '../../../components/common/DecimalInput';
 import { searchProductsBySupplierPrefixPage, listProductsBySupplierPage } from '../../../services/products';
 import { useColours } from '../../../context/ThemeContext';
 
@@ -170,19 +171,19 @@ export default function ReceiveApproveScreen({
           {Number.isFinite(item.orderedQty) ? `Ordered: ${Number(item.orderedQty||0)}  ` : ''}
         </Text>
       </View>
-      <TextInput
+      <DecimalInput
         style={S.qty}
-        keyboardType="numeric"
+        maxDecimals={3}
         placeholder="Qty"
-        value={String(item.receivedQty ?? 0)}
-        onChangeText={(v)=>update(index,{receivedQty: Math.max(0, Number(v||0))})}
+        value={item.receivedQty ?? 0}
+        onChangeNumber={(n) => update(index, { receivedQty: Math.max(0, n ?? 0) })}
       />
-      <TextInput
+      <DecimalInput
         style={S.price}
-        keyboardType="numeric"
+        maxDecimals={4}
         placeholder="$"
-        value={item.invoiceUnitPrice==null?'':String(item.invoiceUnitPrice)}
-        onChangeText={(v)=>update(index,{invoiceUnitPrice: v===''?null:Number(v)})}
+        value={item.invoiceUnitPrice ?? null}
+        onChangeNumber={(n) => update(index, { invoiceUnitPrice: n })}
       />
       <TouchableOpacity onPress={()=>remove(index)} style={S.del}><Text style={S.delTxt}>✕</Text></TouchableOpacity>
     </View>

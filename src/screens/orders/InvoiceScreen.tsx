@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert, ScrollView, TextInput, TouchableOpacity } from 'react-native';
+import DecimalInput from '../../components/common/DecimalInput';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
@@ -262,17 +263,17 @@ export default function InvoiceScreen() {
                   )}
                 </View>
                 <View style={styles.lineInputs}>
-                  <TextInput
-                    keyboardType="numeric"
-                    value={String(it.qty ?? 0)}
-                    onChangeText={(v) => updateLine(idx, { qty: Number(v.replace(/[^0-9.]/g, '')) || 0 })}
+                  <DecimalInput
+                    maxDecimals={3}
+                    value={it.qty ?? 0}
+                    onChangeNumber={(n) => updateLine(idx, { qty: n ?? 0 })}
                     style={[styles.smallInput, { width: 64 }]}
                   />
-                  <TextInput
-                    keyboardType="numeric"
+                  <DecimalInput
+                    maxDecimals={4}
                     editable={!isFree}
-                    value={String(it.unitCost ?? 0)}
-                    onChangeText={(v) => updateLine(idx, { unitCost: Number(v.replace(/[^0-9.]/g, '')) || 0 })}
+                    value={it.unitCost ?? 0}
+                    onChangeNumber={(n) => updateLine(idx, { unitCost: n ?? 0 })}
                     style={[styles.smallInput, { width: 84 }, isFree && styles.smallInputDisabled]}
                   />
                 </View>

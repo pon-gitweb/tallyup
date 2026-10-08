@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   TextInput,
@@ -30,6 +31,7 @@ import {
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import FullScreenModalFrame from '../../components/common/FullScreenModalFrame';
 
 const ROLES = ['owner', 'manager', 'staff'] as const;
 type Role = typeof ROLES[number];
@@ -376,7 +378,7 @@ export default function TeamMembersScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setInviteModalOpen(false)}
       >
-        <View style={{ flex: 1, backgroundColor: colours.background }}>
+        <FullScreenModalFrame background={colours.background}>
           <View style={S.modalHeader}>
             <TouchableOpacity onPress={() => { setInviteModalOpen(false); setInviteEmail(''); setInviteRole('staff'); }}>
               <Text style={{ color: colours.textSecondary, fontSize: 16 }}>Cancel</Text>
@@ -434,7 +436,7 @@ export default function TeamMembersScreen() {
               </Text>
             </View>
           </ScrollView>
-        </View>
+        </FullScreenModalFrame>
       </Modal>
       {modal}
     </View>

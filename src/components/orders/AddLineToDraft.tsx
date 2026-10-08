@@ -21,7 +21,6 @@ type Props = {
 
 export default function AddLineToDraft(props: Props) {
   const { venueId, orderId, compact } = props;
-  const orderGuard = useWriteGuard('ORDER_WRITE');
   const [visible, setVisible] = useState(false);
   const [order, setOrder] = useState<any>(null);
   const [loadingOrder, setLoadingOrder] = useState(false);
@@ -83,6 +82,7 @@ export default function AddLineToDraft(props: Props) {
 
 /** Modal content */
 function PickerModal({ venueId, orderId, supplierId, supplierName, onClose, onAdded }) {
+  const orderGuard = useWriteGuard('ORDER_WRITE');
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -161,7 +161,7 @@ function PickerModal({ venueId, orderId, supplierId, supplierName, onClose, onAd
             <TextInput
               value={qty}
               onChangeText={setQty}
-              keyboardType="number-pad"
+              keyboardType="decimal-pad"
               placeholder="Qty"
               style={{
                 width: 64, marginLeft: 8, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, textAlign: 'center', height: 40,

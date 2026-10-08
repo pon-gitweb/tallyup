@@ -26,10 +26,10 @@ function statusConfig(s: string, c: any): { color: string; icon: string; label: 
 
 // ─── Progress bar ─────────────────────────────────────────────────────────────
 
-function ProgressBar({ pct, color }: { pct: number; color: string }) {
+function ProgressBar({ pct, color, style }: { pct: number; color: string; style: any }) {
   return (
-    <View style={OB.progressBg}>
-      <View style={[OB.progressFill, { width: `${Math.max(2, pct)}%`, backgroundColor: color }]} />
+    <View style={style.progressBg}>
+      <View style={[style.progressFill, { width: `${Math.max(2, pct)}%`, backgroundColor: color }]} />
     </View>
   );
 }
@@ -243,7 +243,7 @@ export default function FestivalObligationsScreen() {
                           {prog.currentProgress} ({prog.progressPercent}%)
                         </Text>
                       </View>
-                      <ProgressBar pct={prog.progressPercent} color={sc.color} />
+                      <ProgressBar pct={prog.progressPercent} color={sc.color} style={OB} />
                       {prog.projectedAtClose != null && (
                         <Text style={OB.projectedText}>
                           Projected at close: ~{prog.projectedAtClose} {obl.unit ?? 'units'}

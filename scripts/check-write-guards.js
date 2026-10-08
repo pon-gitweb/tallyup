@@ -37,6 +37,8 @@ const ALLOWLIST_PATTERNS = [
   /ReportsIndexScreen/,
   // Snapshot / migration scripts outside app code
   /scripts[/\\]/,
+  // Test files mock Firestore; they are not real write paths
+  /__tests__[/\\]/,
 ];
 
 function isAllowlisted(filePath) {

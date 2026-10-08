@@ -10,6 +10,7 @@ import {
   TextInput,
   ActivityIndicator,
 } from 'react-native';
+import DecimalInput from '../../../components/common/DecimalInput';
 import {
   getFirestore,
   doc,
@@ -71,8 +72,8 @@ export default function ManualReceiveScreen({
 
   // Promo additions (items not in the supplier catalogue)
   const [newName, setNewName] = useState('');
-  const [newQty, setNewQty] = useState('');
-  const [newUnitPrice, setNewUnitPrice] = useState('');
+  const [newQty, setNewQty] = useState<number | null>(null);
+  const [newUnitPrice, setNewUnitPrice] = useState<number | null>(null);
   const [extras, setExtras] = useState<
     Array<{ id: string; name: string; qty: number; unitPrice?: number | null }>
   >([]);
@@ -192,26 +193,21 @@ export default function ManualReceiveScreen({
 
   const totalLines = (lines?.length || 0) + (extras?.length || 0);
 
-  const updateQty = (id: string, v: string) => {
-    const n = Math.max(0, Number(v || 0));
-    setQty((prev) => ({ ...prev, [id]: n }));
+  const updateQty = (id: string, n: number | null) => {
+    setQty((prev) => ({ ...prev, [id]: Math.max(0, n ?? 0) }));
   };
 
   const addExtra = () => {
     const name = String(newName || '').trim();
-    const q = Number(newQty || 0);
-    const p = newUnitPrice === '' ? null : Number(newUnitPrice);
+    const q = newQty ?? 0;
+    const p = newUnitPrice;
 
     if (!name) {
       showError('Enter a product name.');
       return;
     }
-    if (!Number.isFinite(q) || q <= 0) {
+    if (q <= 0) {
       showError('Enter a quantity greater than 0.');
-      return;
-    }
-    if (!(p === null || Number.isFinite(p))) {
-      showError('Leave blank or enter a valid price.');
       return;
     }
 
@@ -220,8 +216,8 @@ export default function ManualReceiveScreen({
       .slice(2, 7)}`;
     setExtras((prev) => [{ id, name, qty: q, unitPrice: p }, ...prev]);
     setNewName('');
-    setNewQty('');
-    setNewUnitPrice('');
+    setNewQty(null);
+    setNewUnitPrice(null);
   };
 
   const removeExtra = (id: string) =>
@@ -296,12 +292,12 @@ export default function ManualReceiveScreen({
           <Text style={S.name}>{item.name || item.productId || 'Line'}</Text>
           <Text style={S.ghostSmall}>Ordered: {ordered}</Text>
         </View>
-        <TextInput
+        <DecimalInput
           style={S.input}
-          keyboardType="numeric"
+          maxDecimals={3}
           placeholder="0"
-          defaultValue={String(qty[id] || 0)}
-          onChangeText={(v) => updateQty(id, v)}
+          value={qty[id] ?? 0}
+          onChangeNumber={(n) => updateQty(id, n)}
         />
       </View>
     );
@@ -367,6 +363,7 @@ export default function ManualReceiveScreen({
         data={lines || []}
         keyExtractor={(l) => String(l.id || l.productId || Math.random())}
         renderItem={ExistingLine}
+        extraData={qty}
         ListEmptyComponent={
           <Text style={S.ghost}>No lines on order.</Text>
         }
@@ -382,18 +379,18 @@ export default function ManualReceiveScreen({
           style={S.inputWide}
         />
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TextInput
+          <DecimalInput
             placeholder="Qty"
             value={newQty}
-            onChangeText={setNewQty}
-            keyboardType="numeric"
+            onChangeNumber={setNewQty}
+            maxDecimals={3}
             style={[S.input, { flex: 1 }]}
           />
-          <TextInput
+          <DecimalInput
             placeholder="Invoice unit $"
             value={newUnitPrice}
-            onChangeText={setNewUnitPrice}
-            keyboardType="numeric"
+            onChangeNumber={setNewUnitPrice}
+            maxDecimals={4}
             style={[S.input, { flex: 1 }]}
           />
         </View>

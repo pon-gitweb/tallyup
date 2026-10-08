@@ -5089,7 +5089,7 @@ const openHistory = throttleAction(async (item: Item) => {
           for (const r of rows) {
             // If matched to existing item: just save count
             if (r.itemId) {
-              await updateDoc(doc(db,venues,venueId!,departments,departmentId,areas,areaId,items,r.itemId), { lastCount: Number(r.count), lastCountAt: serverTimestamp() });
+              await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',r.itemId), { lastCount: Number(r.count), lastCountAt: serverTimestamp() });
               continue;
             }
 
@@ -5097,14 +5097,14 @@ const openHistory = throttleAction(async (item: Item) => {
             const payload:any = {
               name: (r.name || ''
               ).trim(),
-              inductionStatus: pending,
+              inductionStatus: 'pending',
               inductionSource: 'smart-shelf-scan',
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
               lastCount: Number(r.count),
               lastCountAt: serverTimestamp(),
             };
-            const colRef = collection(db,venues,venueId!,departments,departmentId,areas,areaId,items);
+            const colRef = collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items');
             await addDoc(colRef, payload);
           }
 

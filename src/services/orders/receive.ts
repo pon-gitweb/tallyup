@@ -50,7 +50,7 @@ export function _overlapQty(a: string, b: string): number {
   return n / Math.min(ta.size, tb.size);
 }
 
-async function updateStockAndCreateInvoice(
+export async function updateStockAndCreateInvoice(
   db: any,
   venueId: string,
   orderId: string,
@@ -103,13 +103,13 @@ async function updateStockAndCreateInvoice(
   }
 
   // Find matching area items across all departments and update stock
+  const matchedProductIds = new Set<string>();
   try {
     const venueSnap = await getDoc(doc(db, 'venues', venueId));
     const venueData = venueSnap.data() as any;
     const isFestival = venueData?.venueType === 'festival';
     const stocktakeActive = !isFestival && !!venueData?.stocktakeActive;
     const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-    const matchedProductIds = new Set<string>();
     const stockBatch = writeBatch(db);
     let stockUpdates = 0;
 

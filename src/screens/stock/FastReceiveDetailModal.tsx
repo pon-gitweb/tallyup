@@ -12,7 +12,6 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  TextInput,
   KeyboardAvoidingView,
   TouchableWithoutFeedback,
   Keyboard,
@@ -24,6 +23,7 @@ import AcceptOrderButton from '../../components/receiving/AcceptOrderButton';
 import { useToast } from '../../components/common/Toast';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 import { commitInvoiceDecisions } from '../../services/fastReceive/commitInvoiceDecisions';
+import DecimalInput from '../../components/common/DecimalInput';
 
 type ProposedAction =
   | { id: string; type: 'priceChange'; productId: string; productName: string; lineName: string;
@@ -147,26 +147,14 @@ export default function FastReceiveDetailModal({
     return proposals.every(p => p.id in proposalDecisions);
   }, [hasReviewItems, inductionDecisions, needsSupplierDecision, supplierDecision, proposals, proposalDecisions]);
 
-  const updateLine = useCallback((idx: number, patch: { qty?: string; unitPrice?: string }) => {
+  const updateLine = useCallback((idx: number, patch: { qty?: number; unitPrice?: number }) => {
     setDraftLines(prev => {
       const next = prev.slice();
       const current = next[idx] || {};
-      let qty = current.qty;
-      let unit = current.unitPrice;
-
-      if (patch.qty !== undefined) {
-        const raw = parseFloat(String(patch.qty).replace(/[^0-9.\-]/g, ''));
-        qty = Number.isFinite(raw) && raw > 0 ? raw : 0;
-      }
-      if (patch.unitPrice !== undefined) {
-        const raw = parseFloat(String(patch.unitPrice).replace(/[^0-9.\-]/g, ''));
-        unit = Number.isFinite(raw) && raw >= 0 ? raw : 0;
-      }
-
       next[idx] = {
         ...current,
-        qty,
-        unitPrice: unit,
+        ...(patch.qty !== undefined ? { qty: patch.qty } : {}),
+        ...(patch.unitPrice !== undefined ? { unitPrice: patch.unitPrice } : {}),
       };
       return next;
     });
@@ -340,27 +328,19 @@ export default function FastReceiveDetailModal({
                     <View style={S.editRow}>
                       <View style={S.editField}>
                         <Text style={S.editLabel}>Qty</Text>
-                        <TextInput
-                          keyboardType="numeric"
-                          value={
-                            typeof l?.qty === 'number' && isFinite(l.qty)
-                              ? String(l.qty)
-                              : ''
-                          }
-                          onChangeText={(txt)=>updateLine(i, { qty: txt })}
+                        <DecimalInput
+                          maxDecimals={3}
+                          value={typeof l?.qty === 'number' && isFinite(l.qty) ? l.qty : null}
+                          onChangeNumber={(n) => updateLine(i, { qty: n ?? 0 })}
                           style={S.input}
                         />
                       </View>
                       <View style={S.editField}>
                         <Text style={S.editLabel}>Unit</Text>
-                        <TextInput
-                          keyboardType="numeric"
-                          value={
-                            typeof l?.unitPrice === 'number' && isFinite(l.unitPrice)
-                              ? String(l.unitPrice)
-                              : ''
-                          }
-                          onChangeText={(txt)=>updateLine(i, { unitPrice: txt })}
+                        <DecimalInput
+                          maxDecimals={4}
+                          value={typeof l?.unitPrice === 'number' && isFinite(l.unitPrice) ? l.unitPrice : null}
+                          onChangeNumber={(n) => updateLine(i, { unitPrice: n ?? 0 })}
                           style={S.input}
                         />
                       </View>

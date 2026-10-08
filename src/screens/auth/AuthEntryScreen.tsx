@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import FullScreenModalFrame from '../../components/common/FullScreenModalFrame';
 
 import LoginScreen from './LoginScreen';
 import RegisterScreen from './RegisterScreen';
@@ -61,12 +62,12 @@ export default function AuthEntryScreen() {
       </View>
 
       <Modal visible={showSetup} animationType="slide" onRequestClose={() => setShowSetup(false)}>
-        <View style={{ flex: 1, backgroundColor: colours.background }}>
+        <FullScreenModalFrame background={colours.background}>
           <View style={S.modalHeader}>
             <Text style={S.modalTitle}>Set up your venue</Text>
           </View>
           <SetupWizard />
-        </View>
+        </FullScreenModalFrame>
       </Modal>
     </View>
   );

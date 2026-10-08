@@ -3,6 +3,7 @@ import React, { useCallback, useState } from 'react';
 import { Image, Modal, Text, TouchableOpacity, View } from 'react-native';
 import { useToast } from '../../../components/common/Toast';
 import * as ImagePicker from 'expo-image-picker';
+import FullScreenModalFrame from '../../common/FullScreenModalFrame';
 
 export default function ShelfPhotoModal({ visible, onClose, onCapture }: any) {
   const [busy, setBusy] = useState(false);
@@ -38,7 +39,8 @@ export default function ShelfPhotoModal({ visible, onClose, onCapture }: any) {
 
   return (
     <Modal visible={!!visible} animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: '#fff', padding: 24, paddingTop: 60 }}>
+      <FullScreenModalFrame background="#fff">
+      <View style={{ flex: 1, padding: 24 }}>
         {/* Guidance */}
         <View style={{ backgroundColor: '#EFF6FF', borderRadius: 14, padding: 16, marginBottom: 24, borderWidth: 1, borderColor: '#BFDBFE' }}>
           <Text style={{ fontWeight: '900', color: '#1E40AF', fontSize: 16, marginBottom: 8 }}>
@@ -71,6 +73,7 @@ export default function ShelfPhotoModal({ visible, onClose, onCapture }: any) {
           <Text style={{ color: '#6B7280', fontWeight: '700' }}>Cancel</Text>
         </TouchableOpacity>
       </View>
+      </FullScreenModalFrame>
     </Modal>
   );
 }

@@ -18,6 +18,7 @@ import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 
 import ReceiveOptionsModal from './receive/ReceiveOptionsModal';
 import ManualReceiveScreen from './receive/ManualReceiveScreen';
+import FullScreenModalFrame from '../../components/common/FullScreenModalFrame';
 
 type Params = { orderId: string };
 type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
@@ -809,12 +810,14 @@ export default function OrderDetailScreen() {
         animationType="slide"
         onRequestClose={()=>setManualOpen(false)}
       >
-        <ManualReceiveScreen
-          orderId={orderId}
-          venueId={venueId}
-          orderLines={lines}
-          onDone={()=>{ setManualOpen(false); nav.goBack(); }}
-        />
+        <FullScreenModalFrame>
+          <ManualReceiveScreen
+            orderId={orderId}
+            venueId={venueId}
+            orderLines={lines}
+            onDone={()=>{ setManualOpen(false); nav.goBack(); }}
+          />
+        </FullScreenModalFrame>
       </Modal>
 
       {modal}

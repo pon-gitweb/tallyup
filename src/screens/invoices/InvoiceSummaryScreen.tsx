@@ -173,8 +173,14 @@ function InvoiceSummaryScreen() {
     if (!venueId || !pc.productId) return;
     if (!invoiceGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     try {
+      const guess = pc.caseMismatchGuess;
+      const correctedUnitPrice = pc.correctedUnitPrice;
+      const caseFields = typeof guess === 'number' && guess > 1
+        ? { caseSize: guess, unitCost: correctedUnitPrice, caseCost: correctedUnitPrice * guess }
+        : {};
       await updateDoc(doc(db, 'venues', venueId, 'products', pc.productId), {
-        costPrice: pc.correctedUnitPrice,
+        costPrice: correctedUnitPrice,
+        ...caseFields,
         priceAcceptedAt: serverTimestamp(),
         priceAcceptedBy: getAuth().currentUser?.uid || null,
         priceChanged: false,

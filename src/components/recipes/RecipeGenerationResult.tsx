@@ -2,6 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, SafeAreaView } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
+import DecimalInput from '../common/DecimalInput';
 
 type Props = {
   visible: boolean;
@@ -285,12 +286,12 @@ export default function RecipeGenerationResult({ visible, recipeData, selectedVa
                     {ing.editingCost ? (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <Text style={{ fontFamily: theme.fontBody, fontSize: 12, color: c.textSecondary }}>$</Text>
-                        <TextInput
+                        <DecimalInput
                           autoFocus
-                          value={String(ing.costPerServe ?? '')}
-                          onChangeText={(v) => updateIngredient(ing.key, { costPerServe: v === '' ? 0 : Number(v) || 0 })}
+                          maxDecimals={4}
+                          value={typeof ing.costPerServe === 'number' && Number.isFinite(ing.costPerServe) ? ing.costPerServe : null}
+                          onChangeNumber={(n) => updateIngredient(ing.key, { costPerServe: n ?? 0 })}
                           onBlur={() => updateIngredient(ing.key, { editingCost: false })}
-                          keyboardType="decimal-pad"
                           placeholder="0.00"
                           placeholderTextColor={c.slateMid}
                           style={{
@@ -333,12 +334,12 @@ export default function RecipeGenerationResult({ visible, recipeData, selectedVa
                     {ing.editingCost ? (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <Text style={{ fontFamily: theme.fontBody, fontSize: 12, color: c.textSecondary }}>$</Text>
-                        <TextInput
+                        <DecimalInput
                           autoFocus
-                          value={String(ing.costPerServe ?? '')}
-                          onChangeText={(v) => updateIngredient(ing.key, { costPerServe: v === '' ? 0 : Number(v) || 0 })}
+                          maxDecimals={4}
+                          value={typeof ing.costPerServe === 'number' && Number.isFinite(ing.costPerServe) ? ing.costPerServe : null}
+                          onChangeNumber={(n) => updateIngredient(ing.key, { costPerServe: n ?? 0 })}
                           onBlur={() => updateIngredient(ing.key, { editingCost: false })}
-                          keyboardType="decimal-pad"
                           placeholder="0.00"
                           placeholderTextColor={c.slateMid}
                           style={{
