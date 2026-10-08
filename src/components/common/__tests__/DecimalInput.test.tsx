@@ -207,6 +207,50 @@ describe('DecimalInput', () => {
     expect(reported.at(-1)).toBe(12.5);
   });
 
+  it('typing "1", ",", "5" key by key gives "1", "1.", "1.5" (European decimal keyboard)', () => {
+    // Bug before fix: "1," stripped the comma to "1", so "5" appended as "15" (silent 10× error).
+    // Fix: trailing comma /^\d+,$/ converts to "." so the next digit lands in the decimal portion.
+    const reported: (number | null)[] = [];
+    const { getByTestId } = render(<Controlled onReport={(n) => reported.push(n)} />);
+    const inp = getByTestId('input');
+
+    typeInto(inp, '1');
+    expect(inp.props.value).toBe('1');
+
+    typeInto(inp, '1,');       // comma with nothing after it = decimal point being started
+    expect(inp.props.value).toBe('1.');
+
+    typeInto(inp, '1,5');      // European keyboard: comma IS the decimal key; "1,5" → "1.5"
+    expect(inp.props.value).toBe('1.5');
+    expect(reported.at(-1)).toBe(1.5);
+  });
+
+  it('typing "1,234" key by key: mid-entry shows decimal but final result is "1234"', () => {
+    // "1,2" is allowed to show as "1.2" mid-typing (only 1 digit after comma so far).
+    // When the 3rd digit arrives the full string "1,234" has 3 digits after the comma,
+    // which is the thousands-separator rule, so the decimal is removed and the result
+    // is "1234". This verifies the "later resolves" property.
+    const reported: (number | null)[] = [];
+    const { getByTestId } = render(<Controlled onReport={(n) => reported.push(n)} />);
+    const inp = getByTestId('input');
+
+    typeInto(inp, '1');
+    expect(inp.props.value).toBe('1');
+
+    typeInto(inp, '1,');         // trailing comma → decimal point started
+    expect(inp.props.value).toBe('1.');
+
+    typeInto(inp, '1,2');        // 1 digit after comma → treated as decimal mid-entry
+    expect(inp.props.value).toBe('1.2');
+
+    typeInto(inp, '1,23');       // 2 digits after comma → still decimal mid-entry
+    expect(inp.props.value).toBe('1.23');
+
+    typeInto(inp, '1,234');      // 3 digits after comma → thousands separator, no decimal
+    expect(inp.props.value).toBe('1234');
+    expect(reported.at(-1)).toBe(1234);
+  });
+
   it('"1,234,567.8" → 1234567.8 (multiple thousands commas with dot)', () => {
     const reported: (number | null)[] = [];
     const { getByTestId } = render(<Controlled onReport={(n) => reported.push(n)} />);

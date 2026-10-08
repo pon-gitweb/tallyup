@@ -54,11 +54,18 @@ export default function DecimalInput({
     let s = raw.replace(/[^0-9.,]/g, '');
 
     // Comma handling:
-    // - Has dot: remove all commas (they are thousands separators)
-    // - No dot, matches /^\d+,\d{1,2}$/: treat comma as decimal separator (e.g. "1,5" → "1.5")
-    // - Otherwise: remove all commas
+    // - Has dot: remove all commas (they are thousands separators alongside a dot)
+    // - Trailing comma /^\d+,$/: decimal separator being typed (e.g. "1," → "1.")
+    //   so that typing "1" "," "5" on a European keyboard gives "1" "1." "1.5"
+    //   rather than silently producing 15. Note: "1,2" may show "1.2" mid-entry
+    //   while the user is still typing; if they continue to "1,234" it resolves
+    //   back to "1234" via the 3-digit rule below.
+    // - /^\d+,\d{1,2}$/: treat comma as decimal separator (e.g. "1,5" → "1.5")
+    // - Otherwise (3+ digits after comma etc.): strip all commas (thousands separator)
     if (s.includes('.')) {
       s = s.replace(/,/g, '');
+    } else if (/^\d+,$/.test(s)) {
+      s = s.replace(',', '.');
     } else if (/^\d+,\d{1,2}$/.test(s)) {
       s = s.replace(',', '.');
     } else {
