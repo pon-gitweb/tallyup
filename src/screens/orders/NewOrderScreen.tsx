@@ -4,6 +4,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
   KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
+import DecimalInput from '../../components/common/DecimalInput';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
@@ -231,10 +232,10 @@ export default function NewOrderScreen() {
                   </View>
                   <View style={styles.qtyWrap}>
                     <TouchableOpacity onPress={() => updateQty(l.productId, Number(l.qty || 0) - 1)} style={styles.qtyBtn}><Text style={styles.qtyBtnText}>-</Text></TouchableOpacity>
-                    <TextInput
-                      value={String(l.qty ?? 0)}
-                      onChangeText={(t) => updateQty(l.productId, Number(t.replace(/[^0-9.]/g, '')))}
-                      keyboardType="numeric"
+                    <DecimalInput
+                      maxDecimals={3}
+                      value={l.qty ?? 0}
+                      onChangeNumber={(n) => updateQty(l.productId, n ?? 0)}
                       style={styles.qtyInput}
                     />
                     <TouchableOpacity onPress={() => updateQty(l.productId, Number(l.qty || 0) + 1)} style={styles.qtyBtn}><Text style={styles.qtyBtnText}>+</Text></TouchableOpacity>

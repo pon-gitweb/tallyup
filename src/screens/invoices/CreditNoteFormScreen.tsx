@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, ActivityIndicator, Alert,
 } from 'react-native';
+import DecimalInput from '../../components/common/DecimalInput';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation } from '@react-navigation/native';
 import { collection, getDocs } from 'firebase/firestore';
@@ -170,19 +171,19 @@ export default function CreditNoteFormScreen() {
               style={[styles.input, { flex: 1, borderColor: c.border, color: c.navy }]}
               placeholderTextColor={c.textSecondary}
             />
-            <TextInput
+            <DecimalInput
               placeholder="Qty returned"
-              keyboardType="numeric"
-              value={String(l.qtyReturned || '')}
-              onChangeText={(v) => updateLine(idx, { qtyReturned: Number(v.replace(/[^0-9.]/g, '')) || 0 })}
+              maxDecimals={3}
+              value={l.qtyReturned || null}
+              onChangeNumber={(n) => updateLine(idx, { qtyReturned: n ?? 0 })}
               style={[styles.input, styles.smallInput, { borderColor: c.border, color: c.navy }]}
               placeholderTextColor={c.textSecondary}
             />
-            <TextInput
+            <DecimalInput
               placeholder="Credit $/unit"
-              keyboardType="numeric"
-              value={String(l.creditAmountPerUnit || '')}
-              onChangeText={(v) => updateLine(idx, { creditAmountPerUnit: Number(v.replace(/[^0-9.]/g, '')) || 0 })}
+              maxDecimals={4}
+              value={l.creditAmountPerUnit || null}
+              onChangeNumber={(n) => updateLine(idx, { creditAmountPerUnit: n ?? 0 })}
               style={[styles.input, styles.smallInput, { borderColor: c.border, color: c.navy }]}
               placeholderTextColor={c.textSecondary}
             />

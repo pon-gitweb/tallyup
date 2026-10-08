@@ -161,7 +161,7 @@ function PickerModal({ venueId, orderId, supplierId, supplierName, onClose, onAd
             <TextInput
               value={qty}
               onChangeText={setQty}
-              keyboardType="number-pad"
+              keyboardType="decimal-pad"
               placeholder="Qty"
               style={{
                 width: 64, marginLeft: 8, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, textAlign: 'center', height: 40,

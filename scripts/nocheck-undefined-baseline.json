@@ -1,0 +1,62 @@
+[
+  {
+    "file": "src/_archive/StockTakeAreaInventoryScreen.UNUSED.tsx",
+    "name": "saveItemCountWithFeedback",
+    "count": 1
+  },
+  {
+    "file": "src/_archive/StockTakeAreaInventoryScreen.tsx",
+    "name": "setPhotoCountItem",
+    "count": 1
+  },
+  {
+    "file": "src/_archive/StockTakeAreaInventoryScreen.tsx",
+    "name": "setQtyFor",
+    "count": 1
+  },
+  {
+    "file": "src/components/orders/AddLineToDraft.tsx",
+    "name": "orderGuard",
+    "count": 1
+  },
+  {
+    "file": "src/screens/festival/FestivalObligationsScreen.tsx",
+    "name": "OB",
+    "count": 2
+  },
+  {
+    "file": "src/screens/settings/TeamMembersScreen.tsx",
+    "name": "Alert",
+    "count": 2
+  },
+  {
+    "file": "src/screens/setup/ProductsScreen.tsx",
+    "name": "Alert",
+    "count": 5
+  },
+  {
+    "file": "src/screens/stock/StockTakeAreaInventoryScreen.tsx",
+    "name": "areas",
+    "count": 2
+  },
+  {
+    "file": "src/screens/stock/StockTakeAreaInventoryScreen.tsx",
+    "name": "departments",
+    "count": 2
+  },
+  {
+    "file": "src/screens/stock/StockTakeAreaInventoryScreen.tsx",
+    "name": "venues",
+    "count": 2
+  },
+  {
+    "file": "src/services/integrations/xero/XeroService.ts",
+    "name": "deleteDoc",
+    "count": 1
+  },
+  {
+    "file": "src/services/orders/receive.ts",
+    "name": "matchedProductIds",
+    "count": 1
+  }
+]
