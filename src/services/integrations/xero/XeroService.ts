@@ -13,7 +13,7 @@
  */
 
 import { Linking } from 'react-native';
-import { getFirestore, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { AI_BASE_URL } from '../../../config/ai';
 
 export type XeroConnectionStatus =

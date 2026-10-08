@@ -28,6 +28,9 @@ const BASELINE_PATH = path.join(__dirname, 'nocheck-undefined-baseline.json');
 const GENERATE     = process.argv.includes('--generate-baseline');
 const TARGET_CODES = new Set([2304, 2552]);
 
+// React Native globals that are injected at runtime and unknown to tsc
+const RN_GLOBALS = new Set(['__DEV__', '__dirname', '__filename', 'global', 'require', 'module', 'exports']);
+
 // ── Load tsconfig ─────────────────────────────────────────────────────────────
 
 const cfgFile = ts.findConfigFile(ROOT, ts.sys.fileExists, 'tsconfig.json');
@@ -39,6 +42,8 @@ const parsed = ts.parseJsonConfigFileContent(raw.config, ts.sys, path.dirname(cf
 // ── Find @ts-nocheck files ────────────────────────────────────────────────────
 
 const nocheckFiles = parsed.fileNames.filter((f) => {
+  const rel = path.relative(ROOT, f).replace(/\\/g, '/');
+  if (rel.startsWith('src/_archive/')) return false;
   try {
     const src = fs.readFileSync(f, 'utf8');
     return src.includes('@ts-nocheck');
@@ -84,6 +89,7 @@ for (const d of allDiags) {
   const match = msg.match(/Cannot find name '([^']+)'/);
   if (!match) continue;
   const name = match[1];
+  if (RN_GLOBALS.has(name)) continue;
   if (!findings.has(rel)) findings.set(rel, new Map());
   const byName = findings.get(rel);
   byName.set(name, (byName.get(name) ?? 0) + 1);

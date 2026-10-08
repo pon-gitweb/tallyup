@@ -21,7 +21,6 @@ type Props = {
 
 export default function AddLineToDraft(props: Props) {
   const { venueId, orderId, compact } = props;
-  const orderGuard = useWriteGuard('ORDER_WRITE');
   const [visible, setVisible] = useState(false);
   const [order, setOrder] = useState<any>(null);
   const [loadingOrder, setLoadingOrder] = useState(false);
@@ -83,6 +82,7 @@ export default function AddLineToDraft(props: Props) {
 
 /** Modal content */
 function PickerModal({ venueId, orderId, supplierId, supplierName, onClose, onAdded }) {
+  const orderGuard = useWriteGuard('ORDER_WRITE');
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);

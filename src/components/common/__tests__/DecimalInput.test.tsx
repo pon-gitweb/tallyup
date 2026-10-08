@@ -183,6 +183,62 @@ describe('DecimalInput', () => {
     expect(getByTestId('row-1').props.value).toBe('30');
   });
 
+  it('"$1,234.50" → 1234.5 (thousands comma + currency symbol)', () => {
+    const reported: (number | null)[] = [];
+    const { getByTestId } = render(<Controlled onReport={(n) => reported.push(n)} />);
+    typeInto(getByTestId('input'), '$1,234.50');
+    expect(getByTestId('input').props.value).toBe('1234.50');
+    expect(reported.at(-1)).toBe(1234.5);
+  });
+
+  it('"1,234" → 1234 (three digits after comma → thousands, not decimal)', () => {
+    const reported: (number | null)[] = [];
+    const { getByTestId } = render(<Controlled onReport={(n) => reported.push(n)} />);
+    typeInto(getByTestId('input'), '1,234');
+    expect(getByTestId('input').props.value).toBe('1234');
+    expect(reported.at(-1)).toBe(1234);
+  });
+
+  it('"12,50" → 12.5 (two digits after comma → decimal comma)', () => {
+    const reported: (number | null)[] = [];
+    const { getByTestId } = render(<Controlled onReport={(n) => reported.push(n)} />);
+    typeInto(getByTestId('input'), '12,50');
+    expect(getByTestId('input').props.value).toBe('12.50');
+    expect(reported.at(-1)).toBe(12.5);
+  });
+
+  it('"1,234,567.8" → 1234567.8 (multiple thousands commas with dot)', () => {
+    const reported: (number | null)[] = [];
+    const { getByTestId } = render(<Controlled onReport={(n) => reported.push(n)} />);
+    typeInto(getByTestId('input'), '1,234,567.8');
+    expect(getByTestId('input').props.value).toBe('1234567.8');
+    expect(reported.at(-1)).toBe(1234567.8);
+  });
+
+  it('caller-supplied onFocus is called when the field is focused', () => {
+    const onFocusMock = jest.fn();
+    const { getByTestId } = render(
+      <DecimalInput testID="input" value={null} onChangeNumber={() => {}} onFocus={onFocusMock} />,
+    );
+    fireEvent(getByTestId('input'), 'focus');
+    expect(onFocusMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('blur normalisation updates display without extra onChangeNumber calls', () => {
+    // "12." and "12" both parse to 12 (JS Number("12.") === 12). Blur changes
+    // the display to "12" but must NOT fire onChangeNumber again since the value
+    // is unchanged. This also verifies onChangeNumber is not called inside the
+    // setState updater (which would be a React anti-pattern).
+    const reported: (number | null)[] = [];
+    const { getByTestId } = render(<Controlled onReport={(n) => reported.push(n)} />);
+    const inp = getByTestId('input');
+    typeInto(inp, '12.');
+    const countAfterType = reported.length;
+    fireEvent(inp, 'blur');
+    expect(getByTestId('input').props.value).toBe('12');
+    expect(reported.length).toBe(countAfterType); // no extra calls on blur
+  });
+
   it('parent coercing null → 0 does not snap the display to "0" when cleared', () => {
     // Parent does: setVal(n ?? 0), so value is always a number.
     // User clears field → onChangeNumber(null) → parent sets 0 → value=0.

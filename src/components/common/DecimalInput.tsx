@@ -26,6 +26,7 @@ export default function DecimalInput({
   onChangeNumber,
   maxDecimals = 2,
   onBlur,
+  onFocus,
   ...rest
 }: DecimalInputProps) {
   const [text, setText] = useState<string>(
@@ -49,8 +50,21 @@ export default function DecimalInput({
   }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleChangeText(raw: string) {
-    // Normalise: commas to dots, strip non-digit/dot chars
-    let s = raw.replace(',', '.').replace(/[^0-9.]/g, '');
+    // Strip everything except digits, dots, commas
+    let s = raw.replace(/[^0-9.,]/g, '');
+
+    // Comma handling:
+    // - Has dot: remove all commas (they are thousands separators)
+    // - No dot, matches /^\d+,\d{1,2}$/: treat comma as decimal separator (e.g. "1,5" → "1.5")
+    // - Otherwise: remove all commas
+    if (s.includes('.')) {
+      s = s.replace(/,/g, '');
+    } else if (/^\d+,\d{1,2}$/.test(s)) {
+      s = s.replace(',', '.');
+    } else {
+      s = s.replace(/,/g, '');
+    }
+
     // Only one dot allowed
     const firstDot = s.indexOf('.');
     if (firstDot !== -1) {
@@ -66,20 +80,18 @@ export default function DecimalInput({
   }
 
   function handleBlur(e: any) {
-    // Normalise display on blur
-    setText((prev) => {
-      const norm = normalise(prev);
-      // If value changed due to normalise, sync parent (shouldn't normally differ, but be safe)
-      const p = parse(norm);
-      if (p !== parse(prev)) onChangeNumber(p);
-      return norm;
-    });
+    // Compute normalised text and call parent outside the state updater
+    const norm = normalise(text);
+    setText(norm);
+    const p = parse(norm);
+    if (p !== parse(text)) onChangeNumber(p);
     focusedRef.current = false;
     onBlur?.(e);
   }
 
-  function handleFocus() {
+  function handleFocus(e: any) {
     focusedRef.current = true;
+    onFocus?.(e);
   }
 
   return (

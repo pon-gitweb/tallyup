@@ -63,6 +63,22 @@ describe('Pathway A structural — receive.ts receivingOrigin wiring (3c-i)', ()
   });
 });
 
+// ── Suite A2: matchedProductIds scoping fix ────────────────────────────────────
+
+describe('Pathway A structural — matchedProductIds hoisted before try block', () => {
+  it('matchedProductIds is declared BEFORE the stock-update try block', () => {
+    // OLD: const matchedProductIds was declared inside the try{}, so a Firestore
+    // error would leave it out of scope at the filter below the catch, causing
+    // a ReferenceError. Metro/Babel masked this by downgrading const→var.
+    // The fix hoists the declaration above the try.
+    const matchedIdx = SRC.indexOf('const matchedProductIds = new Set<string>();');
+    const sectionComment = SRC.indexOf('// Find matching area items');
+    const tryStart = SRC.indexOf('try {', sectionComment);
+    expect(matchedIdx).toBeGreaterThan(0); // sanity: declaration exists
+    expect(matchedIdx).toBeLessThan(tryStart); // must appear BEFORE the try
+  });
+});
+
 // ── Suite B: pure value tests ──────────────────────────────────────────────────
 
 describe('Pathway A values — receivingOrigin tag contract', () => {
