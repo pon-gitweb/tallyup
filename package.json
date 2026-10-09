@@ -22,7 +22,8 @@
     "check:modal-safe-area": "node scripts/check-modal-safe-area.js",
     "preflight": "npm run check:imports && npm run check:undefined && npm run check:undefined-nocheck && npm run check:write-guards && npm run check:modal-safe-area",
     "eas-build-post-install": "npm run preflight",
-    "check:imports": "node scripts/check-relative-imports.js"
+    "check:imports": "node scripts/check-relative-imports.js",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-tallyup 'npm --prefix rules-tests test'"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
