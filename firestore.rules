@@ -84,8 +84,6 @@ service cloud.firestore {
         && !('accountNumber' in request.resource.data)
         && !('pricing' in request.resource.data);
       allow update: if isSignedIn()
-        && !('accountNumber' in request.resource.data)
-        && !('pricing' in request.resource.data)
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['name','brand','size','category','abv','countryOfOrigin',
                        'updatedAt','addedByVenue','unit',

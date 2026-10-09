@@ -15,7 +15,7 @@ const {
   assertFails,
   assertSucceeds,
 } = require('@firebase/rules-unit-testing');
-const { Timestamp } = require('firebase/firestore');
+const { Timestamp, increment } = require('firebase/firestore');
 const fs = require('fs');
 const path = require('path');
 
@@ -261,6 +261,214 @@ describe('global_products update', () => {
   test('signed-in user CANNOT add an arbitrary unknown field', async () => {
     await assertFails(
       globalProductDoc(asSignedIn(MEMBER_UID)).update({ secretField: 'value' })
+    );
+  });
+});
+
+// ── Regression: writes that already worked must survive the affectedKeys switch ─
+//
+// Each group has an "absent" variant (fresh doc: only name + ownerUid) and a
+// "present" variant (field seeded before the test write).  The distinction
+// matters because changedKeys() = [] on a first write (vacuously true), while
+// affectedKeys() = [fieldName] — the rule must match the write in both cases.
+
+describe('regression: preferences (manager/owner) — field absent', () => {
+  // Outer beforeEach already resets to { name, ownerUid } — no gpAlertSensitivity.
+  // The preferences clause must still allow these writes on a minimal doc.
+
+  test('manager CAN set timezone (first write)', async () => {
+    await assertSucceeds(
+      venueDoc(asManager(MANAGER_UID)).update({ timezone: 'Pacific/Auckland' })
+    );
+  });
+
+  test('manager CAN set autoSuggestPar (first write)', async () => {
+    await assertSucceeds(
+      venueDoc(asManager(MANAGER_UID)).update({ autoSuggestPar: true })
+    );
+  });
+
+  test('manager CAN set weeklySummaryEmail + timezone together (no gpAlertSensitivity on doc)', async () => {
+    await assertSucceeds(
+      venueDoc(asManager(MANAGER_UID)).update({ weeklySummaryEmail: true, timezone: 'Pacific/Auckland' })
+    );
+  });
+
+  test('owner CAN set timezone (first write)', async () => {
+    await assertSucceeds(
+      venueDoc(asOwner(OWNER_UID)).update({ timezone: 'Australia/Sydney' })
+    );
+  });
+
+  test('member CANNOT set timezone', async () => {
+    await assertFails(venueDoc(asMember(MEMBER_UID)).update({ timezone: 'Pacific/Auckland' }));
+  });
+
+  test('member CANNOT set autoSuggestPar', async () => {
+    await assertFails(venueDoc(asMember(MEMBER_UID)).update({ autoSuggestPar: true }));
+  });
+
+  test('member CANNOT set weeklySummaryEmail', async () => {
+    await assertFails(venueDoc(asMember(MEMBER_UID)).update({ weeklySummaryEmail: true }));
+  });
+
+  test('member CANNOT rename venue', async () => {
+    await assertFails(venueDoc(asMember(MEMBER_UID)).update({ name: 'Hacked' }));
+  });
+
+  test('manager CANNOT rename venue', async () => {
+    await assertFails(venueDoc(asManager(MANAGER_UID)).update({ name: 'Renamed by Manager' }));
+  });
+});
+
+describe('regression: preferences (manager/owner) — field already present', () => {
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc(`venues/${VENUE_ID}`).update({
+        timezone: 'Pacific/Auckland',
+        autoSuggestPar: false,
+        weeklySummaryEmail: false,
+      });
+    });
+  });
+
+  test('manager CAN update existing timezone', async () => {
+    await assertSucceeds(
+      venueDoc(asManager(MANAGER_UID)).update({ timezone: 'Australia/Sydney' })
+    );
+  });
+
+  test('manager CAN update existing autoSuggestPar', async () => {
+    await assertSucceeds(
+      venueDoc(asManager(MANAGER_UID)).update({ autoSuggestPar: true })
+    );
+  });
+
+  test('manager CAN update weeklySummaryEmail + timezone together', async () => {
+    await assertSucceeds(
+      venueDoc(asManager(MANAGER_UID)).update({ weeklySummaryEmail: true, timezone: 'Pacific/Auckland' })
+    );
+  });
+});
+
+describe('regression: venue name rename (owner only)', () => {
+  // name is always present on the fresh doc — both tests are "field present"
+
+  test('owner CAN rename venue', async () => {
+    await assertSucceeds(
+      venueDoc(asOwner(OWNER_UID)).update({ name: 'Renamed Venue' })
+    );
+  });
+
+  test('owner CANNOT rename venue to empty string', async () => {
+    await assertFails(
+      venueDoc(asOwner(OWNER_UID)).update({ name: '' })
+    );
+  });
+});
+
+describe('regression: onboarding dismiss (any member) — field absent', () => {
+  test('member CAN set onboardingDismissedAt (first write)', async () => {
+    await assertSucceeds(
+      venueDoc(asMember(MEMBER_UID)).update({ onboardingDismissedAt: new Date() })
+    );
+  });
+});
+
+describe('regression: onboarding dismiss (any member) — field present', () => {
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc(`venues/${VENUE_ID}`).update({ onboardingDismissedAt: new Date() });
+    });
+  });
+
+  test('member CAN update existing onboardingDismissedAt', async () => {
+    await assertSucceeds(
+      venueDoc(asMember(MEMBER_UID)).update({ onboardingDismissedAt: new Date() })
+    );
+  });
+});
+
+describe('regression: onboarding road (manager) — field absent', () => {
+  test('manager CAN write onboardingRoad + onboardingCompletedAt (first write)', async () => {
+    await assertSucceeds(
+      venueDoc(asManager(MANAGER_UID)).update({
+        onboardingRoad: 'complete',
+        onboardingCompletedAt: new Date(),
+      })
+    );
+  });
+});
+
+describe('regression: onboarding road (manager) — field present', () => {
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc(`venues/${VENUE_ID}`).update({
+        onboardingRoad: 'invoices',
+        onboardingCompletedAt: new Date(),
+      });
+    });
+  });
+
+  test('manager CAN update existing onboardingRoad + onboardingCompletedAt', async () => {
+    await assertSucceeds(
+      venueDoc(asManager(MANAGER_UID)).update({
+        onboardingRoad: 'complete',
+        onboardingCompletedAt: new Date(),
+      })
+    );
+  });
+});
+
+describe('regression: stocktakeActive (any member) — field absent', () => {
+  test('member CAN set stocktakeActive + stocktakeActiveAt (first write)', async () => {
+    await assertSucceeds(
+      venueDoc(asMember(MEMBER_UID)).update({ stocktakeActive: true, stocktakeActiveAt: new Date() })
+    );
+  });
+});
+
+describe('regression: stocktakeActive (any member) — field present', () => {
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc(`venues/${VENUE_ID}`).update({
+        stocktakeActive: false,
+        stocktakeActiveAt: new Date(),
+      });
+    });
+  });
+
+  test('member CAN update existing stocktakeActive + stocktakeActiveAt', async () => {
+    await assertSucceeds(
+      venueDoc(asMember(MEMBER_UID)).update({ stocktakeActive: true, stocktakeActiveAt: new Date() })
+    );
+  });
+});
+
+describe('regression: totalStocktakesCompleted (any member) — field absent', () => {
+  test('member CAN set totalStocktakesCompleted (first write)', async () => {
+    await assertSucceeds(
+      venueDoc(asMember(MEMBER_UID)).update({ totalStocktakesCompleted: 1 })
+    );
+  });
+});
+
+describe('regression: totalStocktakesCompleted (any member) — field present', () => {
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc(`venues/${VENUE_ID}`).update({ totalStocktakesCompleted: 5 });
+    });
+  });
+
+  test('member CAN increment totalStocktakesCompleted (set)', async () => {
+    await assertSucceeds(
+      venueDoc(asMember(MEMBER_UID)).update({ totalStocktakesCompleted: 6 })
+    );
+  });
+
+  test('member CAN increment totalStocktakesCompleted (FieldValue.increment)', async () => {
+    await assertSucceeds(
+      venueDoc(asMember(MEMBER_UID)).update({ totalStocktakesCompleted: increment(1) })
     );
   });
 });
