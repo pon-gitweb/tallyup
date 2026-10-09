@@ -84,7 +84,9 @@ service cloud.firestore {
         && !('accountNumber' in request.resource.data)
         && !('pricing' in request.resource.data);
       allow update: if isSignedIn()
-        && request.resource.data.diff(resource.data).changedKeys()
+        && !('accountNumber' in request.resource.data)
+        && !('pricing' in request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['name','brand','size','category','abv','countryOfOrigin',
                        'updatedAt','addedByVenue','unit',
                        'barcode','barcodeNumber','barcodes']);
@@ -234,6 +236,11 @@ service cloud.firestore {
 
       allow delete: if hasVenueRole(venueId, ['owner']);
 
+      // KNOWN DEAD RULE: hasOnlyFields checks the full resulting document, not the
+      // diff, so this never matches a venue doc that has many fields. The write in
+      // reset.ts is best-effort (non-fatal try/catch). Leave as-is — making it work
+      // would silently enable latent DepartmentSelectionScreen.tsx:184 logic across
+      // all venues. Fix on a dedicated branch if that behaviour is intentionally shipped.
       allow update: if hasVenueRole(venueId, ['manager','owner'])
         && hasOnlyFields(request.resource.data, ['cycleResetAt','updatedAt'])
         && (request.resource.data.cycleResetAt is timestamp)
@@ -250,28 +257,45 @@ service cloud.firestore {
 
       // Venue name (owner only)
       allow update: if hasVenueRole(venueId, ['owner'])
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['name'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 2
         && request.resource.data.name.size() <= 100;
 
+      // Venue country (owner only) — two-letter ISO code (NZ / AU)
+      allow update: if hasVenueRole(venueId, ['owner'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['country'])
+        && request.resource.data.country is string
+        && request.resource.data.country.size() == 2;
+
       // Venue-level preferences (managers/owners only)
       allow update: if hasVenueRole(venueId, ['manager','owner'])
-        && request.resource.data.diff(resource.data).changedKeys()
-             .hasOnly(['weeklySummaryEmail', 'timezone', 'autoSuggestPar']);
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['weeklySummaryEmail', 'timezone', 'autoSuggestPar', 'gpAlertSensitivity'])
+        && (!('gpAlertSensitivity' in request.resource.data)
+            || request.resource.data.gpAlertSensitivity in ['small','moderate','significant','off']);
+
+      // Product categories (manager/owner only — member seed write is swallowed by .catch)
+      allow update: if hasVenueRole(venueId, ['manager','owner'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['productCategories'])
+        && request.resource.data.productCategories is list
+        && request.resource.data.productCategories.size() <= 100;
 
       // Onboarding state (managers/owners complete roads; any member can dismiss)
-      // NOTE: changedKeys() here is intentionally left for Step 1 minimal fix.
-      // The affectedKeys() hardening (which closes the new-field vacuous-truth gap)
-      // is deferred to fix/rules-affectedkeys after a full client-write audit.
       allow update: if hasVenueRole(venueId, ['manager','owner'])
-        && request.resource.data.diff(resource.data).changedKeys()
+        && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['onboardingRoad', 'onboardingCompletedAt',
                        'onboardingLastStocktakeDate', 'onboardingHasInvoices',
                        'onboardingHasSales', 'onboardingInvoiceLinesCount']);
       allow update: if isVenueMember(venueId)
-        && request.resource.data.diff(resource.data).changedKeys()
+        && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['onboardingDismissedAt']);
+
+      // Last full-venue stocktake timestamp (set by any member on completion)
+      allow update: if isVenueMember(venueId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['lastFullVenueStocktakeAt'])
+        && request.resource.data.lastFullVenueStocktakeAt is timestamp;
 
       // Stocktake completion counter (incremented by any member on submit)
       allow update: if isVenueMember(venueId)

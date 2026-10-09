@@ -1,13 +1,11 @@
 /**
- * Firestore security rules tests for salesReports and venue onboarding.
+ * Firestore security rules tests — core covered-write shapes.
  *
  * Run via the root "test:rules" script:
  *   npm run test:rules
  *
- * Two bug areas fixed on 2026-10-09:
- *  1. salesReports create rule was too narrow (missing 5 fields added 15 Sept)
- *  2. salesReports update rule was `false` (blocking tag + supersede writes)
- *  3. Venue onboarding update missing onboardingHasSales + onboardingInvoiceLinesCount
+ * Covers salesReports create/update and venue onboarding.
+ * The affectedKeys() hardening and new field clauses are tested in hardening.test.js.
  *
  * Auth strategy: pass custom JWT claims that match the real app's token shape
  * (`venues` + `venue_roles`), so `isVenueMember` / `hasVenueRole` use the
@@ -216,8 +214,8 @@ describe('salesReports update — supersede', () => {
 //  Venue document — onboarding update
 // ─────────────────────────────────────────────
 describe('venue onboarding update', () => {
-  // Reset venue doc before each test so affectedKeys() always reflects a real
-  // field addition/change, not a no-op write to an already-set value.
+  // Reset venue doc before each test so the write always reflects a real field
+  // addition/change, not a no-op write to an already-set value.
   beforeEach(async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await ctx.firestore()
@@ -248,5 +246,5 @@ describe('venue onboarding update', () => {
   });
 
 });
-// Tests for the changedKeys() new-field gap are in hardening.test.js.
-// They are EXPECTED TO FAIL on this branch (the hole is open; Step 2 closes it).
+// Full hardening coverage (new-field gap, entitlement denial, country, gpAlertSensitivity,
+// productCategories, lastFullVenueStocktakeAt, global_products) is in hardening.test.js.
