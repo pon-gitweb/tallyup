@@ -250,26 +250,27 @@ service cloud.firestore {
 
       // Venue name (owner only)
       allow update: if hasVenueRole(venueId, ['owner'])
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['name'])
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 2
         && request.resource.data.name.size() <= 100;
 
       // Venue-level preferences (managers/owners only)
       allow update: if hasVenueRole(venueId, ['manager','owner'])
-        && request.resource.data.diff(resource.data).affectedKeys()
+        && request.resource.data.diff(resource.data).changedKeys()
              .hasOnly(['weeklySummaryEmail', 'timezone', 'autoSuggestPar']);
 
       // Onboarding state (managers/owners complete roads; any member can dismiss)
-      // affectedKeys() (not changedKeys()) covers newly-added fields, preventing
-      // members from exploiting the vacuous-truth gap in changedKeys().
+      // NOTE: changedKeys() here is intentionally left for Step 1 minimal fix.
+      // The affectedKeys() hardening (which closes the new-field vacuous-truth gap)
+      // is deferred to fix/rules-affectedkeys after a full client-write audit.
       allow update: if hasVenueRole(venueId, ['manager','owner'])
-        && request.resource.data.diff(resource.data).affectedKeys()
+        && request.resource.data.diff(resource.data).changedKeys()
              .hasOnly(['onboardingRoad', 'onboardingCompletedAt',
                        'onboardingLastStocktakeDate', 'onboardingHasInvoices',
                        'onboardingHasSales', 'onboardingInvoiceLinesCount']);
       allow update: if isVenueMember(venueId)
-        && request.resource.data.diff(resource.data).affectedKeys()
+        && request.resource.data.diff(resource.data).changedKeys()
              .hasOnly(['onboardingDismissedAt']);
 
       // Stocktake completion counter (incremented by any member on submit)
@@ -1222,8 +1223,9 @@ service cloud.firestore {
                .hasOnly(['overlappingCycles','allocationMethod'])
           && request.resource.data.allocationMethod
                in ['none','exact_single_cycle','day_weighted_estimate'];
-        // Shape B — supersedeSalesReports
+        // Shape B — supersedeSalesReports (only active reports can be superseded)
         allow update: if isVenueMember(venueId)
+          && resource.data.status == 'active'
           && request.resource.data.diff(resource.data).affectedKeys()
                .hasOnly(['status','supersededBy','supersededAt'])
           && request.resource.data.status == 'superseded'

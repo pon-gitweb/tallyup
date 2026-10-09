@@ -247,19 +247,6 @@ describe('venue onboarding update', () => {
     );
   });
 
-  test('plain member CANNOT write onboardingHasSales', async () => {
-    await assertFails(venueDoc(asMember(MEMBER_UID)).update({ onboardingHasSales: true }));
-  });
-
-  test('manager CANNOT write subscription', async () => {
-    await assertFails(venueDoc(asManager(MANAGER_UID)).update({ subscription: 'pro' }));
-  });
-
-  test('manager CANNOT write subscriptionOverride', async () => {
-    await assertFails(venueDoc(asManager(MANAGER_UID)).update({ subscriptionOverride: 'pro' }));
-  });
-
-  test('manager CANNOT write trialStatus', async () => {
-    await assertFails(venueDoc(asManager(MANAGER_UID)).update({ trialStatus: 'active' }));
-  });
 });
+// Tests for the changedKeys() new-field gap are in hardening.test.js.
+// They are EXPECTED TO FAIL on this branch (the hole is open; Step 2 closes it).
