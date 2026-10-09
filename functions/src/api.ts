@@ -12,6 +12,7 @@ import { resolveSupplier, commitSupplierResolution } from './supplierResolution'
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES, HOSTI_BUSINESS_REDIRECT } from "./izzyContext";
 import { AiCallType, checkAiLimit, trackAiCall, AI_METER_EXTENSION_LOOKUP_KEY, resolveVenuePlan, PLAN_LIMITS } from './services/aiMeter';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
+import { matchSalesLine } from './salesMatching';
 import { flagAnomalousChanges } from './priceChangeSanity';
 import { detectNewProducts } from './inventoryMatching';
 import {
@@ -101,16 +102,9 @@ async function matchAndStoreSalesLines(
 ): Promise<{ matched: number; unknowns: number }> {
   try {
     const productsSnap = await db.collection(`venues/${venueId}/products`).get();
-    const byBarcode = new Map<string, any>();
-    const bySku = new Map<string, any>();
     const allProducts: any[] = [];
     productsSnap.forEach(d => {
-      const p = { id: d.id, ...d.data() as any };
-      const bc = (p.barcode || p.barCode || p.bar_code || '').toString().trim();
-      const sku = (p.sku || p.code || '').toString().trim();
-      if (bc) byBarcode.set(bc, p);
-      if (sku) bySku.set(sku, p);
-      allProducts.push(p);
+      allProducts.push({ id: d.id, ...d.data() as any });
     });
 
     // Load confirmed mappings (operator-confirmed POS → product links)
@@ -127,26 +121,9 @@ async function matchAndStoreSalesLines(
     const unknowns: any[] = [];
 
     for (const ln of lines) {
-      const n = (ln.name || '').toString().trim().toLowerCase();
-      if (!n) continue;
-      const b = (ln.barcode || '').toString().trim();
-      const s = (ln.sku || '').toString().trim();
-
-      let hit: any = null;
-      // Confirmed mapping wins first
-      const confirmedId = confirmedMappings[n];
-      if (confirmedId) hit = allProducts.find(p => p.id === confirmedId) ?? null;
-      // Barcode / SKU exact match
-      if (!hit && b && byBarcode.has(b)) hit = byBarcode.get(b);
-      if (!hit && s && bySku.has(s)) hit = bySku.get(s);
-      // Fuzzy name match
-      if (!hit && n) hit = allProducts.find(
-        p => (p.name || '').toString().toLowerCase().includes(n) ||
-             n.includes((p.name || '').toString().toLowerCase())
-      ) ?? null;
-
-      if (hit) {
-        matches.push({ productId: hit.id, productName: hit.name ?? null, name: ln.name, qtySold: ln.qtySold, gross: ln.gross ?? null });
+      const result = matchSalesLine(ln, allProducts, confirmedMappings);
+      if (result) {
+        matches.push({ productId: result.product.id, productName: result.product.name ?? null, name: ln.name, qtySold: ln.qtySold, gross: ln.gross ?? null, via: result.via });
       } else {
         unknowns.push({ line: ln });
       }
