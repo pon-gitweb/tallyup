@@ -250,23 +250,26 @@ service cloud.firestore {
 
       // Venue name (owner only)
       allow update: if hasVenueRole(venueId, ['owner'])
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['name'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 2
         && request.resource.data.name.size() <= 100;
 
       // Venue-level preferences (managers/owners only)
       allow update: if hasVenueRole(venueId, ['manager','owner'])
-        && request.resource.data.diff(resource.data).changedKeys()
+        && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['weeklySummaryEmail', 'timezone', 'autoSuggestPar']);
 
       // Onboarding state (managers/owners complete roads; any member can dismiss)
+      // affectedKeys() (not changedKeys()) covers newly-added fields, preventing
+      // members from exploiting the vacuous-truth gap in changedKeys().
       allow update: if hasVenueRole(venueId, ['manager','owner'])
-        && request.resource.data.diff(resource.data).changedKeys()
+        && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['onboardingRoad', 'onboardingCompletedAt',
-                       'onboardingLastStocktakeDate', 'onboardingHasInvoices']);
+                       'onboardingLastStocktakeDate', 'onboardingHasInvoices',
+                       'onboardingHasSales', 'onboardingInvoiceLinesCount']);
       allow update: if isVenueMember(venueId)
-        && request.resource.data.diff(resource.data).changedKeys()
+        && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['onboardingDismissedAt']);
 
       // Stocktake completion counter (incremented by any member on submit)
@@ -1200,11 +1203,31 @@ service cloud.firestore {
 
       match /salesReports/{reportId} {
         allow get, list: if isVenueMember(venueId);
+        // All 8 fields written by both mobile storeSalesReport and web ImportPage.
+        // status must be 'active' and allocationMethod must be 'none' at create time;
+        // both are updated later via shape-A and shape-B update rules below.
         allow create: if isVenueMember(venueId)
-          && hasOnlyFields(request.resource.data, ['source','report','createdAt'])
+          && hasOnlyFields(request.resource.data, [
+               'source','report','createdAt',
+               'periodStart','periodEnd',
+               'overlappingCycles','allocationMethod','status'
+             ])
           && request.resource.data.source in ['csv','pdf']
-          && request.resource.data.createdAt is timestamp;
-        allow update: if false;
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.status == 'active'
+          && request.resource.data.allocationMethod == 'none';
+        // Shape A — tagOverlappingCycles / tagSalesOverlappingCycles
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['overlappingCycles','allocationMethod'])
+          && request.resource.data.allocationMethod
+               in ['none','exact_single_cycle','day_weighted_estimate'];
+        // Shape B — supersedeSalesReports
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status','supersededBy','supersededAt'])
+          && request.resource.data.status == 'superseded'
+          && request.resource.data.supersededAt is timestamp;
         allow delete: if hasVenueRole(venueId, ['manager','owner']);
       }
 
