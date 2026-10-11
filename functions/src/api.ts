@@ -12,7 +12,7 @@ import { resolveSupplier, commitSupplierResolution } from './supplierResolution'
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES, HOSTI_BUSINESS_REDIRECT } from "./izzyContext";
 import { AiCallType, checkAiLimit, trackAiCall, AI_METER_EXTENSION_LOOKUP_KEY, resolveVenuePlan, PLAN_LIMITS } from './services/aiMeter';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
-import { matchSalesLine } from './salesMatching';
+import { matchSalesLine, buildProductIndex, isBlankSalesLine } from './salesMatching';
 import { flagAnomalousChanges } from './priceChangeSanity';
 import { detectNewProducts } from './inventoryMatching';
 import {
@@ -106,6 +106,7 @@ async function matchAndStoreSalesLines(
     productsSnap.forEach(d => {
       allProducts.push({ id: d.id, ...d.data() as any });
     });
+    const productIndex = buildProductIndex(allProducts);
 
     // Load confirmed mappings (operator-confirmed POS → product links)
     const mappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`).get();
@@ -121,7 +122,8 @@ async function matchAndStoreSalesLines(
     const unknowns: any[] = [];
 
     for (const ln of lines) {
-      const result = matchSalesLine(ln, allProducts, confirmedMappings);
+      if (isBlankSalesLine(ln)) continue;
+      const result = matchSalesLine(ln, productIndex, confirmedMappings);
       if (result) {
         matches.push({ productId: result.product.id, productName: result.product.name ?? null, name: ln.name, qtySold: ln.qtySold, gross: ln.gross ?? null, via: result.via });
       } else {

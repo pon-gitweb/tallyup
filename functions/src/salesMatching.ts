@@ -1,6 +1,6 @@
 /**
  * Pure, stateless sales-line matching.
- * No Firestore access, no async — takes products and mappings as arguments.
+ * No Firestore access, no async — takes a ProductIndex and mappings as arguments.
  *
  * Pipeline (each step wins if it fires; later steps are never reached):
  *   1. Saved posProductMappings (operator-confirmed POS → product)
@@ -9,7 +9,7 @@
  *   4. Modifier-stripped token equality (unique match, ≥2 tokens after strip)
  *   5. Unknown (null)
  *
- * Diacritics are folded in this file via NFD decomposition before any comparison.
+ * Diacritics are folded via NFD decomposition before any comparison.
  * nameMatching.ts is not used here — its overlap score rates any short name a
  * perfect match for any longer name that contains it, which produces false
  * positives on real data (e.g. "Dirty Martini" → "Batch Brine Dirty Martini").
@@ -55,29 +55,24 @@ export const MODIFIER_TOKENS = new Set([
 
 /**
  * Normalise a name for comparison:
- *   lowercase, NFD diacritics folded (é→e, í→i, …), punctuation removed,
- *   spaces collapsed.
+ *   lowercase, NFD diacritics folded (é→e, í→i, …), apostrophes deleted,
+ *   all other non-alphanumeric characters replaced with a space, spaces collapsed.
  *
- * "Mencía" → "mencia"; "Languedoc, France" → "languedoc france".
- * This is intentionally separate from tokenizeForMatching in nameMatching.ts,
- * which strips diacritics outright (e.g. "Mencía" → "menca").
+ * "Mencía" → "mencia"; "Languedoc, France" → "languedoc france";
+ * "J&B Rare" → "j b rare"; "Coca-Cola" → "coca cola"; "Hendrick's Gin" → "hendricks gin".
+ *
+ * Intentionally separate from tokenizeForMatching in nameMatching.ts, which
+ * strips diacritics outright (e.g. "Mencía" → "menca").
  */
 function normalize(s: string): string {
   return (s || '')
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-function setsEqual(a: string[], b: string[]): boolean {
-  const sa = new Set(a);
-  const sb = new Set(b);
-  if (sa.size !== sb.size) return false;
-  for (const t of sa) if (!sb.has(t)) return false;
-  return true;
 }
 
 function getBarcode(p: ProductLike): string {
@@ -88,9 +83,57 @@ function getSku(p: ProductLike): string {
   return ((p.sku || p.code) ?? '').toString().trim();
 }
 
+/** True if the line has a blank or whitespace-only name and should be skipped. */
+export function isBlankSalesLine(line: { name?: string | null }): boolean {
+  return !(line.name || '').toString().trim();
+}
+
+export interface ProductIndex {
+  byId: Map<string, ProductLike>;
+  /** normalized name → products with that exact normalized name */
+  byNormName: Map<string, ProductLike[]>;
+  /** sorted stripped-token key → products (for step 4 modifier matching) */
+  byStrippedTokens: Map<string, ProductLike[]>;
+  byBarcode: Map<string, ProductLike>;
+  bySku: Map<string, ProductLike>;
+}
+
+export function buildProductIndex(products: ProductLike[]): ProductIndex {
+  const byId = new Map<string, ProductLike>();
+  const byNormName = new Map<string, ProductLike[]>();
+  const byStrippedTokens = new Map<string, ProductLike[]>();
+  const byBarcode = new Map<string, ProductLike>();
+  const bySku = new Map<string, ProductLike>();
+
+  for (const p of products) {
+    byId.set(p.id, p);
+
+    const norm = normalize(p.name ?? '');
+    if (norm) {
+      if (!byNormName.has(norm)) byNormName.set(norm, []);
+      byNormName.get(norm)!.push(p);
+    }
+
+    const stripped = norm.split(' ').filter(t => t && !MODIFIER_TOKENS.has(t));
+    if (stripped.length >= 2) {
+      const key = [...stripped].sort().join(' ');
+      if (!byStrippedTokens.has(key)) byStrippedTokens.set(key, []);
+      byStrippedTokens.get(key)!.push(p);
+    }
+
+    const barcode = getBarcode(p);
+    if (barcode) byBarcode.set(barcode, p);
+
+    const sku = getSku(p);
+    if (sku) bySku.set(sku, p);
+  }
+
+  return { byId, byNormName, byStrippedTokens, byBarcode, bySku };
+}
+
 export function matchSalesLine(
   line: SalesLineInput,
-  products: ProductLike[],
+  index: ProductIndex,
   mappings: Record<string, string> = {},
 ): SalesMatchResult | null {
   const rawName = (line.name || '').toString().trim();
@@ -99,7 +142,7 @@ export function matchSalesLine(
   // Step 1: saved POS → product mapping (key is lowercased raw name)
   const confirmedId = mappings[rawName.toLowerCase()];
   if (confirmedId) {
-    const hit = products.find(p => p.id === confirmedId);
+    const hit = index.byId.get(confirmedId);
     if (hit) return { product: hit, via: 'mapping' };
   }
 
@@ -107,27 +150,25 @@ export function matchSalesLine(
   const lineBarcode = (line.barcode ?? '').toString().trim();
   const lineSku = (line.sku ?? '').toString().trim();
   if (lineBarcode) {
-    const hit = products.find(p => getBarcode(p) === lineBarcode);
+    const hit = index.byBarcode.get(lineBarcode);
     if (hit) return { product: hit, via: 'barcode' };
   }
   if (lineSku) {
-    const hit = products.find(p => getSku(p) === lineSku);
+    const hit = index.bySku.get(lineSku);
     if (hit) return { product: hit, via: 'barcode' };
   }
 
   // Step 3: exact normalised name — unique match only
   const lineNorm = normalize(rawName);
-  const exactMatches = products.filter(p => normalize(p.name ?? '') === lineNorm);
+  const exactMatches = index.byNormName.get(lineNorm) ?? [];
   if (exactMatches.length === 1) return { product: exactMatches[0], via: 'exact' };
   if (exactMatches.length > 1) return null; // ambiguous
 
   // Step 4: modifier-stripped token equality — unique match, ≥2 line tokens after strip
   const lineTokens = lineNorm.split(' ').filter(t => t && !MODIFIER_TOKENS.has(t));
   if (lineTokens.length >= 2) {
-    const modifierMatches = products.filter(p => {
-      const pTokens = normalize(p.name ?? '').split(' ').filter(t => t && !MODIFIER_TOKENS.has(t));
-      return setsEqual(lineTokens, pTokens);
-    });
+    const key = [...lineTokens].sort().join(' ');
+    const modifierMatches = index.byStrippedTokens.get(key) ?? [];
     if (modifierMatches.length === 1) return { product: modifierMatches[0], via: 'modifier' };
   }
 

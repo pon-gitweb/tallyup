@@ -89,6 +89,9 @@ export const PRODUCTS: Product[] = [
   { id: 'p-batch-mapo',      name: 'Batch Mapo District' },
   { id: 'p-batch-cafe',      name: 'Batch cafe Blanc' },
   { id: 'p-batch-low',       name: 'Batch Low Chance' },
+  { id: 'p-coca-cola',       name: 'Coca Cola' },
+  { id: 'p-hendricks',       name: 'Hendricks Gin' },
+  { id: 'p-gin-tonic-syrup', name: 'Gin Tonic Syrup' },
 ];
 
 // ── Golden cases ──────────────────────────────────────────────────────────────
@@ -174,6 +177,14 @@ export const GOLDEN_CASES: GoldenCase[] = [
   { line: { name: 'Plancha Beef Tacos (1pc)', qtySold: 1 }, expectedProductName: null },
   { line: { name: 'Guacamole',              qtySold: 1 }, expectedProductName: null },
   { line: { name: 'Chipotle Esquites',      qtySold: 1 }, expectedProductName: null },
+
+  // ── Punctuation normalisation ─────────────────────────────────────────────
+  // Apostrophes are deleted; all other non-alphanumeric chars become a space.
+  // "J&B Rare" → "j b rare" = "J & B Rare" → match via exact (step 3).
+  { line: { name: 'J&B Rare',        qtySold: 1 }, expectedProductName: 'J & B Rare',    note: '& → space; "j b rare" = normalize("J & B Rare")' },
+  { line: { name: 'Coca-Cola',       qtySold: 1 }, expectedProductName: 'Coca Cola',     note: 'hyphen → space' },
+  { line: { name: "Hendrick's Gin",  qtySold: 1 }, expectedProductName: 'Hendricks Gin', note: "apostrophe deleted: Hendrick's → hendricks" },
+  { line: { name: 'Gin Tonic',       qtySold: 1 }, expectedProductName: null,            note: '"Gin Tonic Syrup" strips to ["gin","tonic","syrup"] ≠ ["gin","tonic"]' },
 
   // ── Overlap false-positives that must stay UNKNOWN ────────────────────────
   // The old overlap algorithm scored these 1.0 and "reliable".
