@@ -1,4 +1,4 @@
-import { shouldStartTrial, computeTrialCountUpdate, computeFullStocktake, applyDeptCycleSeen, FOUNDER_UIDS } from "../trial";
+import { shouldStartTrial, computeTrialCountUpdate, computeFullStocktake, applyDeptCycleSeen, applyCycleEventToTrial, FOUNDER_UIDS } from "../trial";
 
 const TRIGGER_DATE = new Date("2025-10-01T00:00:00Z");
 const NON_FOUNDER = "user_abc123";
@@ -196,5 +196,172 @@ describe("applyDeptCycleSeen", () => {
     const existing = { A: 100, B: 200 };
     const result = applyDeptCycleSeen(existing, "C", 300);
     expect(result).toEqual({ A: 100, B: 200, C: 300 });
+  });
+});
+
+// ── applyCycleEventToTrial ────────────────────────────────────────────────────
+
+const FOUNDER_UID = [...FOUNDER_UIDS][0];
+const REGULAR_UID = "user_regular_123";
+
+const activeTrial = (overrides: Record<string, any> = {}) => ({
+  status: "active",
+  stocktakesUsed: 0,
+  lastFullStocktakeAtMs: 0,
+  deptCycleSeenMs: {},
+  ...overrides,
+});
+
+const normalVenue = (overrides: Record<string, any> = {}) => ({
+  ownerUid: REGULAR_UID,
+  venueType: "venue",
+  legacyFreeAccess: false,
+  ...overrides,
+});
+
+const deptA = { id: "dA", active: true, hasAreas: true };
+const deptB = { id: "dB", active: true, hasAreas: true };
+const twoDepts = [deptA, deptB] as const;
+const oneDept  = [deptA] as const;
+
+const BASE = {
+  departmentId: "dA",
+  serverTimeMs: 1000,
+  founderUids: FOUNDER_UIDS,
+};
+
+describe("applyCycleEventToTrial", () => {
+  // ── Null / exempt cases ───────────────────────────────────────────────────
+  test.each([
+    ["trial not active (expired)",  activeTrial({ status: "expired" }), normalVenue()],
+    ["trial not active (pending)",  activeTrial({ status: "pending" }), normalVenue()],
+    ["festival venue",              activeTrial(),                      normalVenue({ venueType: "festival" })],
+    ["legacyFreeAccess venue",      activeTrial(),                      normalVenue({ legacyFreeAccess: true })],
+    ["founder venue",               activeTrial(),                      normalVenue({ ownerUid: FOUNDER_UID })],
+  ] as const)("returns null for %s", (_, trial, venueData) => {
+    const result = applyCycleEventToTrial({ ...BASE, trial, venueData, departments: oneDept });
+    expect(result).toBeNull();
+  });
+
+  // ── serverTimeMs is the only time used ───────────────────────────────────
+  test("serverTimeMs is the only time used — extra fields on trial are ignored", () => {
+    const trialWithExtra = { ...activeTrial(), completedAtMs: 999_999_999_999 };
+    const result = applyCycleEventToTrial({ ...BASE, trial: trialWithExtra, venueData: normalVenue(), departments: oneDept });
+    // The extra field has no effect — the function counts based on serverTimeMs only
+    const clean = applyCycleEventToTrial({ ...BASE, trial: activeTrial(), venueData: normalVenue(), departments: oneDept });
+    expect(result?.trialUpdate).toEqual(clean?.trialUpdate);
+  });
+
+  // ── No-op (not yet counted): returns only deptCycleSeenMs ────────────────
+  test("no-op path: one dept event when two depts required returns only deptCycleSeenMs", () => {
+    const result = applyCycleEventToTrial({
+      ...BASE,
+      departmentId: "dA",
+      serverTimeMs: 100,
+      trial: activeTrial(),
+      venueData: normalVenue(),
+      departments: twoDepts,  // dB not yet seen
+    });
+    expect(result).not.toBeNull();
+    expect(result!.trialUpdate).toEqual({ deptCycleSeenMs: { dA: 100 } });
+    expect(result!.expireVenue).toBe(false);
+  });
+
+  // ── Two-dept venue: counts only on second dept's event ───────────────────
+  test("two-dept venue: counts on second dept event, not first", () => {
+    // First event: dA only
+    const r1 = applyCycleEventToTrial({
+      ...BASE, departmentId: "dA", serverTimeMs: 100,
+      trial: activeTrial(), venueData: normalVenue(), departments: twoDepts,
+    });
+    expect(r1!.trialUpdate.stocktakesUsed).toBeUndefined();
+
+    // Second event: dB — now both depts seen
+    const trialAfterR1 = activeTrial({ deptCycleSeenMs: r1!.trialUpdate.deptCycleSeenMs });
+    const r2 = applyCycleEventToTrial({
+      ...BASE, departmentId: "dB", serverTimeMs: 200,
+      trial: trialAfterR1, venueData: normalVenue(), departments: twoDepts,
+    });
+    expect(r2!.trialUpdate.stocktakesUsed).toBe(1);
+    expect(r2!.trialUpdate.lastFullStocktakeAtMs).toBe(200);
+    expect(r2!.expireVenue).toBe(false);
+  });
+
+  // ── stocktakesUsed progression 0 → 1 → 2 → 3 ───────────────────────────
+  test("stocktakesUsed increments 0→1→2→3 and third sets status expired", () => {
+    let trial: Record<string, any> = activeTrial({ lastFullStocktakeAtMs: 0, deptCycleSeenMs: {} });
+    const steps = [
+      { dept: "dA", t: 100 }, { dept: "dB", t: 200 },  // → 1
+      { dept: "dA", t: 300 }, { dept: "dB", t: 400 },  // → 2
+      { dept: "dA", t: 500 }, { dept: "dB", t: 600 },  // → 3
+    ];
+
+    let used = 0;
+    for (const { dept, t } of steps) {
+      const r = applyCycleEventToTrial({
+        ...BASE, departmentId: dept, serverTimeMs: t,
+        trial, venueData: normalVenue(), departments: twoDepts,
+      });
+      expect(r).not.toBeNull();
+      // Apply the update to trial for the next step
+      trial = { ...trial, ...r!.trialUpdate };
+      delete trial.setResolvedAt;
+    }
+
+    expect(trial.stocktakesUsed).toBe(3);
+    expect(trial.status).toBe("expired");
+    expect(trial.resolvedReason).toBe("stocktake_limit");
+  });
+
+  test("at 3 stocktakesUsed never increments to 4", () => {
+    const expiredTrial = activeTrial({
+      status: "expired",
+      stocktakesUsed: 3,
+      lastFullStocktakeAtMs: 400,
+      deptCycleSeenMs: { dA: 300, dB: 400 },
+    });
+    const result = applyCycleEventToTrial({
+      ...BASE, departmentId: "dA", serverTimeMs: 500,
+      trial: expiredTrial, venueData: normalVenue(), departments: twoDepts,
+    });
+    // status is not 'active' → null
+    expect(result).toBeNull();
+  });
+
+  test("third count sets expireVenue true and setResolvedAt true", () => {
+    const trial = activeTrial({
+      stocktakesUsed: 2,
+      lastFullStocktakeAtMs: 200,
+      deptCycleSeenMs: { dA: 200, dB: 200 },
+    });
+    // dA gets a new cycle after lastFull
+    const r1 = applyCycleEventToTrial({
+      ...BASE, departmentId: "dA", serverTimeMs: 300,
+      trial, venueData: normalVenue(), departments: twoDepts,
+    });
+    // dB gets a new cycle after lastFull
+    const trialMid = { ...trial, ...r1!.trialUpdate };
+    const r2 = applyCycleEventToTrial({
+      ...BASE, departmentId: "dB", serverTimeMs: 400,
+      trial: trialMid, venueData: normalVenue(), departments: twoDepts,
+    });
+    expect(r2!.trialUpdate.stocktakesUsed).toBe(3);
+    expect(r2!.trialUpdate.status).toBe("expired");
+    expect(r2!.trialUpdate.resolvedReason).toBe("stocktake_limit");
+    expect(r2!.trialUpdate.setResolvedAt).toBe(true);
+    expect(r2!.expireVenue).toBe(true);
+  });
+
+  // ── No eligible departments ───────────────────────────────────────────────
+  test("venue with no eligible departments never counts", () => {
+    const noAreas = { id: "dA", active: true, hasAreas: false };
+    const inactive = { id: "dB", active: false, hasAreas: true };
+    const result = applyCycleEventToTrial({
+      ...BASE, departmentId: "dA", serverTimeMs: 100,
+      trial: activeTrial(), venueData: normalVenue(), departments: [noAreas, inactive],
+    });
+    expect(result).not.toBeNull();
+    expect(result!.trialUpdate.stocktakesUsed).toBeUndefined();
+    expect(result!.trialUpdate).toEqual({ deptCycleSeenMs: { dA: 100 } });
   });
 });

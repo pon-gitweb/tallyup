@@ -103,6 +103,72 @@ export function applyDeptCycleSeen(
   return { ...existing, [departmentId]: Math.max(prev, serverTimeMs) };
 }
 
+/**
+ * Pure decision function for a department cycle event.
+ *
+ * Returns null when no write should occur (trial not active, or venue exempt).
+ * Returns { trialUpdate, expireVenue } otherwise.
+ *
+ * trialUpdate always contains deptCycleSeenMs.  When a full stocktake is counted
+ * it also contains stocktakesUsed and lastFullStocktakeAtMs; at 3 it adds status
+ * 'expired', resolvedReason 'stocktake_limit', and setResolvedAt: true (a signal
+ * to the handler to substitute serverTimestamp() for resolvedAt).
+ */
+export function applyCycleEventToTrial({
+  trial,
+  venueData,
+  departmentId,
+  serverTimeMs,
+  departments,
+  founderUids,
+}: {
+  trial: Record<string, any>;
+  venueData: Record<string, any>;
+  departmentId: string;
+  serverTimeMs: number;
+  departments: ReadonlyArray<{ id: string; active: boolean; hasAreas: boolean }>;
+  founderUids: ReadonlySet<string>;
+}): null | {
+  trialUpdate: Record<string, any>;
+  expireVenue: boolean;
+} {
+  if (trial.status !== "active") return null;
+  if (venueData.venueType === "festival") return null;
+  if (venueData.legacyFreeAccess === true) return null;
+  if (founderUids.has(venueData.ownerUid ?? "")) return null;
+
+  const updatedSeen = applyDeptCycleSeen(
+    trial.deptCycleSeenMs ?? {},
+    departmentId,
+    serverTimeMs,
+  );
+
+  const lastFullMs: number = trial.lastFullStocktakeAtMs ?? 0;
+  const currentUsed: number = trial.stocktakesUsed ?? 0;
+
+  const { counted, newLastFullMs } = computeFullStocktake({
+    lastFullMs,
+    seenByDept: updatedSeen,
+    departments,
+  });
+
+  const trialUpdate: Record<string, any> = { deptCycleSeenMs: updatedSeen };
+
+  if (counted) {
+    const newUsed = Math.min(3, currentUsed + 1);
+    trialUpdate.stocktakesUsed = newUsed;
+    trialUpdate.lastFullStocktakeAtMs = newLastFullMs;
+
+    if (newUsed >= 3) {
+      trialUpdate.status = "expired";
+      trialUpdate.resolvedReason = "stocktake_limit";
+      trialUpdate.setResolvedAt = true;
+    }
+  }
+
+  return { trialUpdate, expireVenue: !!trialUpdate.status };
+}
+
 // ── Firestore triggers ───────────────────────────────────────────────────────
 
 export const onVenueCreated = onDocumentCreated(
@@ -233,46 +299,29 @@ export const onDepartmentCycleCreated = onDocumentCreated(
 
       if (!trialSnap.exists) return;
       const trial = trialSnap.data() as Record<string, any>;
-      if (trial.status !== "active") return;
-
-      // Venue-level exemptions — same guards as onVenueCreated
       const venueData = venueSnap.data() as Record<string, any> | undefined;
       if (!venueData) return;
-      if (venueData.venueType === "festival") return;
-      if (venueData.legacyFreeAccess === true) return;
-      if (FOUNDER_UIDS.has(venueData.ownerUid ?? "")) return;
 
-      const updatedSeen = applyDeptCycleSeen(
-        trial.deptCycleSeenMs ?? {},
+      const result = applyCycleEventToTrial({
+        trial,
+        venueData,
         departmentId,
         serverTimeMs,
-      );
-
-      const lastFullMs: number = trial.lastFullStocktakeAtMs ?? 0;
-      const currentUsed: number = trial.stocktakesUsed ?? 0;
-
-      const { counted, newLastFullMs } = computeFullStocktake({
-        lastFullMs,
-        seenByDept: updatedSeen,
         departments,
+        founderUids: FOUNDER_UIDS,
       });
+      if (!result) return;
 
-      const trialUpdate: Record<string, any> = { deptCycleSeenMs: updatedSeen };
-
-      if (counted) {
-        const newUsed = Math.min(3, currentUsed + 1);
-        trialUpdate.stocktakesUsed = newUsed;
-        trialUpdate.lastFullStocktakeAtMs = newLastFullMs;
-
-        if (newUsed >= 3) {
-          trialUpdate.status = "expired";
-          trialUpdate.resolvedAt = admin.firestore.FieldValue.serverTimestamp();
-          trialUpdate.resolvedReason = "stocktake_limit";
-          tx.update(venueRef, { trialStatus: "expired" });
-        }
+      const { trialUpdate, expireVenue } = result;
+      const update: Record<string, any> = { ...trialUpdate };
+      if (update.setResolvedAt) {
+        delete update.setResolvedAt;
+        update.resolvedAt = admin.firestore.FieldValue.serverTimestamp();
       }
-
-      tx.update(trialRef, trialUpdate);
+      tx.update(trialRef, update);
+      if (expireVenue) {
+        tx.update(venueRef, { trialStatus: "expired" });
+      }
     });
 
     console.log(
