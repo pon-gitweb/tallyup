@@ -283,6 +283,20 @@ describe('DecimalInput', () => {
     expect(reported.length).toBe(countAfterType); // no extra calls on blur
   });
 
+  it('selectTextOnFocus defaults to true', () => {
+    const { getByTestId } = render(
+      <DecimalInput testID="input" value={null} onChangeNumber={() => {}} />,
+    );
+    expect(getByTestId('input').props.selectTextOnFocus).toBe(true);
+  });
+
+  it('selectTextOnFocus={false} passes false to the underlying TextInput', () => {
+    const { getByTestId } = render(
+      <DecimalInput testID="input" value={null} onChangeNumber={() => {}} selectTextOnFocus={false} />,
+    );
+    expect(getByTestId('input').props.selectTextOnFocus).toBe(false);
+  });
+
   it('parent coercing null → 0 does not snap the display to "0" when cleared', () => {
     // Parent does: setVal(n ?? 0), so value is always a number.
     // User clears field → onChangeNumber(null) → parent sets 0 → value=0.

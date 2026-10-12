@@ -486,6 +486,25 @@ export default function OrderDetailScreen() {
     },0);
   },[lines]);
 
+  // Map receiveLines (written by ManualReceiveScreen) to order lines. Null when not yet received.
+  const receiveLineMap = useMemo((): Map<string, any> | null => {
+    const rl: any[] = orderMeta?.receiveLines;
+    if (!Array.isArray(rl) || rl.length === 0) return null;
+    const m = new Map<string, any>();
+    for (const r of rl) {
+      if (r.promo) continue;
+      if (r.id) m.set(`id:${String(r.id)}`, r);
+      if (r.productId) m.set(`pid:${String(r.productId)}`, r);
+    }
+    return m;
+  }, [orderMeta?.receiveLines]);
+
+  const promoExtras = useMemo((): any[] => {
+    const rl: any[] = orderMeta?.receiveLines;
+    if (!Array.isArray(rl)) return [];
+    return rl.filter((r: any) => r.promo === true);
+  }, [orderMeta?.receiveLines]);
+
   const csvWarnings = useMemo(() => {
     if (!csvReview) return [];
     return (csvReview.warnings || csvReview.matchReport?.warnings || []);
@@ -778,18 +797,36 @@ export default function OrderDetailScreen() {
             keyExtractor={(it)=>it.id}
             contentContainerStyle={{padding:16}}
             ItemSeparatorComponent={()=> <View style={{height:8}}/>}
-            renderItem={({item})=>(
-              <View style={S.line}>
-                <Text style={{fontWeight:'700'}}>{item.name || item.productId || item.id}</Text>
-                <Text style={{color:'#6B7280'}}>Qty: {item.qty ?? 0} • Unit: ${Number(item.unitCost||0).toFixed(2)}</Text>
-              </View>
-            )}
+            renderItem={({item})=>{
+              const rl = receiveLineMap
+                ? (receiveLineMap.get(`id:${item.id}`) ?? (item.productId ? receiveLineMap.get(`pid:${item.productId}`) : undefined))
+                : null;
+              return (
+                <View style={S.line}>
+                  <Text style={{fontWeight:'700'}}>{item.name || item.productId || item.id}</Text>
+                  {rl
+                    ? <Text style={{color:'#6B7280'}}>Ordered {item.qty ?? 0} · Received {rl.receivedQty ?? 0}</Text>
+                    : <Text style={{color:'#6B7280'}}>Qty: {item.qty ?? 0} • Unit: ${Number(item.unitCost||0).toFixed(2)}</Text>
+                  }
+                </View>
+              );
+            }}
             ListHeaderComponent={(
               <View style={{paddingBottom:8}}>
                 <Text style={{fontSize:16,fontWeight:'800'}}>Order Lines</Text>
                 <Text style={{color:'#6B7280'}}>Estimated total: ${totalOrdered.toFixed(2)}</Text>
               </View>
             )}
+            ListFooterComponent={promoExtras.length > 0 ? (
+              <View style={{marginTop:8}}>
+                {promoExtras.map((r: any) => (
+                  <View key={r.id} style={[S.line, {marginTop:8}]}>
+                    <Text style={{fontWeight:'700'}}>{r.name || r.id}</Text>
+                    <Text style={{color:'#6B7280'}}>Extra (not on order) · Received {r.receivedQty ?? 0}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : undefined}
           />
         </View>
       )}

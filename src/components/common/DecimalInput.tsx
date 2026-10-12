@@ -6,6 +6,9 @@ interface DecimalInputProps extends Omit<TextInputProps, 'value' | 'onChangeText
   value: number | null | undefined;
   onChangeNumber: (n: number | null) => void;
   maxDecimals?: number;
+  /** Select all text when the field is focused so typing replaces a pre-filled value.
+   *  Defaults to true. Pass false to keep the cursor at the tap position. */
+  selectTextOnFocus?: boolean;
 }
 
 function parse(text: string): number | null {
@@ -27,6 +30,7 @@ export default function DecimalInput({
   maxDecimals = 2,
   onBlur,
   onFocus,
+  selectTextOnFocus = true,
   ...rest
 }: DecimalInputProps) {
   const [text, setText] = useState<string>(
@@ -104,6 +108,7 @@ export default function DecimalInput({
   return (
     <TextInput
       {...rest}
+      selectTextOnFocus={selectTextOnFocus}
       value={text}
       onChangeText={handleChangeText}
       onBlur={handleBlur}
