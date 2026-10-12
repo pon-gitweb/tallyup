@@ -58,6 +58,16 @@ function toNormalized(text: string): NormalizedSalesReport {
     parserVersion:     parsed.parserVersion,
     lineTotalsBasis:   parsed.lineTotalsBasis,
     gstBasis:          parsed.gstBasis,
+    meta: {
+      sourceFormat:    parsed.sourceFormat,
+      parserVersion:   parsed.parserVersion,
+      lineTotalsBasis: parsed.lineTotalsBasis,
+      gstBasis:        parsed.gstBasis,
+      kind:            parsed.kind,
+      reportTotals:    parsed.reportTotals,
+      categoryTotals:  parsed.categoryTotals,
+      fileHash:        null,
+    },
   };
 }
 

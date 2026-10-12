@@ -336,32 +336,45 @@ async function storeSalesReportWeb(args: {
   periodStart: string  // YYYY-MM-DD
   periodEnd: string    // YYYY-MM-DD
   idsToSupersede?: string[]
-  // Phase 1 parser metadata
+  // Parser metadata — stored inside report.meta (not top-level)
   sourceFormat?: string
   parserVersion?: number | null
   lineTotalsBasis?: string
   gstBasis?: string
+  kind?: string | null
+  reportTotals?: any | null
+  categoryTotals?: any[] | null
+  fileHash?: string | null
 }): Promise<{ id: string; zeroCycleWarning: boolean }> {
   const startDate = new Date(args.periodStart + 'T00:00:00')
   const endDate   = new Date(args.periodEnd   + 'T23:59:59')
   const startTs   = isFinite(startDate.getTime()) ? Timestamp.fromDate(startDate) : null
   const endTs     = isFinite(endDate.getTime())   ? Timestamp.fromDate(endDate)   : null
 
-  // ── Step 1: store report (field layout identical to mobile's storeSalesReport addDoc) ──
+  // All parser metadata lives inside report.meta — top-level keys must match
+  // the Firestore CREATE rule exactly: source, report, createdAt, periodStart,
+  // periodEnd, overlappingCycles, allocationMethod, status.
+  const reportMeta = {
+    sourceFormat:    args.sourceFormat    ?? (args.source === 'pdf' ? 'pdf' : 'generic'),
+    parserVersion:   args.parserVersion   ?? null,
+    lineTotalsBasis: args.lineTotalsBasis ?? 'line_total',
+    gstBasis:        args.gstBasis        ?? 'unknown',
+    kind:            args.kind            ?? null,
+    reportTotals:    args.reportTotals    ?? null,
+    categoryTotals:  args.categoryTotals  ?? null,
+    fileHash:        args.fileHash        ?? null,
+  }
+
+  // ── Step 1: store report (top-level layout matches Firestore CREATE rule) ──
   const ref = await addDoc(collection(db, 'venues', args.venueId, 'salesReports'), {
     source:            args.source,
-    report:            { lines: args.lines, lineCount: args.lines.length, importedFrom: 'desktop' },
+    report:            { lines: args.lines, lineCount: args.lines.length, importedFrom: 'desktop', meta: reportMeta },
     periodStart:       startTs,
     periodEnd:         endTs,
     overlappingCycles: [],
     allocationMethod:  'none',
     status:            'active',
     createdAt:         serverTimestamp(),
-    // Phase 1 parser metadata (mirrors mobile storeSalesReport.ts)
-    sourceFormat:    args.sourceFormat    ?? (args.source === 'pdf' ? 'pdf' : 'generic'),
-    parserVersion:   args.parserVersion   ?? null,
-    lineTotalsBasis: args.lineTotalsBasis ?? 'line_total',
-    gstBasis:        args.gstBasis        ?? 'unknown',
   })
 
   // ── Step 2: tag overlapping cycles (non-throwing — mirrors mobile's try/catch) ──
@@ -659,6 +672,13 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         parserVersion:   bParseResult?.parserVersion   ?? null,
         lineTotalsBasis: bParseResult?.lineTotalsBasis ?? 'line_total',
         gstBasis:        bParseResult?.gstBasis        ?? (source === 'pdf' ? 'unknown' : 'assumed_incl'),
+        kind:            bParseResult?.kind            ?? null,
+        reportTotals:    bParseResult?.reportTotals    ?? null,
+        categoryTotals:  bParseResult?.categoryTotals  ?? null,
+        fileHash:        source === 'csv' ? djb2([
+          String(bRows.length),
+          bRows.slice(0, 5).map((l: any) => (l.name || '').toLowerCase().trim()).join('|'),
+        ].join('::')) : null,
       })
 
       // CSV: write content-dedup fingerprint after successful save
@@ -758,6 +778,10 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       const rows = parseCsvText(text)
       const parsed = parseSalesExport(rows)
 
+      if (parsed.kind === 'summary') {
+        setBError(parsed.warnings.find(w => /summary/i.test(w)) ?? 'This looks like a sales summary, not an item report. Export the items report instead.')
+        return
+      }
       if (!parsed.columns.name) {
         setBError('CSV must have a Name, Item Name, or Product column.')
         return

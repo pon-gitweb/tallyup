@@ -355,6 +355,220 @@ Subtotal,,,50.40
   });
 });
 
+// ── Format A — new fields ─────────────────────────────────────────────────────
+
+describe('parseSalesExport — Format A new fields', () => {
+  const result = parseSalesExport(parseCsvText(FORMAT_A_CSV));
+
+  it('kind = unknown (bustle_rich is a flat list, not hierarchical items)', () => {
+    expect(result.kind).toBe('unknown');
+  });
+
+  it('categoryTotals = [] (no category rows in bustle_rich)', () => {
+    expect(result.categoryTotals).toEqual([]);
+  });
+
+  it('notes = []', () => {
+    expect(result.notes).toEqual([]);
+  });
+
+  it('reportTotals: source = sum_of_lines (no Subtotal row)', () => {
+    expect(result.reportTotals?.source).toBe('sum_of_lines');
+  });
+});
+
+// ── Format B — new fields ─────────────────────────────────────────────────────
+
+describe('parseSalesExport — Format B new fields', () => {
+  const result = parseSalesExport(parseCsvText(FORMAT_B_CSV));
+
+  it('kind = items', () => {
+    expect(result.kind).toBe('items');
+  });
+
+  it('category assignment: Nachos → Food, Andre clouet → Wine, Heineken → Beer', () => {
+    expect(result.lines.find(l => l.name === 'Nachos')?.category).toBe('Food');
+    expect(result.lines.find(l => l.name === 'Andre clouet')?.category).toBe('Wine');
+    expect(result.lines.find(l => l.name === 'Cloudy Bay Sauv Blanc')?.category).toBe('Wine');
+    expect(result.lines.find(l => l.name === 'Heineken')?.category).toBe('Beer');
+    expect(result.lines.find(l => l.name === 'Margarita')?.category).toBe('No Subcategory');
+  });
+
+  it('categoryTotals: 6 entries', () => {
+    expect(result.categoryTotals).toHaveLength(6);
+  });
+
+  it('categoryTotals: Alcoholic is parent of Wine, Beer, Cocktail', () => {
+    const wine = result.categoryTotals.find(ct => ct.name === 'Wine');
+    const beer = result.categoryTotals.find(ct => ct.name === 'Beer');
+    const cocktail = result.categoryTotals.find(ct => ct.name === 'Cocktail');
+    expect(wine?.parent).toBe('Alcoholic');
+    expect(beer?.parent).toBe('Alcoholic');
+    expect(cocktail?.parent).toBe('Alcoholic');
+  });
+
+  it('categoryTotals: Cocktail is parent of No Subcategory', () => {
+    const noSub = result.categoryTotals.find(ct => ct.name === 'No Subcategory');
+    expect(noSub?.parent).toBe('Cocktail');
+  });
+
+  it('categoryTotals: Food has no parent, is itemised', () => {
+    const food = result.categoryTotals.find(ct => ct.name === 'Food');
+    expect(food?.parent).toBeNull();
+    expect(food?.itemised).toBe(true);
+  });
+
+  it('categoryTotals: Alcoholic has no parent, is not directly itemised', () => {
+    const alc = result.categoryTotals.find(ct => ct.name === 'Alcoholic');
+    expect(alc?.parent).toBeNull();
+    expect(alc?.itemised).toBe(false);
+  });
+
+  it('categoryTotals: totals populated', () => {
+    const wine = result.categoryTotals.find(ct => ct.name === 'Wine');
+    expect(wine?.totalIncl).toBe(163);
+    expect(wine?.qty).toBe(7);
+  });
+
+  it('notes = [] (all items reconcile directly to Subtotal — no unitemised leafs)', () => {
+    expect(result.notes).toEqual([]);
+  });
+
+  it('reportTotals: source = subtotal, totalIncl = 418', () => {
+    expect(result.reportTotals?.source).toBe('subtotal');
+    expect(result.reportTotals?.totalIncl).toBe(418);
+    expect(result.reportTotals?.totalExcl).toBeNull();
+  });
+
+  it('reportTotals: qty = 30 (from Subtotal row Count)', () => {
+    expect(result.reportTotals?.qty).toBe(30);
+  });
+});
+
+// ── Summary detection ─────────────────────────────────────────────────────────
+
+describe('parseSalesExport — summary detection', () => {
+  const DAILY_SUMMARY_CSV = `Date,Gross Sales,Net Sales,Tax
+2025-01-01,$1200.00,$1043.48,$156.52
+2025-01-02,$980.00,$852.17,$127.83
+`;
+
+  it('kind = summary when no name column', () => {
+    const result = parseSalesExport(parseCsvText(DAILY_SUMMARY_CSV));
+    expect(result.kind).toBe('summary');
+  });
+
+  it('lines = [] for summary', () => {
+    const result = parseSalesExport(parseCsvText(DAILY_SUMMARY_CSV));
+    expect(result.lines).toHaveLength(0);
+  });
+
+  it('warning mentions "summary"', () => {
+    const result = parseSalesExport(parseCsvText(DAILY_SUMMARY_CSV));
+    expect(result.warnings.some(w => /summary/i.test(w))).toBe(true);
+  });
+});
+
+// ── Real 40-item Items fixture ────────────────────────────────────────────────
+
+describe('parseSalesExport — real Items fixture (40 lines)', () => {
+  const csvText = fs.readFileSync(
+    path.resolve(__dirname, 'fixtures/items-40-lines.csv'),
+    'utf8'
+  );
+  const result = parseSalesExport(parseCsvText(csvText));
+
+  it('format = bustle_items, kind = items', () => {
+    expect(result.format).toBe('bustle_items');
+    expect(result.kind).toBe('items');
+  });
+
+  it('exactly 40 item lines', () => {
+    expect(result.lines).toHaveLength(40);
+  });
+
+  it('Andre clouet: grossIncl = 38', () => {
+    const a = result.lines.find(l => l.name === 'Andre clouet')!;
+    expect(a.grossIncl).toBe(38);
+  });
+
+  it('item sum = 11001', () => {
+    const sum = result.lines.reduce((s, l) => s + (l.grossIncl ?? 0), 0);
+    expect(sum).toBe(11001);
+  });
+
+  it('unitemised leaf sum = 3048', () => {
+    const parentNames = new Set(result.categoryTotals.map(ct => ct.parent).filter(Boolean));
+    const unitemisedLeafs = result.categoryTotals.filter(ct => !ct.itemised && !parentNames.has(ct.name));
+    const unitemisedSum = unitemisedLeafs.reduce((s, ct) => s + ct.totalIncl, 0);
+    expect(unitemisedSum).toBe(3048);
+  });
+
+  it('11001 + 3048 = 14049, controlTotalReconciled = true, no warnings', () => {
+    expect(result.controlTotal).toBe(14049);
+    expect(result.controlTotalReconciled).toBe(true);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('INFO note present, mentions unitemised categories', () => {
+    expect(result.notes).toHaveLength(1);
+    expect(result.notes[0]).toMatch(/Food/);
+    expect(result.notes[0]).toMatch(/Non Alcoholic/);
+    expect(result.notes[0]).toMatch(/Uncategorised/);
+  });
+
+  it('Alcoholic is parent of Wine, Beer, Spirits, Cocktail, No Subcategory', () => {
+    const children = result.categoryTotals.filter(ct => ct.parent === 'Alcoholic').map(ct => ct.name);
+    expect(children).toContain('Wine');
+    expect(children).toContain('Beer');
+    expect(children).toContain('Spirits');
+    expect(children).toContain('Cocktail');
+    expect(children).toContain('No Subcategory');
+    expect(children).toHaveLength(5);
+  });
+
+  it('unitemised categories: Food, Non Alcoholic, Uncategorised', () => {
+    const parentNames = new Set(result.categoryTotals.map(ct => ct.parent).filter(Boolean));
+    const unitemised = result.categoryTotals.filter(ct => !ct.itemised && !parentNames.has(ct.name));
+    const names = unitemised.map(ct => ct.name);
+    expect(names).toContain('Food');
+    expect(names).toContain('Non Alcoholic');
+    expect(names).toContain('Uncategorised');
+    expect(names).toHaveLength(3);
+  });
+
+  it('reportTotals: source = subtotal, qty = 1159, totalIncl = 14049', () => {
+    expect(result.reportTotals?.source).toBe('subtotal');
+    expect(result.reportTotals?.qty).toBe(1159);
+    expect(result.reportTotals?.totalIncl).toBe(14049);
+  });
+
+  it('item category assignments correct', () => {
+    expect(result.lines.find(l => l.name === 'Heineken 330ml')?.category).toBe('Beer');
+    expect(result.lines.find(l => l.name === 'Margarita')?.category).toBe('Cocktail');
+    expect(result.lines.find(l => l.name === 'Jagermeister Shot')?.category).toBe('No Subcategory');
+    expect(result.lines.find(l => l.name === 'Absolut Vodka')?.category).toBe('Spirits');
+  });
+});
+
+// ── daily-summary fixture ─────────────────────────────────────────────────────
+
+describe('parseSalesExport — daily-summary fixture', () => {
+  const csvText = fs.readFileSync(
+    path.resolve(__dirname, 'fixtures/daily-summary.csv'),
+    'utf8'
+  );
+  const result = parseSalesExport(parseCsvText(csvText));
+
+  it('kind = summary', () => {
+    expect(result.kind).toBe('summary');
+  });
+
+  it('lines = []', () => {
+    expect(result.lines).toHaveLength(0);
+  });
+});
+
 // ── File sync check ───────────────────────────────────────────────────────────
 
 describe('sync check', () => {

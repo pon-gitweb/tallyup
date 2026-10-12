@@ -21,7 +21,7 @@
  * A test verifies both files are byte-for-byte identical.
  */
 
-export const PARSER_VERSION = 1;
+export const PARSER_VERSION = 2;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,22 @@ export type GstBasis =
   | 'explicit'       // file supplies both GST-incl and GST-excl total columns
   | 'assumed_incl'   // single total column — assumed GST-inclusive
   | 'unknown';
+
+export type CategoryTotal = {
+  name: string;
+  parent: string | null;
+  qty: number;
+  totalIncl: number;
+  /** true when at least one item row is directly assigned to this category. */
+  itemised: boolean;
+};
+
+export type ReportTotals = {
+  qty: number;
+  totalIncl: number;
+  totalExcl: number | null;
+  source: 'subtotal' | 'sum_of_lines';
+};
 
 export type ParsedSalesLine = {
   name: string;
@@ -57,6 +73,7 @@ export type ParsedSalesExport = {
   format: SourceFormat;
   sourceFormat: SourceFormat;
   parserVersion: number;
+  kind: 'items' | 'summary' | 'unknown';
   headerRowIndex: number;
   columns: {
     name: string | null;
@@ -69,10 +86,14 @@ export type ParsedSalesExport = {
   };
   lines: ParsedSalesLine[];
   categories: string[];
+  categoryTotals: CategoryTotal[];
   controlTotal: number | null;
   /** null = no control total present; true/false = within/outside 1% tolerance. */
   controlTotalReconciled: boolean | null;
+  reportTotals: ReportTotals | null;
   warnings: string[];
+  /** Informational notes (not errors). */
+  notes: string[];
   lineTotalsBasis: 'line_total';
   gstBasis: GstBasis;
 };
@@ -311,18 +332,56 @@ function reconcile(lineTotal: number, controlTotal: number): boolean {
   return Math.abs(lineTotal - controlTotal) / Math.abs(controlTotal) <= 0.01;
 }
 
+// ── Parent category detection ──────────────────────────────────────────────
+
+type CatEntry = {
+  name: string;
+  qty: number;
+  totalIncl: number;
+  itemised: boolean;
+};
+
+/**
+ * For each category, check if a contiguous range of subsequent categories
+ * sums to its total (within 1% tolerance).  The first matching range wins.
+ * Returns a map from child-name → parent-name.
+ */
+function detectParents(cats: CatEntry[]): Map<string, string> {
+  const childToParent = new Map<string, string>();
+  for (let i = 0; i < cats.length; i++) {
+    const parent = cats[i];
+    if (parent.totalIncl <= 0) continue;
+    let runningSum = 0;
+    for (let j = i + 1; j < cats.length; j++) {
+      runningSum += cats[j].totalIncl;
+      if (reconcile(runningSum, parent.totalIncl)) {
+        for (let k = i + 1; k <= j; k++) {
+          childToParent.set(cats[k].name, parent.name);
+        }
+        break;
+      }
+      if (runningSum > parent.totalIncl * 1.02) break;
+    }
+  }
+  return childToParent;
+}
+
 // ── Main export ────────────────────────────────────────────────────────────
 
 export function parseSalesExport(rows: string[][]): ParsedSalesExport {
   const warnings: string[] = [];
+  const notes: string[] = [];
 
   if (rows.length === 0) {
     return {
       format: 'generic', sourceFormat: 'generic', parserVersion: PARSER_VERSION,
+      kind: 'unknown',
       headerRowIndex: 0,
       columns: { name: null, qty: null, totalExcl: null, totalIncl: null, unitPrice: null, category: null },
-      lines: [], categories: [], controlTotal: null, controlTotalReconciled: null,
-      warnings: ['empty input'], lineTotalsBasis: 'line_total', gstBasis: 'unknown',
+      lines: [], categories: [], categoryTotals: [],
+      controlTotal: null, controlTotalReconciled: null, reportTotals: null,
+      warnings: ['empty input'], notes: [],
+      lineTotalsBasis: 'line_total', gstBasis: 'unknown',
     };
   }
 
@@ -354,9 +413,38 @@ export function parseSalesExport(rows: string[][]): ParsedSalesExport {
     gstBasis = 'unknown';
   }
 
+  // Summary detection: no name column means this is a summary report (Date, Gross Sales, etc.)
+  if (cols.nameIdx < 0) {
+    return {
+      format, sourceFormat: format, parserVersion: PARSER_VERSION,
+      kind: 'summary',
+      headerRowIndex: headerIdx,
+      columns: {
+        name: null,
+        qty: cols.qtyLabel,
+        totalExcl: cols.totalExclLabel,
+        totalIncl: cols.totalInclLabel,
+        unitPrice: cols.unitPriceLabel,
+        category: cols.categoryLabel,
+      },
+      lines: [], categories: [], categoryTotals: [],
+      controlTotal: null, controlTotalReconciled: null, reportTotals: null,
+      warnings: ['This looks like a sales summary, not an item report. Export the items report instead.'],
+      notes: [],
+      lineTotalsBasis: 'line_total', gstBasis,
+    };
+  }
+
   const lines: ParsedSalesLine[] = [];
   const categories: string[] = [];
   let controlTotal: number | null = null;
+  let subtotalQty = 0;
+  let subtotalExcl: number | null = null;
+
+  // bustle_items category tracking
+  const catEntries: CatEntry[] = [];
+  let currentCategoryName: string | null = null;
+  let currentCatEntryIdx = -1;
 
   for (let r = headerIdx + 1; r < rows.length; r++) {
     const row = rows[r];
@@ -372,6 +460,9 @@ export function parseSalesExport(rows: string[][]): ParsedSalesExport {
         parseMoney(get(cols.totalInclIdx)) ??
         parseMoney(get(cols.totalExclIdx));
       if (ct !== null) controlTotal = ct;
+      const qtyRaw = get(cols.qtyIdx);
+      subtotalQty = qtyRaw ? (parseFloat(qtyRaw.replace(/,/g, '')) || 0) : 0;
+      if (cols.totalExclIdx >= 0) subtotalExcl = parseMoney(get(cols.totalExclIdx));
       continue;
     }
 
@@ -379,6 +470,12 @@ export function parseSalesExport(rows: string[][]): ParsedSalesExport {
     if (format === 'bustle_items') {
       const upCell = get(cols.unitPriceIdx);
       if (!upCell || parseMoney(upCell) === null) {
+        const catQtyRaw = get(cols.qtyIdx);
+        const catQty = catQtyRaw ? (parseFloat(catQtyRaw.replace(/,/g, '')) || 0) : 0;
+        const catTotalIncl = parseMoney(get(cols.totalInclIdx)) ?? parseMoney(get(cols.totalExclIdx)) ?? 0;
+        catEntries.push({ name, qty: catQty, totalIncl: catTotalIncl, itemised: false });
+        currentCategoryName = name;
+        currentCatEntryIdx = catEntries.length - 1;
         categories.push(name);
         continue;
       }
@@ -406,8 +503,17 @@ export function parseSalesExport(rows: string[][]): ParsedSalesExport {
     // Unit price (stored for reference, never used as gross)
     const unitPrice = cols.unitPriceIdx >= 0 ? parseMoney(get(cols.unitPriceIdx)) : null;
 
-    // Category column (Format A and generic)
-    const category = cols.categoryIdx >= 0 ? (get(cols.categoryIdx) || null) : null;
+    // Category: for bustle_items, use currentCategoryName; for others use category column
+    let category: string | null;
+    if (format === 'bustle_items') {
+      category = currentCategoryName;
+      // Mark the current category entry as itemised
+      if (currentCatEntryIdx >= 0) {
+        catEntries[currentCatEntryIdx].itemised = true;
+      }
+    } else {
+      category = cols.categoryIdx >= 0 ? (get(cols.categoryIdx) || null) : null;
+    }
 
     lines.push({
       name,
@@ -422,24 +528,77 @@ export function parseSalesExport(rows: string[][]): ParsedSalesExport {
     });
   }
 
-  // Control total reconciliation
+  // ── Category totals and parent detection ────────────────────────────────
+  const childToParent = detectParents(catEntries);
+  const categoryTotals: CategoryTotal[] = catEntries.map(ce => ({
+    name: ce.name,
+    parent: childToParent.get(ce.name) ?? null,
+    qty: ce.qty,
+    totalIncl: ce.totalIncl,
+    itemised: ce.itemised,
+  }));
+
+  // ── Control total reconciliation ────────────────────────────────────────
   let controlTotalReconciled: boolean | null = null;
   if (controlTotal !== null) {
-    const lineSum = lines.reduce((s, l) => s + (l.grossIncl ?? 0), 0);
-    controlTotalReconciled = reconcile(lineSum, controlTotal);
-    if (!controlTotalReconciled) {
-      const pct = Math.abs((lineSum - controlTotal) / controlTotal * 100).toFixed(1);
+    const itemSum = lines.reduce((s, l) => s + (l.grossIncl ?? 0), 0);
+
+    // Extended reconciliation: items + unitemised leaf categories vs Subtotal
+    const parentNames = new Set(categoryTotals.map(ct => ct.parent).filter((p): p is string => p !== null));
+    const unitemisedLeafs = categoryTotals.filter(ct => !ct.itemised && !parentNames.has(ct.name));
+    const unitemisedSum = unitemisedLeafs.reduce((s, ct) => s + ct.totalIncl, 0);
+    const extendedSum = itemSum + unitemisedSum;
+
+    controlTotalReconciled = reconcile(extendedSum, controlTotal);
+
+    if (controlTotalReconciled) {
+      if (unitemisedLeafs.length > 0) {
+        notes.push(
+          `Unitemised: ${unitemisedLeafs.map(ct => `${ct.name} $${ct.totalIncl.toFixed(2)}`).join('; ')}` +
+          ` (${lines.length} items $${itemSum.toFixed(2)} + unitemised $${unitemisedSum.toFixed(2)} = Subtotal $${controlTotal.toFixed(2)})`
+        );
+      }
+    } else {
+      const pct = Math.abs((extendedSum - controlTotal) / controlTotal * 100).toFixed(1);
       warnings.push(
-        `Control total mismatch: line totals sum to ${lineSum.toFixed(2)} ` +
+        `Control total mismatch: line totals sum to ${extendedSum.toFixed(2)} ` +
         `but Subtotal is ${controlTotal.toFixed(2)} (${pct}% difference).`
       );
     }
   }
 
+  // ── Report totals ────────────────────────────────────────────────────────
+  let reportTotals: ReportTotals | null = null;
+  {
+    const itemSum = lines.reduce((s, l) => s + (l.grossIncl ?? 0), 0);
+    const itemQty = lines.reduce((s, l) => s + l.qtySold, 0);
+    if (controlTotal !== null) {
+      reportTotals = {
+        qty: subtotalQty > 0 ? subtotalQty : itemQty,
+        totalIncl: controlTotal,
+        totalExcl: subtotalExcl,
+        source: 'subtotal',
+      };
+    } else if (lines.length > 0) {
+      const itemNetSum = lines.reduce((s, l) => s + (l.netExcl ?? 0), 0);
+      reportTotals = {
+        qty: itemQty,
+        totalIncl: itemSum,
+        totalExcl: itemNetSum > 0 ? itemNetSum : null,
+        source: 'sum_of_lines',
+      };
+    }
+  }
+
+  // ── Report kind ──────────────────────────────────────────────────────────
+  const kind: 'items' | 'summary' | 'unknown' =
+    format === 'bustle_items' ? 'items' : 'unknown';
+
   return {
     format,
     sourceFormat: format,
     parserVersion: PARSER_VERSION,
+    kind,
     headerRowIndex: headerIdx,
     columns: {
       name: cols.nameLabel,
@@ -451,9 +610,12 @@ export function parseSalesExport(rows: string[][]): ParsedSalesExport {
     },
     lines,
     categories: [...new Set(categories)],
+    categoryTotals,
     controlTotal,
     controlTotalReconciled,
+    reportTotals,
     warnings,
+    notes,
     lineTotalsBasis: 'line_total',
     gstBasis,
   };
