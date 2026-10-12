@@ -13,6 +13,8 @@ import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_F
 import { AiCallType, checkAiLimit, trackAiCall, AI_METER_EXTENSION_LOOKUP_KEY, resolveVenuePlan, PLAN_LIMITS } from './services/aiMeter';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
 import { matchSalesLine, buildProductIndex, isBlankSalesLine } from './salesMatching';
+import { isReportActive } from './isReportActive';
+import { voidSalesReportLogic } from './voidSalesReportLogic';
 import { flagAnomalousChanges } from './priceChangeSanity';
 import { detectNewProducts } from './inventoryMatching';
 import {
@@ -4947,7 +4949,7 @@ ${context}`;
               const rDoc = await db.doc(`venues/${venueId}/salesReports/${rid}`).get();
               if (!rDoc.exists) return;
               const rData = rDoc.data() as any;
-              if (rData.status === 'superseded') return;
+              if (!isReportActive(rData)) return;
               const cycles = Array.isArray(rData.overlappingCycles) ? rData.overlappingCycles : [];
               if (cycles.length === 0) return;
               qualifyingReportIds.add(rid);
@@ -6880,6 +6882,9 @@ app.post("/match-sales-report", async (req, res) => {
     }
 
     const data = reportSnap.data() as any;
+    if (!isReportActive(data)) {
+      res.status(409).json({ ok: false, error: "Report is not active and cannot be re-matched" }); return;
+    }
     const rawLines: any[] = data?.report?.lines ?? data?.lines ?? [];
     const period = data?.report?.period || data?.period || null;
 
@@ -6898,6 +6903,33 @@ app.post("/match-sales-report", async (req, res) => {
   } catch (e: any) {
     console.error("[match-sales-report] ERROR", e?.message);
     res.status(500).json({ ok: false, error: e?.message || "Matching failed" });
+  }
+});
+
+// ── POST /sales-reports/void ──────────────────────────────────────────────────
+// Soft-voids a salesReport and cleans up all derived documents.
+// Requires manager or owner role.  Idempotent: a second call after a complete
+// cleanup returns { ok:true, alreadyVoided:true }.  A second call after a
+// partial cleanup resumes from where it left off (voidCleanupComplete: false).
+app.post("/sales-reports/void", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, reportId, reason } = req.body || {};
+    const db = admin.firestore();
+    const result = await voidSalesReportLogic(db, venueId, reportId, uid, reason);
+    if (!result.ok) {
+      const err = result as { ok: false; status: number; error: string };
+      res.status(err.status).json(err); return;
+    }
+    if (!('alreadyVoided' in result) || !result.alreadyVoided) {
+      console.log(`[sales-reports/void] voided venueId=${venueId} reportId=${reportId} by uid=${uid}`);
+    }
+    res.json(result);
+  } catch (e: any) {
+    console.error("[sales-reports/void] ERROR", e?.message);
+    res.status(500).json({ ok: false, error: e?.message || "Void failed" });
   }
 });
 

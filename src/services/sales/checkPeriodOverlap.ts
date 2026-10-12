@@ -7,6 +7,7 @@ import {
   where,
   Timestamp,
 } from 'firebase/firestore';
+import { isReportActive } from './isReportActive';
 
 export type OverlappingReport = {
   id: string;
@@ -59,8 +60,8 @@ export async function checkPeriodOverlap(
   for (const docSnap of snap.docs) {
     const data = docSnap.data() as any;
 
-    // Exclude superseded reports — they should not block a new upload.
-    if (data.status === 'superseded') continue;
+    // Exclude inactive reports (superseded, voided) — they should not block a new upload.
+    if (!isReportActive(data)) continue;
 
     // In-memory check: existingStart must be <= newEnd to complete the overlap.
     const existingStart: Date | null = data.periodStart?.toDate?.() ?? null;

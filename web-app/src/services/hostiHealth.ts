@@ -12,6 +12,7 @@
  */
 import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
+import { isReportActive } from '../utils/isReportActive';
 import { generateAbductiveInsights, calcVarianceImprovementPct } from './abductiveInsights';
 import type { AbductiveInsight } from './abductiveInsights';
 import { generateStockoutPredictions } from './predictions';
@@ -514,41 +515,35 @@ async function calculateFullScore(
   let wasteControlLabel: string | null = null;
 
   try {
-    // Gate: hasSalesData alone — posConnected is no longer required so that
-    // manually-uploaded CSV/PDF reports activate Mode A, not just POS-synced ones.
+    // Gate: hasSalesData — true only when at least one ACTIVE (non-superseded,
+    // non-voided) report exists.  Fetch the full collection once and reuse it for
+    // Mode A computation so we do not make a separate limit(1) query.
     let hasSalesData = false;
+    let salesReportsSnap: Awaited<ReturnType<typeof getDocs>> | null = null;
+
     if (totalStocktakesCompleted > 0) {
-      const salesSnap = await getDocs(query(collection(db, 'venues', venueId, 'salesReports'), limit(1)));
-      hasSalesData = !salesSnap.empty;
+      salesReportsSnap = await getDocs(collection(db, 'venues', venueId, 'salesReports'));
+      hasSalesData = salesReportsSnap.docs.some(d => isReportActive(d.data() as any));
     }
 
-    if (hasSalesData) {
+    if (hasSalesData && salesReportsSnap) {
       // ── Mode A: Waste Control — use overlappingCycles to match each sales
       //    report to the SPECIFIC historical snapshot(s) it covers, then compare
       //    variance against weighted sales quantities for those cycles.
       //
-      //    Read cost: one getDoc per unique (deptId, cycleNumber) pair across all
-      //    sales reports that have been tagged.  Untagged reports (created before
-      //    Task 2 was deployed, i.e. missing overlappingCycles) are silently skipped
-      //    rather than falling back to the latest snapshot — this avoids the
-      //    incorrect cross-period comparison that motivated this fix.  Venues with
-      //    only untagged reports will fall through to Stock Integrity (Mode B) until
-      //    their next upload re-tags the data.
-
-      const salesReportsSnap = await getDocs(collection(db, 'venues', venueId, 'salesReports'));
+      //    Untagged reports (missing overlappingCycles) are silently skipped;
+      //    venues with only untagged reports fall through to Stock Integrity (Mode B).
 
       // Build: (deptId, cycleNumber) → weighted salesByName accumulator
       type SalesMap = Record<string, number>;
       const cyclesSalesMap = new Map<string, Map<number, SalesMap>>();
-      // deptId → Set<cycleNumber> for deduplication when reading snapshots
       let hasTaggedReport = false;
 
       for (const reportDoc of salesReportsSnap.docs) {
         const data = reportDoc.data() as any;
 
-        // Skip superseded reports — they have been replaced by a newer upload and
-        // must not be counted alongside their replacement (would double-count sales).
-        if (data.status === 'superseded') continue;
+        // Skip inactive reports (superseded, voided, or any future inactive state).
+        if (!isReportActive(data)) continue;
 
         const overlappingCycles: Array<{ departmentId: string; cycleNumber: number; weight?: number }> =
           data.overlappingCycles || [];
