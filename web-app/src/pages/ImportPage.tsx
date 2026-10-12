@@ -6,6 +6,8 @@ import {
 import { auth, db } from '../firebase'
 import styles from './ImportPage.module.css'
 import { parseCsvText, parseSalesExport, type ParsedSalesExport } from '../utils/parseSalesExport'
+import { salesFileHash, legacySalesHash } from '../utils/salesFileHash'
+import { periodFromFilename } from '../utils/periodFromFilename'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -174,15 +176,6 @@ function fmtDisplayDate(s: string | null): string {
   return isFinite(d.getTime()) ? d.toLocaleDateString('en-NZ', { day: '2-digit', month: 'short', year: 'numeric' }) : s
 }
 
-/**
- * djb2 hash — mirrors mobile's deduplication.ts (content-duplicate check, NOT
- * the same as the period-overlap check added below).
- */
-function djb2(str: string): string {
-  let h = 5381
-  for (let i = 0; i < str.length; i++) h = Math.imul(h, 33) ^ str.charCodeAt(i)
-  return (h >>> 0).toString(36)
-}
 
 function daysBetweenDates(a: Date, b: Date): number {
   return Math.max(0, Math.round((b.getTime() - a.getTime()) / 86400000))
@@ -569,6 +562,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [bPeriodEnd,   setBPeriodEnd]   = useState('')
   const [bPeriodError, setBPeriodError] = useState<string|null>(null)
   const [bSalesWarning, setBSalesWarning] = useState<string|null>(null)
+  const [bFilenameWarning, setBFilenameWarning] = useState<string|null>(null)
   // ── Period-overlap conflict ──
   type BConflict = {
     start: string; end: string; source: 'pdf'|'csv'
@@ -600,13 +594,16 @@ export default function ImportPage({ venueId }: { venueId: string }) {
     // this is a different concern from the period-overlap check below — keep both)
     if (source === 'csv') {
       setBStatus('importing')
-      const hashKey = djb2([
-        String(bRows.length),
-        bRows.slice(0, 5).map((l: any) => (l.name || '').toLowerCase().trim()).join('|'),
-      ].join('::'))
-      const dedupSnap = await getDoc(doc(db, 'venues', venueId, 'processedSalesReports', hashKey))
-      if (dedupSnap.exists()) {
-        const existing = dedupSnap.data() as any
+      const parsedLines = bRows.map((l: any) => ({ name: l.name, qtySold: l.qty ?? 0, gross: l.revenue ?? null }))
+      const newKey    = salesFileHash(parsedLines)
+      const legacyKey = legacySalesHash(parsedLines)
+      const [newSnap, legacySnap] = await Promise.all([
+        getDoc(doc(db, 'venues', venueId, 'processedSalesReports', newKey)),
+        getDoc(doc(db, 'venues', venueId, 'processedSalesReports', legacyKey)),
+      ])
+      const dupSnap = newSnap.exists() ? newSnap : legacySnap.exists() ? legacySnap : null
+      if (dupSnap) {
+        const existing = dupSnap.data() as any
         const dateStr = existing.processedAt?.toDate?.()?.toLocaleDateString('en-NZ') || 'previously'
         setBError(`This sales report was already imported on ${dateStr}.`)
         setBStatus('error')
@@ -675,18 +672,16 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         kind:            bParseResult?.kind            ?? null,
         reportTotals:    bParseResult?.reportTotals    ?? null,
         categoryTotals:  bParseResult?.categoryTotals  ?? null,
-        fileHash:        source === 'csv' ? djb2([
-          String(bRows.length),
-          bRows.slice(0, 5).map((l: any) => (l.name || '').toLowerCase().trim()).join('|'),
-        ].join('::')) : null,
+        fileHash:        source === 'csv' ? salesFileHash(
+          bRows.map((l: any) => ({ name: l.name, qtySold: l.qty ?? 0, gross: l.revenue ?? null }))
+        ) : null,
       })
 
       // CSV: write content-dedup fingerprint after successful save
       if (source === 'csv') {
-        const hashKey = djb2([
-          String(bRows.length),
-          bRows.slice(0, 5).map((l: any) => (l.name || '').toLowerCase().trim()).join('|'),
-        ].join('::'))
+        const hashKey = salesFileHash(
+          bRows.map((l: any) => ({ name: l.name, qtySold: l.qty ?? 0, gross: l.revenue ?? null }))
+        )
         await setDoc(doc(db, 'venues', venueId, 'processedSalesReports', hashKey), {
           lineCount: bRows.length, reportId: id, processedAt: serverTimestamp(),
         })
@@ -793,12 +788,27 @@ export default function ImportPage({ venueId }: { venueId: string }) {
 
       setBRows(parsed.lines.map(l => ({ name: l.name, qty: l.qtySold, revenue: l.grossIncl })))
       setBParseResult(parsed)
-      // Reset period picker — CSV has no auto-detected dates; user must fill in
-      setBPeriodStart('')
-      setBPeriodEnd('')
       setBPeriodError(null)
       setBSalesWarning(null)
+      setBFilenameWarning(null)
       setBConflict(null)
+
+      // Auto-fill period from filename when inputs are empty; warn when they differ.
+      const fnPeriod = periodFromFilename(file.name)
+      if (fnPeriod) {
+        const curStart = bPeriodStart
+        const curEnd   = bPeriodEnd
+        if (!curStart && !curEnd) {
+          setBPeriodStart(fnPeriod.start)
+          setBPeriodEnd(fnPeriod.end)
+          setBFilenameWarning('Dates taken from the file name')
+        } else if (curStart !== fnPeriod.start || curEnd !== fnPeriod.end) {
+          setBFilenameWarning(
+            `File name suggests ${fnPeriod.start} – ${fnPeriod.end}, but you have ${curStart || '?'} – ${curEnd || '?'} entered.`
+          )
+        }
+      }
+
       setBStatus('ready')
     } catch {
       setBError('Failed to read file.')
@@ -1567,12 +1577,17 @@ export default function ImportPage({ venueId }: { venueId: string }) {
                     style={{ display: 'block', marginTop: 4, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
                 </label>
               </div>
+              {bFilenameWarning && (
+                <p style={{ fontSize: 12, color: '#92400e', background: '#fef3c7', borderRadius: 6, padding: '8px 12px', marginTop: 6 }}>
+                  {bFilenameWarning}
+                </p>
+              )}
               {bPeriodError && <p style={{ fontSize: 12, color: '#dc2626', marginTop: 6 }}>{bPeriodError}</p>}
             </div>
             <div className={styles.actions}>
               <button
                 className={styles.cancelBtn}
-                onClick={() => { setBRows([]); setBParseResult(null); setBStatus('idle'); setBError(null); setBPeriodStart(''); setBPeriodEnd(''); setBPeriodError(null) }}
+                onClick={() => { setBRows([]); setBParseResult(null); setBStatus('idle'); setBError(null); setBPeriodStart(''); setBPeriodEnd(''); setBPeriodError(null); setBFilenameWarning(null) }}
               >
                 Cancel
               </button>

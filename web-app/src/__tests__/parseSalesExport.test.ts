@@ -165,3 +165,24 @@ describe('sync check', () => {
     expect(webCopy).toBe(canonical);
   });
 });
+
+// ── A1: kind fix ───────────────────────────────────────────────────────────────
+
+describe('kind field', () => {
+  it('bustle_rich → kind = "items"', () => {
+    const result = parseSalesExport(parseCsvText(FORMAT_A_CSV));
+    expect(result.format).toBe('bustle_rich');
+    expect(result.kind).toBe('items');
+  });
+
+  it('bustle_items → kind = "items"', () => {
+    const result = parseSalesExport(parseCsvText(FORMAT_B_CSV));
+    expect(result.format).toBe('bustle_items');
+    expect(result.kind).toBe('items');
+  });
+
+  it('derived (generic) → kind = "unknown"', () => {
+    const result = parseSalesExport(parseCsvText(DERIVED_CSV));
+    expect(result.kind).toBe('unknown');
+  });
+});
