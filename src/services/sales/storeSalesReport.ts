@@ -206,6 +206,14 @@ export async function storeSalesReport(args: {
       // Superseded reports are kept for audit; excluded from health score calculations.
       status: 'active',
       createdAt: serverTimestamp(),
+      // Phase 1 parser metadata — written top-level for easy querying.
+      // sourceFormat: which parser path produced this document.
+      // lineTotalsBasis: 'line_total' means gross on every line is a total, not a unit price.
+      // gstBasis: how to interpret gross relative to GST.
+      sourceFormat:    args.report?.sourceFormat  ?? (args.source === 'pdf' ? 'pdf' : 'generic'),
+      parserVersion:   args.report?.parserVersion ?? null,
+      lineTotalsBasis: args.report?.lineTotalsBasis ?? 'line_total',
+      gstBasis:        args.report?.gstBasis       ?? 'unknown',
     });
 
     // 2) Attempt matching (non-throwing)

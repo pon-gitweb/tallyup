@@ -5,6 +5,7 @@ import {
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import styles from './ImportPage.module.css'
+import { parseCsvText, parseSalesExport, type ParsedSalesExport } from '../utils/parseSalesExport'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -335,6 +336,11 @@ async function storeSalesReportWeb(args: {
   periodStart: string  // YYYY-MM-DD
   periodEnd: string    // YYYY-MM-DD
   idsToSupersede?: string[]
+  // Phase 1 parser metadata
+  sourceFormat?: string
+  parserVersion?: number | null
+  lineTotalsBasis?: string
+  gstBasis?: string
 }): Promise<{ id: string; zeroCycleWarning: boolean }> {
   const startDate = new Date(args.periodStart + 'T00:00:00')
   const endDate   = new Date(args.periodEnd   + 'T23:59:59')
@@ -351,6 +357,11 @@ async function storeSalesReportWeb(args: {
     allocationMethod:  'none',
     status:            'active',
     createdAt:         serverTimestamp(),
+    // Phase 1 parser metadata (mirrors mobile storeSalesReport.ts)
+    sourceFormat:    args.sourceFormat    ?? (args.source === 'pdf' ? 'pdf' : 'generic'),
+    parserVersion:   args.parserVersion   ?? null,
+    lineTotalsBasis: args.lineTotalsBasis ?? 'line_total',
+    gstBasis:        args.gstBasis        ?? 'unknown',
   })
 
   // ── Step 2: tag overlapping cycles (non-throwing — mirrors mobile's try/catch) ──
@@ -533,6 +544,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   // ── Zone B — Sales Data ────────────────────────────────────────────────────
   type BRow = { name: string; qty: number; revenue: number | null }
   const [bRows, setBRows] = useState<BRow[]>([])
+  const [bParseResult, setBParseResult] = useState<ParsedSalesExport | null>(null)
   const [bStatus, setBStatus] = useState<ImportStatus>('idle')
   const [bError, setBError] = useState<string | null>(null)
   const [bPdfStatus, setBPdfStatus] = useState<'idle'|'uploading'|'processing'|'ready'|'importing'|'done'>('idle')
@@ -627,14 +639,26 @@ export default function ImportPage({ venueId }: { venueId: string }) {
     else setBStatus('importing')
 
     try {
-      // Normalize CSV rows to match the qtySold/gross field names hostiHealth expects
-      // (mobile's processSalesCsv already produces these; web CSV used qty/revenue)
+      // Normalize CSV rows to match the qtySold/gross field names hostiHealth expects.
+      // parseSalesExport guarantees gross is a LINE TOTAL (not a unit price).
       const lines = source === 'pdf'
         ? bPdfLines
-        : bRows.map(r => ({ name: r.name, qtySold: r.qty, gross: r.revenue }))
+        : (bParseResult?.lines ?? bRows.map(r => ({ name: r.name, qtySold: r.qty, gross: r.revenue })))
+            .map((l: any) => ({
+              name: l.name,
+              qtySold: l.qtySold ?? l.qty ?? 0,
+              gross: l.grossIncl ?? l.gross ?? l.revenue ?? null,
+              net:   l.netExcl   ?? l.net   ?? null,
+              unitPrice: l.unitPrice ?? null,
+              category:  l.category  ?? null,
+            }))
 
       const { id, zeroCycleWarning } = await storeSalesReportWeb({
         venueId, source, lines, periodStart: start, periodEnd: end, idsToSupersede,
+        sourceFormat:    bParseResult?.sourceFormat    ?? (source === 'pdf' ? 'pdf' : 'generic'),
+        parserVersion:   bParseResult?.parserVersion   ?? null,
+        lineTotalsBasis: bParseResult?.lineTotalsBasis ?? 'line_total',
+        gstBasis:        bParseResult?.gstBasis        ?? (source === 'pdf' ? 'unknown' : 'assumed_incl'),
       })
 
       // CSV: write content-dedup fingerprint after successful save
@@ -731,23 +755,20 @@ export default function ImportPage({ venueId }: { venueId: string }) {
     setBStatus('idle')
     try {
       const text = await readFile(file)
-      const rows = parseCsv(text)
-      if (rows.length < 2) { setBError('No data rows found.'); return }
-      const header = rows[0].map(h => h.trim().toLowerCase())
-      const nameIdx = findCol(header, 'item', 'product', 'name')
-      if (nameIdx === -1) { setBError('CSV must have a Name, Item, or Product column.'); return }
-      const qtyIdx = findCol(header, 'quantity', 'qty', 'units sold')
-      const revIdx = findCol(header, 'revenue', 'sales', 'amount')
+      const rows = parseCsvText(text)
+      const parsed = parseSalesExport(rows)
 
-      const parsed = rows.slice(1)
-        .map(r => ({
-          name: r[nameIdx]?.trim() || '',
-          qty: qtyIdx >= 0 && r[qtyIdx]?.trim() ? Number(r[qtyIdx]) : 0,
-          revenue: revIdx >= 0 && r[revIdx]?.trim() ? Number(r[revIdx]) : null,
-        }))
-        .filter(r => r.name)
+      if (!parsed.columns.name) {
+        setBError('CSV must have a Name, Item Name, or Product column.')
+        return
+      }
+      if (parsed.lines.length === 0) {
+        setBError('No data rows found.')
+        return
+      }
 
-      setBRows(parsed)
+      setBRows(parsed.lines.map(l => ({ name: l.name, qty: l.qtySold, revenue: l.grossIncl })))
+      setBParseResult(parsed)
       // Reset period picker — CSV has no auto-detected dates; user must fill in
       setBPeriodStart('')
       setBPeriodEnd('')
@@ -1444,6 +1465,45 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         {(bStatus === 'ready' || bStatus === 'importing') && !bConflict && (
           <div className={styles.preview}>
             <p className={styles.previewTitle}>{bRows.length} sales lines found</p>
+            {bParseResult && (
+              <div style={{ fontSize: 12, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '8px 12px', marginBottom: 8 }}>
+                <span style={{ fontWeight: 700, color: '#166534' }}>
+                  {bParseResult.format === 'bustle_rich' ? 'Bustle rich export' :
+                   bParseResult.format === 'bustle_items' ? 'Bustle items export' :
+                   bParseResult.format === 'hosti_flat' ? 'Hosti flat CSV' : 'Generic CSV'}
+                </span>
+                {' · '}
+                <span style={{ color: '#374151' }}>
+                  GST: {bParseResult.gstBasis === 'explicit' ? 'explicit (incl and excl columns present)' :
+                         bParseResult.gstBasis === 'assumed_incl' ? 'assumed included' : 'unknown'}
+                </span>
+                <br />
+                <span style={{ color: '#4b5563' }}>
+                  Name ← {bParseResult.columns.name ?? '(none)'}
+                  {bParseResult.columns.qty ? ` · Qty ← ${bParseResult.columns.qty}` : ''}
+                  {bParseResult.columns.totalIncl ? ` · Revenue ← ${bParseResult.columns.totalIncl}` :
+                   bParseResult.columns.totalExcl ? ` · Revenue ← ${bParseResult.columns.totalExcl}` :
+                   bParseResult.columns.unitPrice ? ` · Revenue ← ${bParseResult.columns.unitPrice} × qty (derived)` : ''}
+                  {bParseResult.columns.unitPrice && (bParseResult.columns.totalIncl || bParseResult.columns.totalExcl)
+                    ? ` · Unit price col: ${bParseResult.columns.unitPrice} (not used as revenue)`
+                    : ''}
+                </span>
+                {bParseResult.categories.length > 0 && (
+                  <span style={{ color: '#6b7280' }}>
+                    {' · '}{bParseResult.categories.length} category rows excluded
+                  </span>
+                )}
+                {bParseResult.controlTotal != null && (
+                  <span style={{ color: bParseResult.controlTotalReconciled ? '#15803d' : '#dc2626' }}>
+                    {' · '}Control total ${bParseResult.controlTotal.toFixed(2)}{' '}
+                    {bParseResult.controlTotalReconciled ? '✓ reconciled' : '✗ mismatch'}
+                  </span>
+                )}
+                {bParseResult.warnings.length > 0 && bParseResult.warnings.map((w, i) => (
+                  <div key={i} style={{ color: '#92400e', marginTop: 2 }}>⚠ {w}</div>
+                ))}
+              </div>
+            )}
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>
@@ -1488,7 +1548,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
             <div className={styles.actions}>
               <button
                 className={styles.cancelBtn}
-                onClick={() => { setBRows([]); setBStatus('idle'); setBError(null); setBPeriodStart(''); setBPeriodEnd(''); setBPeriodError(null) }}
+                onClick={() => { setBRows([]); setBParseResult(null); setBStatus('idle'); setBError(null); setBPeriodStart(''); setBPeriodEnd(''); setBPeriodError(null) }}
               >
                 Cancel
               </button>
