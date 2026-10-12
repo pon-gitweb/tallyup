@@ -88,12 +88,15 @@ class FakeBatch {
 
 class FakeDb {
   store = new Map<string, DocData>();
+  accessLog: string[] = [];  // records every doc()/collection() call path
 
   doc(path: string): FakeDocRef {
+    this.accessLog.push(`doc:${path}`);
     return new FakeDocRef(this.store, path);
   }
 
   collection(path: string): FakeCollectionRef {
+    this.accessLog.push(`col:${path}`);
     return new FakeCollectionRef(this.store, path);
   }
 
@@ -166,6 +169,58 @@ describe('auth and role checks', () => {
     const db = baseDb();
     const result = await voidSalesReportLogic(db as any, VENUE, REPORT, OWNER, 'test reason');
     expect(result).toMatchObject({ ok: true, needsReenrich: true });
+  });
+});
+
+// ── ID format validation — no DB access on rejection ─────────────────────────
+
+describe('ID format validation', () => {
+  async function expectRejected(venueId: any, reportId: any, msgFragment: string) {
+    const db = baseDb();
+    db.accessLog = [];
+    const result = await voidSalesReportLogic(db as any, venueId, reportId, OWNER, 'valid reason');
+    expect(result).toMatchObject({ ok: false, status: 400, error: expect.stringContaining(msgFragment) });
+    expect(db.accessLog).toHaveLength(0);  // NO database access before validation
+  }
+
+  test('venueId with slash "a/b" → 400, no DB access', () =>
+    expectRejected('a/b', REPORT, 'venueId'));
+
+  test('venueId path traversal "../x" → 400, no DB access', () =>
+    expectRejected('../x', REPORT, 'venueId'));
+
+  test('empty venueId "" → 400, no DB access', () =>
+    expectRejected('', REPORT, 'venueId'));
+
+  test('venueId too short (5 chars) → 400, no DB access', () =>
+    expectRejected('abcde', REPORT, 'venueId'));
+
+  test('venueId too long (65 chars) → 400, no DB access', () =>
+    expectRejected('a'.repeat(65), REPORT, 'venueId'));
+
+  test('non-string venueId (null) → 400, no DB access', () =>
+    expectRejected(null, REPORT, 'venueId'));
+
+  test('non-string venueId (number) → 400, no DB access', () =>
+    expectRejected(123456, REPORT, 'venueId'));
+
+  test('reportId with embedded path "x/salesReportMatches/y" → 400, no DB access', () =>
+    expectRejected(VENUE, 'x/salesReportMatches/y', 'reportId'));
+
+  test('reportId with dot "a.b" → 400, no DB access', () =>
+    expectRejected(VENUE, 'a.b', 'reportId'));
+
+  test('200-character reportId → 400, no DB access', () =>
+    expectRejected(VENUE, 'r'.repeat(200), 'reportId'));
+
+  test('non-string reportId (object) → 400, no DB access', () =>
+    expectRejected(VENUE, { id: 'x' }, 'reportId'));
+
+  test('valid ids pass validation and reach DB', async () => {
+    const db = baseDb();
+    db.accessLog = [];
+    await voidSalesReportLogic(db as any, VENUE, REPORT, OWNER, 'valid reason');
+    expect(db.accessLog.length).toBeGreaterThan(0);
   });
 });
 

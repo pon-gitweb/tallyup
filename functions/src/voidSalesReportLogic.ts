@@ -28,6 +28,8 @@ async function deleteByReportId(
   }
 }
 
+const ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
+
 export async function voidSalesReportLogic(
   db: admin.firestore.Firestore,
   venueId: string,
@@ -35,8 +37,13 @@ export async function voidSalesReportLogic(
   uid: string,
   reason: string,
 ): Promise<VoidResult> {
-  if (!venueId || !reportId) {
-    return { ok: false, status: 400, error: 'Missing venueId or reportId' };
+  // Validate IDs before any database access — rejects slashes, dots, and
+  // path-traversal payloads that would resolve to unintended documents.
+  if (typeof venueId !== 'string' || !ID_RE.test(venueId)) {
+    return { ok: false, status: 400, error: 'Invalid venueId' };
+  }
+  if (typeof reportId !== 'string' || !ID_RE.test(reportId)) {
+    return { ok: false, status: 400, error: 'Invalid reportId' };
   }
   if (!reason || String(reason).trim().length < 3) {
     return { ok: false, status: 400, error: 'reason must be at least 3 characters' };
