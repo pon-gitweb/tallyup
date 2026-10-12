@@ -225,7 +225,7 @@ async function checkSalesPeriodOverlap(
   const results: SalesConflictReport[] = []
   for (const docSnap of snap.docs) {
     const data = docSnap.data() as any
-    if (data.status === 'superseded') continue
+    const s = data.status; if (s === 'superseded' || s === 'voided') continue
     const existingStart: Date | null = data.periodStart?.toDate?.() ?? null
     if (existingStart && existingStart > endDate) continue
     const existingEnd: Date | null = data.periodEnd?.toDate?.() ?? null

@@ -5,6 +5,7 @@ import {
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { resolveProduct, type ProdEntry } from '../products/resolveProduct';
+import { isReportActive } from '../sales/isReportActive';
 
 function toMs(val: any): number | null {
   if (!val) return null;
@@ -467,6 +468,7 @@ export async function writeDepartmentSnapshot(
         );
         for (const salesDoc of salesSnap.docs) {
           const salesData = salesDoc.data() as any;
+          if (!isReportActive(salesData)) continue;
           const report = salesData.report;
           if (!report || !Array.isArray(report.lines)) continue;
           const periodStart = report.period?.start ?? null;

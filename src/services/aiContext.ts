@@ -96,7 +96,10 @@ export async function refreshAIContext(venueId: string): Promise<void> {
     const salesSnap = await getDocs(
       collection(db, 'venues', venueId, 'salesReports')
     );
-    salesCycleCount = salesSnap.size;
+    salesCycleCount = salesSnap.docs.filter(d => {
+      const s = (d.data() as any).status;
+      return s === undefined || s === null || s === 'active';
+    }).length;
   } catch { notes.push('Could not read sales cycles'); }
 
   // ── Count orders ───────────────────────────────────────────────────────────

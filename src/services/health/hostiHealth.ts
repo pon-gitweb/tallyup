@@ -6,6 +6,7 @@
  */
 import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
+import { isReportActive } from '../sales/isReportActive';
 import { generateAbductiveInsights, AbductiveInsight } from './abductiveInsights';
 import { generateStockoutPredictions, PredictionSummary } from './predictions';
 import { captureError } from '../crashReporting';
@@ -564,30 +565,26 @@ async function calculateFullScore(
   let wasteControlLabel: string | null = null;
 
   try {
-    // Gate: hasSalesData alone — posConnected is no longer required so that
-    // manually-uploaded CSV/PDF reports activate Mode A, not just POS-synced ones.
+    // Gate: hasSalesData — true only when at least one ACTIVE (non-superseded,
+    // non-voided) report exists.  Fetch the full collection once and reuse it for
+    // Mode A computation so we do not make a separate limit(1) query.
     let hasSalesData = false;
+    let salesReportsSnap: Awaited<ReturnType<typeof getDocs>> | null = null;
+
     if (totalStocktakesCompleted > 0) {
-      const salesSnap = await getDocs(
-        query(
-          collection(db, 'venues', venueId, 'salesReports'),
-          limit(1)
-        )
+      salesReportsSnap = await getDocs(
+        collection(db, 'venues', venueId, 'salesReports')
       );
-      hasSalesData = !salesSnap.empty;
+      hasSalesData = salesReportsSnap.docs.some(d => isReportActive(d.data() as any));
     }
 
-    if (hasSalesData) {
+    if (hasSalesData && salesReportsSnap) {
       // ── Mode A: Waste Control — use overlappingCycles to match each sales
       //    report to the SPECIFIC historical snapshot(s) it covers, then compare
       //    variance against weighted sales quantities for those cycles.
       //
       //    Untagged reports (missing overlappingCycles) are silently skipped;
       //    venues with only untagged reports fall through to Stock Integrity (Mode B).
-
-      const salesReportsSnap = await getDocs(
-        collection(db, 'venues', venueId, 'salesReports')
-      );
 
       // Build: (deptId, cycleNumber) → weighted salesByName accumulator
       type SalesMap = Record<string, number>;
@@ -597,9 +594,8 @@ async function calculateFullScore(
       for (const reportDoc of salesReportsSnap.docs) {
         const data = reportDoc.data() as any;
 
-        // Skip superseded reports — they have been replaced by a newer upload and
-        // must not be counted alongside their replacement (would double-count sales).
-        if (data.status === 'superseded') continue;
+        // Skip inactive reports (superseded, voided, or any future inactive state).
+        if (!isReportActive(data)) continue;
 
         const overlappingCycles: Array<{ departmentId: string; cycleNumber: number; weight?: number }> =
           data.overlappingCycles || [];
