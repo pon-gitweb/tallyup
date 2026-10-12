@@ -192,18 +192,27 @@ export async function storeSalesReport(args: {
       ? Timestamp.fromDate(periodEndDate)   : null;
 
     // 1) Store raw report with period timestamps
+    //    Top-level keys must match the Firestore CREATE rule exactly:
+    //    source, report, createdAt, periodStart, periodEnd,
+    //    overlappingCycles, allocationMethod, status
+    //    All parser metadata lives inside report.meta.
+    const reportMeta = {
+      sourceFormat:    args.report?.meta?.sourceFormat    ?? args.report?.sourceFormat    ?? (args.source === 'pdf' ? 'pdf' : 'generic'),
+      parserVersion:   args.report?.meta?.parserVersion   ?? args.report?.parserVersion   ?? null,
+      lineTotalsBasis: args.report?.meta?.lineTotalsBasis ?? args.report?.lineTotalsBasis ?? 'line_total',
+      gstBasis:        args.report?.meta?.gstBasis        ?? args.report?.gstBasis        ?? 'unknown',
+      kind:            args.report?.meta?.kind            ?? null,
+      reportTotals:    args.report?.meta?.reportTotals    ?? null,
+      categoryTotals:  args.report?.meta?.categoryTotals  ?? null,
+      fileHash:        args.report?.meta?.fileHash        ?? null,
+    };
     const ref = await addDoc(collection(db, 'venues', args.venueId, 'salesReports'), {
       source: args.source,
-      report: args.report || null,
-      // Top-level flattened period for easy querying by hostiHealth and other readers.
+      report: args.report ? { ...args.report, meta: reportMeta } : null,
       periodStart: periodStartTs,
       periodEnd: periodEndTs,
-      // Overlap tagging written immediately after by tagOverlappingCycles;
-      // set sentinels here so readers always find the field.
       overlappingCycles: [],
       allocationMethod: 'none',
-      // Lifecycle status — 'active' (default) or 'superseded' (soft-replaced by a newer upload).
-      // Superseded reports are kept for audit; excluded from health score calculations.
       status: 'active',
       createdAt: serverTimestamp(),
     });

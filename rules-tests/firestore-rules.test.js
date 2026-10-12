@@ -211,6 +211,74 @@ describe('salesReports update — supersede', () => {
 });
 
 // ─────────────────────────────────────────────
+//  salesReports — CREATE: report.meta placement
+// ─────────────────────────────────────────────
+describe('salesReports create — report.meta placement', () => {
+  const BASE_PAYLOAD = {
+    source: 'csv',
+    periodStart: null,
+    periodEnd: null,
+    overlappingCycles: [],
+    allocationMethod: 'none',
+    status: 'active',
+    createdAt: new Date(),
+  };
+
+  test('create with metadata inside report.meta is ALLOWED', async () => {
+    await assertSucceeds(
+      salesReports(asMember(MEMBER_UID)).add({
+        ...BASE_PAYLOAD,
+        report: {
+          lines: [],
+          lineCount: 0,
+          importedFrom: 'desktop',
+          meta: {
+            sourceFormat: 'bustle_items',
+            parserVersion: 2,
+            lineTotalsBasis: 'line_total',
+            gstBasis: 'assumed_incl',
+            kind: 'items',
+            reportTotals: null,
+            categoryTotals: null,
+            fileHash: null,
+          },
+        },
+      })
+    );
+  });
+
+  test('create with top-level sourceFormat field is DENIED', async () => {
+    await assertFails(
+      salesReports(asMember(MEMBER_UID)).add({
+        ...BASE_PAYLOAD,
+        report: { lines: [], lineCount: 0 },
+        sourceFormat: 'bustle_items',
+      })
+    );
+  });
+
+  test('create with top-level parserVersion field is DENIED', async () => {
+    await assertFails(
+      salesReports(asMember(MEMBER_UID)).add({
+        ...BASE_PAYLOAD,
+        report: { lines: [], lineCount: 0 },
+        parserVersion: 2,
+      })
+    );
+  });
+
+  test('create with top-level gstBasis field is DENIED', async () => {
+    await assertFails(
+      salesReports(asMember(MEMBER_UID)).add({
+        ...BASE_PAYLOAD,
+        report: { lines: [], lineCount: 0 },
+        gstBasis: 'assumed_incl',
+      })
+    );
+  });
+});
+
+// ─────────────────────────────────────────────
 //  Venue document — onboarding update
 // ─────────────────────────────────────────────
 describe('venue onboarding update', () => {
