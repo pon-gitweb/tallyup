@@ -56,6 +56,13 @@ export default function DecimalInput({
   function handleChangeText(raw: string) {
     // Strip everything except digits, dots, commas
     let s = raw.replace(/[^0-9.,]/g, '');
+    // Integer mode: reject any decimal separator before further processing
+    if (maxDecimals === 0) {
+      s = s.replace(/[.,]/g, '');
+      setText(s);
+      onChangeNumber(parse(s));
+      return;
+    }
 
     // Comma handling:
     // - Has dot: remove all commas (they are thousands separators alongside a dot)
