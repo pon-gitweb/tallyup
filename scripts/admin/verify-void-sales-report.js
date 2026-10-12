@@ -21,7 +21,7 @@
 
 'use strict';
 
-const admin = require('firebase-admin');
+const admin = require('../../functions/node_modules/firebase-admin');
 
 const EXECUTE = process.argv.includes('--execute');
 const VENUE_PREFIX = '_verify_void_';
@@ -52,7 +52,7 @@ if (!EXECUTE) {
 if (!admin.apps.length) admin.initializeApp();
 
 const db = admin.firestore();
-const { voidSalesReportLogic } = require('../../functions/src/voidSalesReportLogic');
+const { voidSalesReportLogic } = require('../../functions/lib/voidSalesReportLogic');
 
 const venue = `venues/${VENUE_ID}`;
 
