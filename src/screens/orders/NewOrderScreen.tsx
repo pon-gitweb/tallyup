@@ -233,7 +233,7 @@ export default function NewOrderScreen() {
                   <View style={styles.qtyWrap}>
                     <TouchableOpacity onPress={() => updateQty(l.productId, Number(l.qty || 0) - 1)} style={styles.qtyBtn}><Text style={styles.qtyBtnText}>-</Text></TouchableOpacity>
                     <DecimalInput
-                      maxDecimals={3}
+                      maxDecimals={0}
                       value={l.qty ?? 0}
                       onChangeNumber={(n) => updateQty(l.productId, n ?? 0)}
                       style={styles.qtyInput}

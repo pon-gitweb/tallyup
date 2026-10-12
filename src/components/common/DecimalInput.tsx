@@ -6,6 +6,9 @@ interface DecimalInputProps extends Omit<TextInputProps, 'value' | 'onChangeText
   value: number | null | undefined;
   onChangeNumber: (n: number | null) => void;
   maxDecimals?: number;
+  /** Select all text when the field is focused so typing replaces a pre-filled value.
+   *  Defaults to true. Pass false to keep the cursor at the tap position. */
+  selectTextOnFocus?: boolean;
 }
 
 function parse(text: string): number | null {
@@ -27,6 +30,7 @@ export default function DecimalInput({
   maxDecimals = 2,
   onBlur,
   onFocus,
+  selectTextOnFocus = true,
   ...rest
 }: DecimalInputProps) {
   const [text, setText] = useState<string>(
@@ -52,6 +56,13 @@ export default function DecimalInput({
   function handleChangeText(raw: string) {
     // Strip everything except digits, dots, commas
     let s = raw.replace(/[^0-9.,]/g, '');
+    // Integer mode: reject any decimal separator before further processing
+    if (maxDecimals === 0) {
+      s = s.replace(/[.,]/g, '');
+      setText(s);
+      onChangeNumber(parse(s));
+      return;
+    }
 
     // Comma handling:
     // - Has dot: remove all commas (they are thousands separators alongside a dot)
@@ -104,6 +115,7 @@ export default function DecimalInput({
   return (
     <TextInput
       {...rest}
+      selectTextOnFocus={selectTextOnFocus}
       value={text}
       onChangeText={handleChangeText}
       onBlur={handleBlur}
