@@ -38,6 +38,12 @@ service cloud.firestore {
       return data.keys().hasOnly(allowedKeys);
     }
 
+    // Returns the primary ownerUid stored on the venue document.
+    // Used to prevent demoting or deleting the primary owner record.
+    function venueOwnerUid(venueId) {
+      return get(/databases/$(database)/documents/venues/$(venueId)).data.ownerUid;
+    }
+
     function supplierMatchesOrderData(orderData) {
       return isSupplierUser()
         && orderData != null
@@ -302,12 +308,26 @@ service cloud.firestore {
 
       match /members/{uid} {
         allow read: if isVenueMember(venueId);
-        allow create, update, delete: if hasVenueRole(venueId, ['owner','manager']);
+
         // Bootstrap: owner can create their own first member doc before membership exists.
+        // This is the ONLY client create path — all other member creation goes through
+        // the acceptInviteCallable server function (Admin SDK).
         allow create: if request.auth != null
           && uid == request.auth.uid
           && request.resource.data.role == 'owner'
           && get(/databases/$(database)/documents/venues/$(venueId)).data.ownerUid == request.auth.uid;
+
+        // Only owners may change a member's role; only the 'role' field may be touched;
+        // the primary owner's record can never be demoted (prevents lockout).
+        allow update: if hasVenueRole(venueId, ['owner'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+          && request.resource.data.role in ['owner', 'manager', 'staff']
+          && (uid != venueOwnerUid(venueId) || request.resource.data.role == 'owner');
+
+        // Any member may delete their own record (leave).
+        // Owners may delete any non-primary-owner record.
+        allow delete: if (isVenueMember(venueId) && uid == request.auth.uid)
+          || (hasVenueRole(venueId, ['owner']) && uid != venueOwnerUid(venueId));
       }
 
       match /integrations/{integrationId} {
@@ -360,15 +380,18 @@ service cloud.firestore {
       match /invites/{inviteId} {
         // Any venue member can read invites (to check status)
         allow read: if isVenueMember(venueId);
-        // Only owners and managers can create invites
+        // Only owners and managers can create invites; managers may only invite staff.
         allow create: if hasVenueRole(venueId, ['owner','manager'])
           && request.resource.data.keys().hasAll(['email','role','status','createdAt'])
           && request.resource.data.status == 'pending'
           && request.resource.data.role in ['owner','manager','staff']
-          && request.resource.data.createdAt is timestamp;
+          && request.resource.data.createdAt is timestamp
+          && (hasVenueRole(venueId, ['owner']) || request.resource.data.role == 'staff');
         // Only owners and managers can cancel (delete) invites
         allow delete: if hasVenueRole(venueId, ['owner','manager']);
-        // Status updates (accept/expire) are done server-side via Cloud Function only
+        // Status updates (accept/expire) are done server-side via Cloud Function only.
+        // Even if this is ever relaxed, the 'role' and 'email' fields must never be
+        // client-mutable after creation — they are set once at invite creation time.
         allow update: if false;
       }
 
