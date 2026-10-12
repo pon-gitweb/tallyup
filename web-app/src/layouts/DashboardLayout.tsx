@@ -22,6 +22,7 @@ export type Page =
   | 'billing'
   | 'create-venue'
   | 'stocktake-correction'
+  | 'sales-reports'
 
 type NavItem = { key: Page; label: string; icon: string; managerOnly?: boolean }
 type NavGroup = {
@@ -46,7 +47,8 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Manage',
     items: [
       { key: 'products',  label: 'Products',  icon: '📦' },
-      { key: 'import',    label: 'Import',    icon: '📥' },
+      { key: 'import',        label: 'Import',         icon: '📥' },
+      { key: 'sales-reports', label: 'Sales Reports',  icon: '🧾' },
       { key: 'invoices',  label: 'Invoices',  icon: '🧾' },
       { key: 'suppliers', label: 'Suppliers', icon: '🏢' },
       { key: 'team',                label: 'Team',               icon: '👥' },

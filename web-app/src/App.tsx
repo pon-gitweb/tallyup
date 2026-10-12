@@ -30,6 +30,7 @@ import RegisterPage from './pages/RegisterPage'
 import VerifyEmailPage from './pages/VerifyEmailPage'
 import CreateVenuePage from './pages/CreateVenuePage'
 import StocktakeCorrectionPage from './pages/StocktakeCorrectionPage'
+import SalesReportsPage from './pages/SalesReportsPage'
 import styles from './App.module.css'
 import { theme } from './theme'
 
@@ -241,7 +242,7 @@ function App() {
     }
   }
 
-  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'invoices', 'suppliers', 'reports', 'stock', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping', 'billing', 'stocktake-correction']
+  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'invoices', 'suppliers', 'reports', 'stock', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping', 'billing', 'stocktake-correction', 'sales-reports']
 
   const isFestival = activeVenue?.venueType === 'festival'
 
@@ -316,6 +317,9 @@ function App() {
       {page === 'billing'      && activeVenue && <BillingPage venueId={activeVenue.id} user={user} billingReturnStatus={billingReturnStatus} onClearStatus={() => setBillingReturnStatus(null)} />}
       {page === 'stocktake-correction' && activeVenue && user && (
         <StocktakeCorrectionPage venueId={activeVenue.id} user={user} />
+      )}
+      {page === 'sales-reports' && activeVenue && (
+        <SalesReportsPage venueId={activeVenue.id} canManage={canManage} onNavigate={(p) => setPage(p as Page)} />
       )}
       {page === 'pos-mapping'  && activeVenue && (
         <div style={{ padding: 32, maxWidth: 480 }}>

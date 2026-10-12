@@ -1,0 +1,336 @@
+.page {
+  padding: 24px 32px;
+  max-width: 1200px;
+}
+
+.heading {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a2332;
+  margin: 0 0 4px;
+  font-family: 'Playfair Display', serif;
+}
+
+.subheading {
+  font-size: 13px;
+  color: #6b7280;
+  margin: 0 0 24px;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #e5e7eb;
+  margin-bottom: 24px;
+}
+
+.tab {
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab:hover {
+  color: #374151;
+}
+
+.tabActive {
+  color: #f59e0b;
+  border-bottom-color: #f59e0b;
+  font-weight: 600;
+}
+
+/* 26-week strip */
+.strip {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.stripCell {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  cursor: default;
+  flex-shrink: 0;
+}
+
+.stripPresent  { background: #10b981; }
+.stripPartial  { background: #fbbf24; }
+.stripMissing  { background: #e5e7eb; }
+.stripVoided   { background: #f87171; }
+
+.stripLegend {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: #6b7280;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.legendDot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+/* Table */
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  border-bottom: 1px solid #e5e7eb;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #f3f4f6;
+  vertical-align: top;
+  color: #374151;
+}
+
+.table tr:hover td {
+  background: #f9fafb;
+}
+
+/* Badge */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badgeActive     { background: #d1fae5; color: #065f46; }
+.badgeSuperseded { background: #e5e7eb; color: #6b7280; }
+.badgeVoided     { background: #fee2e2; color: #991b1b; }
+.badgeFormat     { background: #eff6ff; color: #1d4ed8; }
+.badgeLegacy     { background: #fef3c7; color: #92400e; }
+
+/* Actions */
+.btnSmall {
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid;
+}
+
+.btnOutline {
+  background: #fff;
+  border-color: #d1d5db;
+  color: #374151;
+}
+
+.btnOutline:hover {
+  background: #f9fafb;
+}
+
+.btnDanger {
+  background: #fff;
+  border-color: #f87171;
+  color: #dc2626;
+}
+
+.btnDanger:hover {
+  background: #fef2f2;
+}
+
+/* Drawer */
+.drawerOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.3);
+  z-index: 1000;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawer {
+  background: #fff;
+  width: min(600px, 100vw);
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+  box-shadow: -4px 0 24px rgba(0,0,0,0.12);
+}
+
+.drawerTitle {
+  font-size: 17px;
+  font-weight: 700;
+  color: #1a2332;
+  margin: 0 0 16px;
+}
+
+.drawerClose {
+  float: right;
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: #6b7280;
+}
+
+/* Void modal */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 12px;
+  padding: 28px;
+  width: min(480px, calc(100vw - 32px));
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+}
+
+.modalTitle {
+  font-size: 17px;
+  font-weight: 700;
+  color: #1a2332;
+  margin: 0 0 8px;
+}
+
+.modalWarning {
+  font-size: 13px;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.modalLabel {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 4px;
+}
+
+.modalInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.modalActions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.btnPrimary {
+  padding: 7px 18px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  background: #dc2626;
+  color: #fff;
+}
+
+.btnPrimary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btnSecondary {
+  padding: 7px 18px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+}
+
+.errorText {
+  font-size: 12px;
+  color: #dc2626;
+  margin-top: 4px;
+}
+
+/* Banner */
+.banner {
+  font-size: 13px;
+  padding: 10px 14px;
+  border-radius: 7px;
+  margin-bottom: 16px;
+}
+
+.bannerAmber {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fbbf24;
+}
+
+.bannerGray {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+/* Velocity table */
+.statusSelling   { color: #065f46; font-weight: 600; }
+.statusStagnant  { color: #92400e; font-weight: 600; }
+.statusSlowing   { color: #d97706; font-weight: 600; }
+.statusSoldOut   { color: #dc2626; font-weight: 600; }
+
+/* Unmatched cumulative bar */
+.cumBar {
+  display: inline-block;
+  height: 8px;
+  background: #f59e0b;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.loading {
+  color: #6b7280;
+  font-size: 14px;
+  padding: 32px 0;
+}
