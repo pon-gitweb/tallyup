@@ -1,108 +1,191 @@
 #!/usr/bin/env node
 /**
- * Static check: for each (collection, appFile, rulesExtract) entry, verify
- * that every top-level key the app writes in addDoc is allowed by the
- * Firestore security rules hasOnlyFields() list for that collection's CREATE.
+ * Static check: for each (collection, appFile) entry, verify that every
+ * top-level key the app writes in addDoc is allowed by the Firestore security
+ * rules hasOnlyFields() list for that collection's CREATE rule.
  *
- * Exits 1 if any write includes a key not in the rules list.
- * Exits 1 if the rules file or any app file cannot be read.
+ * Uses the TypeScript compiler API (ts.createSourceFile) to walk the AST, so
+ * keys placed AFTER a nested object literal are correctly detected.
  *
- * To add a new entry, push to CHECKS below.
+ * Exits 1 if:
+ *   - any written key is not in the rules' allowed list
+ *   - a spread element or computed key appears in the addDoc payload
+ *   - the rules file or any app file cannot be read
+ *   - no addDoc call for the expected collection is found
  */
 
+const ts   = require('typescript');
 const fs   = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 
+/**
+ * Parse a TypeScript/TSX source string and return, for every
+ *   addDoc(collection(..., '<collectionName>'), { ... })
+ * call found, an object describing the top-level keys of the payload:
+ *
+ *   { keys: string[], error: string | null }
+ *
+ * `error` is non-null when the payload contains a spread element or a
+ * computed property name (neither can be checked statically).
+ */
+function extractAddDocKeysFromSource(src, collectionName, scriptKind) {
+  const sk = scriptKind ?? ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(
+    'check.ts', src, ts.ScriptTarget.Latest, /* setParentNodes */ true, sk
+  );
+
+  const results = [];
+
+  function visit(node) {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'addDoc' &&
+      node.arguments.length >= 2
+    ) {
+      const firstArgText = node.arguments[0].getText(sourceFile);
+      if (
+        firstArgText.includes(`'${collectionName}'`) ||
+        firstArgText.includes(`"${collectionName}"`)
+      ) {
+        const secondArg = node.arguments[1];
+        if (ts.isObjectLiteralExpression(secondArg)) {
+          const keys  = [];
+          let   error = null;
+
+          for (const prop of secondArg.properties) {
+            if (ts.isSpreadAssignment(prop)) {
+              error = `spread element (...) in addDoc payload — cannot statically verify all keys`;
+              break;
+            }
+            const name = prop.name;
+            if (!name) {
+              error = `anonymous property in addDoc payload`;
+              break;
+            }
+            if (ts.isComputedPropertyName(name)) {
+              error = `computed property [${name.getText(sourceFile)}] in addDoc payload — cannot statically verify`;
+              break;
+            }
+            if (ts.isIdentifier(name) || ts.isStringLiteral(name)) {
+              keys.push(name.text);
+            }
+          }
+
+          results.push({ keys, error });
+        }
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return results;
+}
+
+/**
+ * Extract the hasOnlyFields allowed-key list from the named collection's
+ * CREATE block in firestore.rules.
+ * Returns null if the block or list cannot be found.
+ */
+function extractRulesKeys(rulesText, collectionPath) {
+  const block = rulesText.match(
+    new RegExp(
+      `match\\s+\\/${collectionPath}\\/\\{[^}]+\\}[^}]*?allow\\s+create[^;]+;`,
+      's'
+    )
+  );
+  if (!block) return null;
+  const listMatch = block[0].match(
+    /hasOnlyFields\s*\(\s*request\.resource\.data\s*,\s*\[([^\]]+)\]/
+  );
+  if (!listMatch) return null;
+  return listMatch[1]
+    .split(',')
+    .map(s => s.replace(/['"'\s]/g, ''))
+    .filter(Boolean);
+}
+
 // ── Entries to check ──────────────────────────────────────────────────────────
-// Each entry:
-//   collection   – human label (for error messages)
-//   appFiles     – array of source files that call addDoc for this collection
-//   rulesFile    – path to firestore.rules (relative to ROOT)
-//   rulesPattern – regex that captures the hasOnlyFields list for this collection's
-//                  CREATE rule (first capture group = comma-separated quoted strings)
-//   extractKeys  – function(src) → string[] of top-level keys written in addDoc
 
 const CHECKS = [
   {
     collection: 'salesReports',
+    collectionPath: 'salesReports',
     appFiles: [
-      'src/services/sales/storeSalesReport.ts',
-      'web-app/src/pages/ImportPage.tsx',
+      { path: 'src/services/sales/storeSalesReport.ts', scriptKind: ts.ScriptKind.TS  },
+      { path: 'web-app/src/pages/ImportPage.tsx',        scriptKind: ts.ScriptKind.TSX },
     ],
     rulesFile: 'firestore.rules',
-    // Matches: hasOnlyFields(request.resource.data, ['key1','key2',...])
-    // inside the salesReports CREATE block.
-    extractRulesKeys(rulesText) {
-      // Find the salesReports CREATE allow block and extract its hasOnlyFields list.
-      const block = rulesText.match(
-        /match\s+\/salesReports\/\{[^}]+\}[^}]*?allow\s+create[^;]+;/s
-      );
-      if (!block) return null;
-      const listMatch = block[0].match(/hasOnlyFields\s*\(\s*request\.resource\.data\s*,\s*\[([^\]]+)\]/);
-      if (!listMatch) return null;
-      return listMatch[1]
-        .split(',')
-        .map(s => s.replace(/['"'\s]/g, ''))
-        .filter(Boolean);
-    },
-    extractAppKeys(src) {
-      // Find addDoc( collection(..., 'salesReports'), { ... }) calls and
-      // extract the immediate top-level keys of the object literal.
-      // This is a conservative regex — it finds lines like `  key: value,`
-      // inside the addDoc object.  We look between addDoc( and the first });
-      const keys = new Set();
-      // Match each addDoc salesReports call
-      const addDocRe = /addDoc\s*\(\s*collection\s*\([^)]+['"]salesReports['"]\s*\)\s*,\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/gs;
-      let m;
-      while ((m = addDocRe.exec(src)) !== null) {
-        const body = m[1];
-        // Extract top-level keys: lines starting with an identifier followed by :
-        const keyRe = /^\s{0,8}(\w+)\s*:/gm;
-        let km;
-        while ((km = keyRe.exec(body)) !== null) {
-          keys.add(km[1]);
-        }
-      }
-      return [...keys];
-    },
   },
 ];
 
 // ── Runner ────────────────────────────────────────────────────────────────────
 
-let failed = false;
+function main() {
+  let failed = false;
 
-for (const check of CHECKS) {
-  const rulesText = fs.readFileSync(path.join(ROOT, check.rulesFile), 'utf8');
-  const allowedKeys = check.extractRulesKeys(rulesText);
-  if (!allowedKeys || allowedKeys.length === 0) {
-    console.error(`check:rules-payloads FAIL  Could not extract hasOnlyFields list for ${check.collection} from ${check.rulesFile}`);
-    failed = true;
-    continue;
-  }
-  const allowedSet = new Set(allowedKeys);
+  for (const check of CHECKS) {
+    const rulesText   = fs.readFileSync(path.join(ROOT, check.rulesFile), 'utf8');
+    const allowedKeys = extractRulesKeys(rulesText, check.collectionPath);
 
-  for (const appFile of check.appFiles) {
-    const src = fs.readFileSync(path.join(ROOT, appFile), 'utf8');
-    const writtenKeys = check.extractAppKeys(src);
-    const violations = writtenKeys.filter(k => !allowedSet.has(k));
-    if (violations.length > 0) {
+    if (!allowedKeys || allowedKeys.length === 0) {
       console.error(
-        `check:rules-payloads FAIL  ${appFile} writes top-level key(s) not in ` +
-        `${check.collection} CREATE rule: ${violations.join(', ')}`
+        `check:rules-payloads FAIL  Could not extract hasOnlyFields list for ` +
+        `${check.collection} from ${check.rulesFile}`
       );
-      console.error(`  Allowed: ${[...allowedSet].join(', ')}`);
-      console.error(`  Written: ${writtenKeys.join(', ')}`);
       failed = true;
-    } else {
-      console.log(
-        `check:rules-payloads ✓  ${appFile} (${check.collection}) — ` +
-        `keys: ${writtenKeys.join(', ')}`
-      );
+      continue;
+    }
+
+    const allowedSet = new Set(allowedKeys);
+
+    for (const appFile of check.appFiles) {
+      const src     = fs.readFileSync(path.join(ROOT, appFile.path), 'utf8');
+      const results = extractAddDocKeysFromSource(src, check.collectionPath, appFile.scriptKind);
+
+      if (results.length === 0) {
+        console.error(
+          `check:rules-payloads FAIL  No addDoc call for '${check.collection}' found in ${appFile.path}`
+        );
+        failed = true;
+        continue;
+      }
+
+      for (const result of results) {
+        if (result.error) {
+          console.error(`check:rules-payloads FAIL  ${appFile.path}: ${result.error}`);
+          failed = true;
+          continue;
+        }
+
+        const violations = result.keys.filter(k => !allowedSet.has(k));
+        if (violations.length > 0) {
+          console.error(
+            `check:rules-payloads FAIL  ${appFile.path} writes top-level key(s) not in ` +
+            `${check.collection} CREATE rule: ${violations.join(', ')}`
+          );
+          console.error(`  Allowed: ${[...allowedSet].join(', ')}`);
+          console.error(`  Written: ${result.keys.join(', ')}`);
+          failed = true;
+        } else {
+          console.log(
+            `check:rules-payloads ✓  ${appFile.path} (${check.collection}) — ` +
+            `keys: ${result.keys.join(', ')}`
+          );
+        }
+      }
     }
   }
+
+  process.exit(failed ? 1 : 0);
 }
 
-process.exit(failed ? 1 : 0);
+if (require.main === module) {
+  main();
+}
+
+module.exports = { extractAddDocKeysFromSource, extractRulesKeys };
