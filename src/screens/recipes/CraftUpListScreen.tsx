@@ -215,25 +215,23 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
 
     return (
       <TouchableOpacity
-        style={S.row}
+        style={[S.row, { alignItems:'flex-start' }]}
         activeOpacity={0.9}
         onPress={status === 'confirmed' ? () => setViewId(r.id) : () => setEditDraftId(r.id)}
         onLongPress={enableLongPressConfirm ? () => confirmFromList(r) : undefined}
         delayLongPress={300}
       >
-        <View style={{flex:1}}>
-          <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
-            <Text style={S.rowTitle}>{r.name}</Text>
-            <View style={[S.chip, chipStyle]}>
-              <Text style={S.chipText}>{status === 'confirmed' ? 'Confirmed' : 'Draft'}</Text>
-            </View>
-          </View>
+        <View style={{flex:1, paddingRight:8}}>
+          <Text style={S.rowTitle} numberOfLines={2}>{r.name}</Text>
           <Text style={S.rowSub}>
             {(r.category||'—')} · {(r.mode||'—')}
             {(r.mode==='batch' && (r.yield || r.portionsPerBatch)) ? ` · yields ${(r.yield ?? r.portionsPerBatch)} serves` : ''}
           </Text>
+          <View style={[S.chip, chipStyle, {alignSelf:'flex-start', marginTop:4}]}>
+            <Text style={S.chipText}>{status === 'confirmed' ? 'Confirmed' : 'Draft'}</Text>
+          </View>
         </View>
-        <View style={{alignItems:'flex-end'}}>
+        <View style={{alignItems:'flex-end', minWidth:72}}>
           <Text style={S.rowKpi}>{formatMoney(r.cogs)}</Text>
           <Text style={S.rowKpiSub}>{r.rrp ? `RRP ${formatMoney(r.rrp)}` : '—'}</Text>
           {busyId === r.id ? <Text style={{ marginTop:6, color:'#111' }}>Confirming…</Text> : null}
