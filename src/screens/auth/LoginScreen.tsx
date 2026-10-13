@@ -14,6 +14,7 @@ import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from 'firebas
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import AppErrorBoundary from '../../components/AppErrorBoundary';
+import { canSelfRegister } from '../../utils/platformPolicy';
 import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
@@ -76,10 +77,10 @@ function LoginScreenInner() {
       if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
         Alert.alert(
           "Couldn't sign you in",
-          "That password didn't work. If you already have an account, reset your password — or create a new one if you're just getting started.",
+          "That password didn't work. Reset your password to try again.",
           [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Create account', onPress: () => nav.navigate('Register', { prefillEmail: email.trim() }) },
+            ...(canSelfRegister ? [{ text: 'Create account', onPress: () => nav.navigate('Register', { prefillEmail: email.trim() }) }] : []),
             { text: 'Reset password', onPress: () => nav.navigate('ForgotPassword', { prefillEmail: email.trim() }) },
           ]
         );
@@ -191,13 +192,15 @@ function LoginScreenInner() {
               : <Text style={{ color: colours.oat, fontWeight: '700', fontSize: 16 }}>Sign in →</Text>}
           </TouchableOpacity>
 
-          {/* Register link */}
-          <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 16 }} onPress={gotoRegister} disabled={busy}>
-            <Text style={{ color: colours.textSecondary, fontSize: 14 }}>
-              Don't have an account?{' '}
-              <Text style={{ color: colours.missionSlate, fontWeight: '600' }}>Create one</Text>
-            </Text>
-          </TouchableOpacity>
+          {/* Register link — hidden on iOS (Apple guideline 3.1.1) */}
+          {canSelfRegister && (
+            <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 16 }} onPress={gotoRegister} disabled={busy}>
+              <Text style={{ color: colours.textSecondary, fontSize: 14 }}>
+                Don't have an account?{' '}
+                <Text style={{ color: colours.missionSlate, fontWeight: '600' }}>Create one</Text>
+              </Text>
+            </TouchableOpacity>
+          )}
 
         </ScrollView>
       </KeyboardAvoidingView>

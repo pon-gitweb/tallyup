@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useColours } from '../../context/ThemeContext';
+import { canSelfRegister } from '../../utils/platformPolicy';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const CARD_W = Math.round(SW * 0.65);
@@ -120,13 +121,15 @@ export default function LandingScreen() {
           <Text style={S.btnPrimaryText}>Sign In</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={S.btnSecondary}
-          onPress={() => nav.navigate('Register')}
-          activeOpacity={0.85}
-        >
-          <Text style={S.btnSecondaryText}>Create Account</Text>
-        </TouchableOpacity>
+        {canSelfRegister && (
+          <TouchableOpacity
+            style={S.btnSecondary}
+            onPress={() => nav.navigate('Register')}
+            activeOpacity={0.85}
+          >
+            <Text style={S.btnSecondaryText}>Create Account</Text>
+          </TouchableOpacity>
+        )}
 
         <Text style={S.copyright}>© 2026 StackMosaic Ltd</Text>
       </View>

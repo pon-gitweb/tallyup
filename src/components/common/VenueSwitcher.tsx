@@ -5,6 +5,7 @@ import { useNavigation, useNavigationState } from '@react-navigation/native';
 import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import { useVenue } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import { canSelfRegister } from '../../utils/platformPolicy';
 
 type VenueOption = {
   id: string;
@@ -160,20 +161,22 @@ export function VenueSwitcher() {
               </TouchableOpacity>
             ))}
 
-            <TouchableOpacity
-              style={{
-                backgroundColor: '#f3f4f6', borderRadius: 12,
-                padding: 14, marginTop: 4, marginBottom: 4, alignItems: 'center',
-              }}
-              onPress={() => {
-                setShowPicker(false);
-                nav.navigate('CreateVenue');
-              }}
-            >
-              <Text style={{ fontSize: 15, fontWeight: '700', color: '#1b4f72' }}>
-                + Add venue or event
-              </Text>
-            </TouchableOpacity>
+            {canSelfRegister && (
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#f3f4f6', borderRadius: 12,
+                  padding: 14, marginTop: 4, marginBottom: 4, alignItems: 'center',
+                }}
+                onPress={() => {
+                  setShowPicker(false);
+                  nav.navigate('CreateVenue');
+                }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#1b4f72' }}>
+                  + Add venue or event
+                </Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={{ padding: 14, alignItems: 'center' }}

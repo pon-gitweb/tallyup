@@ -94,6 +94,7 @@ import HomeRouterScreen from '../../screens/HomeRouterScreen';
 import CreateVenueScreen from '../../screens/CreateVenueScreen';
 import EmailVerificationScreen from '../../screens/auth/EmailVerificationScreen';
 import VenueListScreen from '../../screens/venues/VenueListScreen';
+import NoVenueScreen from '../../screens/auth/NoVenueScreen';
 
 // Festival
 import FestivalEventSetupScreen from '../../screens/festival/FestivalEventSetupScreen';
@@ -212,8 +213,10 @@ export default function MainStack() {
       <Stack.Screen name="HomeRouter" component={HomeRouterScreen} options={{ headerShown: false }} />
       {/* Email verification — shown after registration before venue creation */}
       <Stack.Screen name="EmailVerification" component={EmailVerificationScreen} options={{ headerShown: false }} />
-      {/* Venue creation — reachable for new users with no venue */}
+      {/* Venue creation — reachable for new users with no venue (Android/web only) */}
       <Stack.Screen name="CreateVenue" component={CreateVenueScreen} options={{ title: 'Create your venue', headerShown: false }} />
+      {/* iOS: signed-in user with no venue — invite-only message */}
+      <Stack.Screen name="NoVenue" component={NoVenueScreen} options={{ headerShown: false }} />
       {/* Venue list — manage all venues for this account */}
       <Stack.Screen name="VenueList" component={VenueListScreen} options={{ title: 'My Projects' }} />
       {/* Root — bottom tab navigator */}

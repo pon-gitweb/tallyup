@@ -4,6 +4,7 @@ import * as Updates from 'expo-updates';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColours } from '../../context/ThemeContext';
 import { FEATURES } from '../../config/features';
+import { canSelfRegister } from '../../utils/platformPolicy';
 import {
   View,
   Text,
@@ -1277,15 +1278,17 @@ export default function SettingsScreen() {
         {/* ─── SUPPORT ─── */}
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Support</Text></View>
 
-        {/* Pricing & Plans */}
-        <View style={styles.row}>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() => nav.navigate('Pricing')}
-          >
-            <Text style={styles.btnText}>Pricing & Plans</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Pricing & Plans — hidden on iOS (Apple guideline 3.1.1) */}
+        {canSelfRegister && (
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={styles.btn}
+              onPress={() => nav.navigate('Pricing')}
+            >
+              <Text style={styles.btnText}>Pricing & Plans</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Legal — Privacy Policy + Terms of Service */}
         <View style={styles.row}>

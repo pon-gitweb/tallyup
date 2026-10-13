@@ -20,20 +20,34 @@ jest.mock('../../../context/VenueProvider', () => ({
   useVenue: () => mockVenue,
 }));
 
+// Control canSelfRegister (Platform.OS) per test
+let mockCanSelfRegister = true;
+jest.mock('../../../utils/platformPolicy', () => ({
+  get canSelfRegister() { return mockCanSelfRegister; },
+}));
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('ReadOnlyInfoBanner', () => {
-  it('renders no TouchableOpacity and no link text', () => {
+  beforeEach(() => { mockCanSelfRegister = true; });
+
+  it('renders no TouchableOpacity and no link text (non-iOS)', () => {
     const { queryAllByRole, getByText } = render(<ReadOnlyInfoBanner />);
 
     // No touchable element of any kind
     const buttons = queryAllByRole('button');
     expect(buttons).toHaveLength(0);
 
-    // Correct informational copy is shown
+    // Correct informational copy is shown on non-iOS
     getByText(
       'Your free trial has ended. This venue is read-only: you can still view everything.',
     );
+  });
+
+  it('shows iOS-safe read-only copy with no link when on iOS', () => {
+    mockCanSelfRegister = false;
+    const { getByText } = render(<ReadOnlyInfoBanner />);
+    getByText("Your venue's access has ended. Contact your venue owner.");
   });
 
   it('renders nothing when enforce=false', () => {

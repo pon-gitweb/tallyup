@@ -5,6 +5,7 @@ import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import FullScreenModalFrame from '../../components/common/FullScreenModalFrame';
+import { canSelfRegister } from '../../utils/platformPolicy';
 
 import LoginScreen from './LoginScreen';
 import RegisterScreen from './RegisterScreen';
@@ -24,7 +25,7 @@ export default function AuthEntryScreen() {
     const unsub = onAuthStateChanged(auth, (u) => {
       if (!u) return;
       if (venueId) {
-        nav.reset({ index: 0, routes: [{ name: 'Home' }] });
+        nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
       } else {
         setShowSetup(true);
       }
@@ -52,13 +53,15 @@ export default function AuthEntryScreen() {
         <TouchableOpacity onPress={() => setTab('signin')} style={[S.tab, tab === 'signin' && S.tabActive]}>
           <Text style={[S.tabText, tab === 'signin' && S.tabTextActive]}>Sign In</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setTab('register')} style={[S.tab, tab === 'register' && S.tabActive]}>
-          <Text style={[S.tabText, tab === 'register' && S.tabTextActive]}>Register</Text>
-        </TouchableOpacity>
+        {canSelfRegister && (
+          <TouchableOpacity onPress={() => setTab('register')} style={[S.tab, tab === 'register' && S.tabActive]}>
+            <Text style={[S.tabText, tab === 'register' && S.tabTextActive]}>Register</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={{ flex: 1 }}>
-        {tab === 'signin' ? <LoginScreen /> : <RegisterScreen />}
+        {tab === 'signin' || !canSelfRegister ? <LoginScreen /> : <RegisterScreen />}
       </View>
 
       <Modal visible={showSetup} animationType="slide" onRequestClose={() => setShowSetup(false)}>

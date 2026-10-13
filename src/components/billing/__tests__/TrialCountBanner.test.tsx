@@ -19,6 +19,9 @@ jest.mock('../../../context/VenueProvider', () => ({
   useVenue: () => mockVenue,
 }));
 
+// The banner is hidden on iOS; tests run in non-iOS mode
+jest.mock('../../../utils/platformPolicy', () => ({ canSelfRegister: true }));
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('TrialCountBanner', () => {

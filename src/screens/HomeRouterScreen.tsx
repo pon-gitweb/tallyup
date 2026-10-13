@@ -6,6 +6,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../services/firebase';
 import { useVenue } from '../context/VenueProvider';
+import { canSelfRegister } from '../utils/platformPolicy';
 
 /**
  * Invisible routing screen shown immediately after auth.
@@ -78,9 +79,10 @@ export default function HomeRouterScreen() {
           // Don't route yet; wait for the next context update with a resolved venueId.
           return;
         }
-        // Truly new user — no venue created yet. Send to venue creation.
+        // Truly new user — no venue created yet.
+        // On iOS: show a "no venue" screen (no creation flow per Apple 3.1.1).
         routed.current = true;
-        nav.reset({ index: 0, routes: [{ name: 'CreateVenue' }] });
+        nav.reset({ index: 0, routes: [{ name: canSelfRegister ? 'CreateVenue' : 'NoVenue' }] });
         return;
       }
 
