@@ -2374,6 +2374,10 @@ try {
             snapshotWritten = true;
           } catch (e: any) {
             attempts++;
+            const attemptErr = new Error(
+              `Snapshot write attempt ${attempts} failed: ${e?.message ?? String(e)}`,
+            );
+            captureError(attemptErr, 'stocktake:snapshotWrite:attempt');
             console.warn(`[stocktake] snapshot write attempt ${attempts} failed:`, e?.message);
             if (attempts < 3) {
               await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempts - 1)));
@@ -2381,8 +2385,12 @@ try {
           }
         }
         if (!snapshotWritten) {
-          setExportToast('Report data may be delayed — please try again later.');
-          setTimeout(() => setExportToast(null), 5000);
+          const finalErr = new Error(
+            `Snapshot write failed after 3 attempts — venue=${venueId} dept=${departmentId} cycle=${deptCycleNumber}`,
+          );
+          captureError(finalErr, 'stocktake:snapshotWrite:finalFailure');
+          setExportToast("This stocktake's report didn't save. Open Reports to retry — your counts are safe until the next stocktake.");
+          setTimeout(() => setExportToast(null), 8000);
         }
       })();
 
