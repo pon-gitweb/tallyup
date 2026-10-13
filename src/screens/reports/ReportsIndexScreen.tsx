@@ -36,6 +36,7 @@ import { handleAiLimitError } from '../../utils/aiLimitError';
 import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { captureError } from '../../services/crashReporting';
+import { checkCountsChangedSince } from '../../services/reports/recalcGuard';
 
 // ─── Tiny helpers ────────────────────────────────────────────────────────────
 
@@ -319,22 +320,7 @@ export default function ReportsIndexScreen() {
             // Check if any area item has been counted after the cycle completed
             const cycleCompletedAtMs = latestCycle.completedAt?.toMillis?.() ??
               (latestCycle.completedAt?.seconds ? latestCycle.completedAt.seconds * 1000 : 0);
-            let anyChangedSince = false;
-            try {
-              const areasSnap = await getDocs(
-                collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'),
-              );
-              outer: for (const areaDoc of areasSnap.docs) {
-                const itemsSnap = await getDocs(
-                  collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items'),
-                );
-                for (const itemDoc of itemsSnap.docs) {
-                  const lca = itemDoc.data().lastCountAt;
-                  const lcaMs = lca?.toMillis?.() ?? (lca?.seconds ? lca.seconds * 1000 : 0);
-                  if (lcaMs > cycleCompletedAtMs) { anyChangedSince = true; break outer; }
-                }
-              }
-            } catch {}
+            const anyChangedSince = await checkCountsChangedSince(db, venueId, deptDoc.id, cycleCompletedAtMs);
 
             if (!anyChangedSince) {
               // Counts unchanged — safe to regenerate the snapshot
@@ -345,6 +331,10 @@ export default function ReportsIndexScreen() {
               }
             } else {
               // Counts have changed since the cycle — cannot regenerate accurately
+              captureError(
+                new Error(`Self-heal refused: counts changed since cycle-${cycleN} for dept ${deptDoc.id}`),
+                'reportsIndex:selfHeal:countChanged',
+              );
               warnings.push(`Cycle ${cycleN} for ${deptName} wasn't saved and its counts have since changed`);
             }
           } catch {}
@@ -483,7 +473,23 @@ export default function ReportsIndexScreen() {
     setRecalculating(true);
     try {
       const staleSnaps = latestSnapshots.filter(s => s.requiresRecalculation && s.deptId && s.cycleNumber);
-      await Promise.all(staleSnaps.map(s => writeDepartmentSnapshot(venueId, s.deptId, s.cycleNumber)));
+      let anyRefused = false;
+      await Promise.all(staleSnaps.map(async s => {
+        const completedAtMs = s.completedAt?.toMillis?.() ?? (s.completedAt?.seconds ? s.completedAt.seconds * 1000 : 0);
+        const changedSince = await checkCountsChangedSince(db, venueId, s.deptId, completedAtMs);
+        if (changedSince) {
+          anyRefused = true;
+          captureError(
+            new Error(`Recalc refused: counts changed since cycle-${s.cycleNumber} for dept ${s.deptId}`),
+            'reportsIndex:recalcGuard',
+          );
+          return;
+        }
+        await writeDepartmentSnapshot(venueId, s.deptId, s.cycleNumber);
+      }));
+      if (anyRefused) {
+        showInfo("Counts have changed since this stocktake, so it can't be recalculated.");
+      }
       // Reload briefing
       setLoading(true);
       setData(null);
