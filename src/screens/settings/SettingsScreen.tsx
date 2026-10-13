@@ -1180,14 +1180,17 @@ export default function SettingsScreen() {
               </View>
             )}
 
-            <View style={styles.row}>
-              <TouchableOpacity
-                style={styles.btn}
-                onPress={() => nav.navigate('ReportPreferences')}
-              >
-                <Text style={styles.btnText}>Report Preferences</Text>
-              </TouchableOpacity>
-            </View>
+            {/* hidden until reports consume prefs */}
+            {false && (
+              <View style={styles.row}>
+                <TouchableOpacity
+                  style={styles.btn}
+                  onPress={() => nav.navigate('ReportPreferences')}
+                >
+                  <Text style={styles.btnText}>Report Preferences</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {isManager && (
               <View style={styles.row}>
@@ -1353,15 +1356,6 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Advanced Settings (dev) */}
-        <View style={styles.row}>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() => nav.navigate('AdvancedSettings')}
-          >
-            <Text style={styles.btnText}>Advanced Settings (dev)</Text>
-          </TouchableOpacity>
-        </View>
 
         {/* App version */}
         <Text style={styles.versionText}>
