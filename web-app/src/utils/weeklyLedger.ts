@@ -158,6 +158,45 @@ export function partitionReports(
   }
 }
 
+/**
+ * Maps ALL docs (active, superseded, voided) to ActiveReport[], sorted newest first.
+ * Use this for the Reports table, which must show every report.
+ */
+export function mapAllReports(
+  allDocs: Array<{ id: string; data(): Record<string, any> }>
+): ActiveReport[] {
+  const mapped: ActiveReport[] = allDocs.map(docSnap => {
+    const d = docSnap.data()
+    const rawLines: RawSalesLine[] = d.report?.lines ?? d.lines ?? []
+    const totalRevenue  = rawLines.reduce((s, l) => s + (l.grossIncl ?? l.gross ?? 0), 0)
+    const totalQtySold  = rawLines.reduce((s, l) => s + (l.qtySold ?? 0), 0)
+    const startStr = d.report?.period?.start ?? toNZDate(d.periodStart)
+    const endStr   = d.report?.period?.end   ?? toNZDate(d.periodEnd)
+    const startMs  = d.periodStart?.toMillis?.() ??
+                     (startStr ? new Date(startStr + 'T00:00:00Z').getTime() : null)
+    return {
+      id: docSnap.id,
+      source: d.source ?? '?',
+      startStr, endStr, startMs,
+      days: startStr && endStr ? daySpan(startStr, endStr) : null,
+      lineCount: rawLines.length,
+      totalRevenue,
+      totalQtySold,
+      rawLines,
+      overlappingCycles: d.overlappingCycles ?? [],
+      allocationMethod:  d.allocationMethod  ?? 'none',
+      status: d.status ?? null,
+      meta: d.report?.meta ?? null,
+    }
+  })
+  return mapped.sort((a, b) => {
+    if (a.startMs == null && b.startMs == null) return 0
+    if (a.startMs == null) return 1
+    if (b.startMs == null) return -1
+    return b.startMs - a.startMs
+  })
+}
+
 // ── Weekly aggregation ────────────────────────────────────────────────────────
 
 export type WeekEntry = { units: number; revenue: number }
@@ -405,6 +444,67 @@ export function buildVelocityRowsFromReports(
   }
 
   return { rows, windowInfo: { anchorMonday: anchorMon, last4CoveredDays, prev4CoveredDays, newestReportEnd } }
+}
+
+// ── 26-week coverage strip ────────────────────────────────────────────────────
+
+export type StripCell = {
+  monday: string
+  state: 'present' | 'partial' | 'voided' | 'missing'
+}
+
+/**
+ * Builds a 26-week coverage strip ending at the current week.
+ *
+ * For each Monday-start week, counts the DISTINCT calendar dates covered by
+ * active reports (union — two overlapping actives don't double-count).
+ * Voided/superseded reports add nothing to coverage but a voided-only week
+ * is marked 'voided' rather than 'missing'.
+ *
+ * State: present (7 covered) > partial (1-6) > voided (0 + voided overlap) > missing
+ */
+export function buildStrip(allReports: ActiveReport[], todayNZDate: string): StripCell[] {
+  const msPerDay  = 86_400_000
+  const currentMon = weekMonday(todayNZDate)
+  const currentMonMs = new Date(currentMon + 'T00:00:00Z').getTime()
+
+  const weeks: string[] = []
+  for (let i = 25; i >= 0; i--) {
+    weeks.push(new Date(currentMonMs - i * 7 * msPerDay).toISOString().slice(0, 10))
+  }
+
+  return weeks.map(mon => {
+    const sun = new Date(new Date(mon + 'T00:00:00Z').getTime() + 6 * msPerDay)
+      .toISOString().slice(0, 10)
+
+    const activeDates = new Set<string>()
+    let hasVoidedOverlap = false
+
+    for (const r of allReports) {
+      const { startStr, endStr } = r
+      if (!startStr || !endStr) continue
+      if (startStr > sun || endStr < mon) continue
+
+      if (isReportActive({ status: r.status })) {
+        const overlapStart = startStr > mon ? startStr : mon
+        const overlapEnd   = endStr   < sun ? endStr   : sun
+        let cur = new Date(overlapStart + 'T00:00:00Z')
+        const endD = new Date(overlapEnd + 'T00:00:00Z')
+        while (cur <= endD) {
+          activeDates.add(cur.toISOString().slice(0, 10))
+          cur = new Date(cur.getTime() + msPerDay)
+        }
+      } else if (r.status === 'voided') {
+        hasVoidedOverlap = true
+      }
+    }
+
+    const covered = activeDates.size
+    if (covered === 7)    return { monday: mon, state: 'present' as const }
+    if (covered >= 1)     return { monday: mon, state: 'partial'  as const }
+    if (hasVoidedOverlap) return { monday: mon, state: 'voided'   as const }
+    return                       { monday: mon, state: 'missing'  as const }
+  })
 }
 
 // ── Normalised line name ──────────────────────────────────────────────────────
