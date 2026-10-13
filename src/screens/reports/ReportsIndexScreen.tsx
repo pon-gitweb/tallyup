@@ -35,6 +35,7 @@ import { AI_BASE_URL } from '../../config/ai';
 import { handleAiLimitError } from '../../utils/aiLimitError';
 import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { captureError } from '../../services/crashReporting';
 
 // ─── Tiny helpers ────────────────────────────────────────────────────────────
 
@@ -126,6 +127,8 @@ export default function ReportsIndexScreen() {
   const [slowMovers, setSlowMovers] = useState<any[]>([]);
 
   const [latestSnapshots, setLatestSnapshots] = useState<any[]>([]);
+  const [missingSnapshotWarnings, setMissingSnapshotWarnings] = useState<string[]>([]);
+  const selfHealFiredRef = useRef(false);
   const [totalStocktakesCompleted, setTotalStocktakesCompleted] = useState(0);
   const [onboardingRoad, setOnboardingRoad] = useState<string | null>(null);
   const [onboardingLastStocktakeDate, setOnboardingLastStocktakeDate] = useState<string | null>(null);
@@ -277,6 +280,78 @@ export default function ReportsIndexScreen() {
       } catch {}
     })();
     return () => { cancelled = true; };
+  }, [venueId]);
+
+  // ── Self-heal: detect depts with a cycle record but no matching snapshot ─
+  useEffect(() => {
+    if (!venueId || selfHealFiredRef.current) return;
+    selfHealFiredRef.current = true;
+    (async () => {
+      try {
+        const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        const warnings: string[] = [];
+        await Promise.all(deptsSnap.docs.map(async deptDoc => {
+          try {
+            const deptName = (deptDoc.data() as any).name || deptDoc.id;
+            // Find the latest cycle record for this department
+            const cyclesSnap = await getDocs(query(
+              collection(db, 'venues', venueId, 'departments', deptDoc.id, 'cycles'),
+              orderBy('completedAt', 'desc'),
+              limit(1),
+            ));
+            if (cyclesSnap.empty) return;
+            const latestCycle = cyclesSnap.docs[0].data() as any;
+            const cycleN = latestCycle.cycleNumber as number;
+            if (typeof cycleN !== 'number') return;
+
+            // Check if the matching snapshot exists
+            const snapshotDoc = await getDoc(
+              doc(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots', `cycle-${cycleN}`),
+            );
+            if (snapshotDoc.exists()) return;
+
+            // Snapshot is missing — always captureError for visibility
+            captureError(
+              new Error(`Snapshot missing: dept=${deptDoc.id} cycle=${cycleN}`),
+              'reportsIndex:selfHeal',
+            );
+
+            // Check if any area item has been counted after the cycle completed
+            const cycleCompletedAtMs = latestCycle.completedAt?.toMillis?.() ??
+              (latestCycle.completedAt?.seconds ? latestCycle.completedAt.seconds * 1000 : 0);
+            let anyChangedSince = false;
+            try {
+              const areasSnap = await getDocs(
+                collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'),
+              );
+              outer: for (const areaDoc of areasSnap.docs) {
+                const itemsSnap = await getDocs(
+                  collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items'),
+                );
+                for (const itemDoc of itemsSnap.docs) {
+                  const lca = itemDoc.data().lastCountAt;
+                  const lcaMs = lca?.toMillis?.() ?? (lca?.seconds ? lca.seconds * 1000 : 0);
+                  if (lcaMs > cycleCompletedAtMs) { anyChangedSince = true; break outer; }
+                }
+              }
+            } catch {}
+
+            if (!anyChangedSince) {
+              // Counts unchanged — safe to regenerate the snapshot
+              try {
+                await writeDepartmentSnapshot(venueId, deptDoc.id, cycleN);
+              } catch (writeErr: any) {
+                captureError(writeErr, 'reportsIndex:selfHeal:write');
+              }
+            } else {
+              // Counts have changed since the cycle — cannot regenerate accurately
+              warnings.push(`Cycle ${cycleN} for ${deptName} wasn't saved and its counts have since changed`);
+            }
+          } catch {}
+        }));
+        if (warnings.length > 0) setMissingSnapshotWarnings(warnings);
+      } catch {}
+    })();
   }, [venueId]);
 
   // ── Total stocktakes completed (venue doc) — fallback signal for trend unlock.
@@ -639,6 +714,18 @@ export default function ReportsIndexScreen() {
               </View>
             </View>
           )}
+
+          {/* ── MISSING SNAPSHOT WARNINGS (cycle saved but snapshot not written) ── */}
+          {missingSnapshotWarnings.map((msg, i) => (
+            <View key={i} style={{ backgroundColor: c.error + '18', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: c.error }}>
+              <Text style={{ fontSize: 13, color: c.error, fontWeight: '700' }}>
+                ⚠️ Report data missing
+              </Text>
+              <Text style={{ fontSize: 12, color: c.error, marginTop: 2, lineHeight: 17 }}>
+                {msg}
+              </Text>
+            </View>
+          ))}
 
           {/* ── ANCHOR METRIC (owner/manager only) ── */}
           {isManager && (
