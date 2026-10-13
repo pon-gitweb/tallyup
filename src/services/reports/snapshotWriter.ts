@@ -1,11 +1,12 @@
 import { db } from '../firebase';
 import {
-  collection, getDocs, doc, getDoc, setDoc,
+  collection, getDocs, doc, getDoc, setDoc, writeBatch, deleteDoc,
   query, where, orderBy, limit, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { resolveProduct, type ProdEntry } from '../products/resolveProduct';
 import { isReportActive } from '../sales/isReportActive';
+import { loadSnapshotItems } from '../../utils/snapshotItems';
 
 function toMs(val: any): number | null {
   if (!val) return null;
@@ -365,7 +366,11 @@ export async function writeDepartmentSnapshot(
         );
         if (prevSnap.exists()) {
           const prevData = prevSnap.data() as any;
-          for (const item of (prevData.items || [])) {
+          const prevItems = await loadSnapshotItems(prevData, () =>
+            getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', prevSnapshotId, 'itemChunks'))
+              .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+          );
+          for (const item of prevItems) {
             const key = (item.name || '').toLowerCase().trim();
             if (key && typeof item.actualClosing === 'number') {
               prevItemMap.set(key, item.actualClosing);
@@ -382,7 +387,8 @@ export async function writeDepartmentSnapshot(
               limit(1),
             ));
             if (!fallbackSnap.empty) {
-              const fallbackData = fallbackSnap.docs[0].data() as any;
+              const fallbackDoc = fallbackSnap.docs[0];
+              const fallbackData = fallbackDoc.data() as any;
               const m = fallbackData.cycleNumber as number;
               baselineCycleNumber = m;
               const missingCycles = Array.from(
@@ -390,7 +396,11 @@ export async function writeDepartmentSnapshot(
                 (_, i) => m + 1 + i,
               );
               baselineGapNote = `Compared with cycle ${m}; cycle(s) ${missingCycles.join(', ')} were not saved`;
-              for (const item of (fallbackData.items || [])) {
+              const fallbackItems = await loadSnapshotItems(fallbackData, () =>
+                getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', fallbackDoc.id, 'itemChunks'))
+                  .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+              );
+              for (const item of fallbackItems) {
                 const key = (item.name || '').toLowerCase().trim();
                 if (key && typeof item.actualClosing === 'number') {
                   prevItemMap.set(key, item.actualClosing);
@@ -680,11 +690,30 @@ export async function writeDepartmentSnapshot(
       pricingBackfillAppliedAt: null,
     };
 
-    // Clean internal helpers from items before writing
-    const cleanItems = snapshotItems.slice(0, 200).map(si => {
+    // Clean internal helpers from all items before writing
+    const allCleanItems = snapshotItems.map(si => {
       const { _rawProductId, _resolvedProductId, _rawName, _invoiceUnitCost, ...rest } = si;
       return rest;
     });
+    // Legacy inline field: keep first 200 for old app builds that read snapshot.items directly
+    const cleanItems = allCleanItems.slice(0, 200);
+
+    // Build subcollection chunks (≤200 items each) so readers get the full set
+    const CHUNK_SIZE = 200;
+    const itemChunks: any[][] = [];
+    for (let i = 0; i < allCleanItems.length; i += CHUNK_SIZE) {
+      itemChunks.push(allCleanItems.slice(i, i + CHUNK_SIZE));
+    }
+    const newChunkCount = itemChunks.length;
+
+    // Read existing snapshot to learn how many stale chunk docs need deletion
+    const snapshotId = `cycle-${cycleNumber}`;
+    const snapshotDocRef = doc(db, 'venues', venueId, 'departments', departmentId, 'snapshots', snapshotId);
+    let oldChunkCount = 0;
+    try {
+      const existingSnap = await getDoc(snapshotDocRef);
+      if (existingSnap.exists()) oldChunkCount = (existingSnap.data() as any).itemChunkCount ?? 0;
+    } catch {}
 
     const snapshot = {
       venueId,
@@ -705,6 +734,8 @@ export async function writeDepartmentSnapshot(
       dataCompleteness,
       summary,
       items: cleanItems,
+      itemCount: allCleanItems.length,
+      itemChunkCount: newChunkCount,
       findings: {
         likelyMissingInvoices: likelyMissingInvoices.slice(0, 10),
         poDiscrepancies: poDiscrepancies.slice(0, 10),
@@ -716,12 +747,17 @@ export async function writeDepartmentSnapshot(
       dataQualityScore,
     };
 
-    // Write department snapshot
-    const snapshotId = `cycle-${cycleNumber}`;
-    await setDoc(
-      doc(db, 'venues', venueId, 'departments', departmentId, 'snapshots', snapshotId),
-      snapshot,
-    );
+    // Write snapshot doc + all chunks atomically; delete any stale chunk docs
+    const chunksColRef = collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', snapshotId, 'itemChunks');
+    const batch = writeBatch(db);
+    batch.set(snapshotDocRef, snapshot);
+    for (let i = 0; i < itemChunks.length; i++) {
+      batch.set(doc(chunksColRef, String(i).padStart(3, '0')), { index: i, items: itemChunks[i] });
+    }
+    for (let i = newChunkCount; i < oldChunkCount; i++) {
+      batch.delete(doc(chunksColRef, String(i).padStart(3, '0')));
+    }
+    await batch.commit();
 
     // Update venue-level latestSnapshot (lightweight, no items)
     const allDeptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
@@ -768,7 +804,8 @@ export async function writeDepartmentSnapshot(
     });
 
     console.log(`[snapshotWriter] cycle-${cycleNumber} written for dept ${departmentId}`, {
-      items: cleanItems.length,
+      items: allCleanItems.length,
+      chunks: newChunkCount,
       hasBaseline,
       hasInvoices,
       hasSales,
