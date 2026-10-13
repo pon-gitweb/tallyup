@@ -4,6 +4,7 @@ import {
   daySpan,
   weekDayBreakdown,
   partitionReports,
+  buildStrip,
   buildVelocityRowsFromReports,
   buildUnmatchedRows,
   normName,
@@ -283,6 +284,70 @@ describe('buildVelocityRowsFromReports — day-weighting and status', () => {
     it('prev4 < 8 → Slowing threshold not applied even when last4 < prev4', () => {
       expect(velocityStatus(4, 4, 5)).toBe('Selling')
     })
+  })
+})
+
+// ── buildStrip ────────────────────────────────────────────────────────────────
+
+describe('buildStrip', () => {
+  function makeStripReport(id: string, start: string, end: string, status: string = 'active'): ActiveReport {
+    return {
+      ...makeReport(id, start, end),
+      status,
+    }
+  }
+
+  const TODAY = '2026-10-12' // Monday; anchorMon = Oct 5; strip runs Oct 12 back 25 weeks
+
+  it('active report covering all 7 days of a week → present', () => {
+    const r = makeStripReport('r1', '2026-10-05', '2026-10-11') // Mon-Sun
+    const strip = buildStrip([r], TODAY)
+    const cell = strip.find(c => c.monday === '2026-10-05')!
+    expect(cell.state).toBe('present')
+  })
+
+  it('active+voided same week = partial when active covers 6 days', () => {
+    const active = makeStripReport('r1', '2026-10-05', '2026-10-10') // Mon-Sat (6 days)
+    const voided = makeStripReport('r2', '2026-10-06', '2026-10-11', 'voided') // Tue-Sun
+    const strip = buildStrip([active, voided], TODAY)
+    const cell = strip.find(c => c.monday === '2026-10-05')!
+    expect(cell.state).toBe('partial')
+  })
+
+  it('two overlapping active reports do not double-count — union = 7 → present', () => {
+    const r1 = makeStripReport('r1', '2026-10-05', '2026-10-08') // Mon-Thu (4 days)
+    const r2 = makeStripReport('r2', '2026-10-07', '2026-10-11') // Wed-Sun (5 days)
+    const strip = buildStrip([r1, r2], TODAY)
+    const cell = strip.find(c => c.monday === '2026-10-05')!
+    expect(cell.state).toBe('present')
+  })
+
+  it('voided-only week = voided', () => {
+    const r = makeStripReport('r1', '2026-09-28', '2026-10-04', 'voided') // Mon-Sun
+    const strip = buildStrip([r], TODAY)
+    const cell = strip.find(c => c.monday === '2026-09-28')!
+    expect(cell.state).toBe('voided')
+  })
+
+  it('consecutive Tue-Mon reports fill a Mon-Sun week = present', () => {
+    // Week Mon Sep 28 – Sun Oct 4
+    // Report 1 ends Mon Sep 28 (1 day overlap); Report 2 starts Tue Sep 29 (6 days overlap)
+    const r1 = makeStripReport('r1', '2026-09-22', '2026-09-28') // ends Mon Sep 28
+    const r2 = makeStripReport('r2', '2026-09-29', '2026-10-05') // starts Tue Sep 29
+    const strip = buildStrip([r1, r2], TODAY)
+    const cell = strip.find(c => c.monday === '2026-09-28')!
+    expect(cell.state).toBe('present')
+  })
+
+  it('superseded report adds nothing — week stays missing', () => {
+    const r = makeStripReport('r1', '2026-10-05', '2026-10-11', 'superseded')
+    const strip = buildStrip([r], TODAY)
+    const cell = strip.find(c => c.monday === '2026-10-05')!
+    expect(cell.state).toBe('missing')
+  })
+
+  it('strip always has exactly 26 cells', () => {
+    expect(buildStrip([], TODAY)).toHaveLength(26)
   })
 })
 

@@ -6,8 +6,9 @@ import {
 import { db } from '../firebase'
 import { isReportActive } from '../utils/isReportActive'
 import {
-  toNZDate, weekMonday, daySpan,
   partitionReports,
+  mapAllReports,
+  buildStrip,
   buildVelocityRowsFromReports,
   buildUnmatchedRows,
   normName,
@@ -18,6 +19,7 @@ import {
   type VelocityRow,
   type VelocityWindowInfo,
   type UnmatchedRow,
+  type StripCell,
 } from '../utils/weeklyLedger'
 import { voidSalesReport } from '../services/voidSalesReport'
 import styles from './SalesReportsPage.module.css'
@@ -69,56 +71,6 @@ function reportStatus(r: ActiveReport): 'active' | 'superseded' | 'voided' {
   if (r.status === 'voided')     return 'voided'
   if (r.status === 'superseded') return 'superseded'
   return 'active'
-}
-
-// ── 26-week strip ─────────────────────────────────────────────────────────────
-
-function buildStrip(allDocs: RawDoc[]): Array<{ monday: string; state: 'present' | 'partial' | 'missing' | 'voided' }> {
-  const todayNZ = new Date().toLocaleDateString('en-CA', { timeZone: NZ_TZ })
-  const currentMon = weekMonday(todayNZ)
-
-  const weeks: string[] = []
-  let d = new Date(currentMon + 'T00:00:00Z')
-  for (let i = 0; i < 26; i++) {
-    weeks.unshift(new Date(d.getTime() - i * 7 * 86_400_000).toISOString().slice(0, 10))
-  }
-
-  return weeks.map(mon => {
-    const sun = new Date(new Date(mon + 'T00:00:00Z').getTime() + 6 * 86_400_000).toISOString().slice(0, 10)
-
-    let totalCoveredDays = 0
-    let voidedOnly = true
-    let hasActive = false
-
-    for (const snap of allDocs) {
-      const d2 = snap.data()
-      const startStr = d2.report?.period?.start ?? toNZDate(d2.periodStart)
-      const endStr   = d2.report?.period?.end   ?? toNZDate(d2.periodEnd)
-      if (!startStr || !endStr) continue
-      if (startStr > sun || endStr < mon) continue
-
-      // Overlaps this week
-      const overlapStart = startStr > mon ? startStr : mon
-      const overlapEnd   = endStr < sun   ? endStr   : sun
-      const days = daySpan(overlapStart, overlapEnd)
-
-      if (isReportActive(d2)) {
-        totalCoveredDays += days
-        hasActive = true
-        voidedOnly = false
-      } else if (d2.status === 'voided') {
-        totalCoveredDays += days
-      } else {
-        // superseded
-        voidedOnly = false
-      }
-    }
-
-    if (totalCoveredDays === 0) return { monday: mon, state: 'missing' as const }
-    if (!hasActive && voidedOnly) return { monday: mon, state: 'voided' as const }
-    if (totalCoveredDays >= 7) return { monday: mon, state: 'present' as const }
-    return { monday: mon, state: 'partial' as const }
-  })
 }
 
 // ── Void modal ────────────────────────────────────────────────────────────────
@@ -254,15 +206,13 @@ function LinesDrawer({
 // ── Tab 1: Reports ────────────────────────────────────────────────────────────
 
 function ReportsTab({
-  allDocs,
-  reports,
+  allReports,
   matchesByReport,
   canManage,
   onDataChange,
   venueId,
 }: {
-  allDocs: RawDoc[]
-  reports: ActiveReport[]
+  allReports: ActiveReport[]
   matchesByReport: Record<string, MatchData | null>
   canManage: boolean
   onDataChange: () => void
@@ -271,12 +221,15 @@ function ReportsTab({
   const [drawerReport, setDrawerReport] = useState<ActiveReport | null>(null)
   const [voidReport, setVoidReport]     = useState<ActiveReport | null>(null)
 
-  const strip = useMemo(() => buildStrip(allDocs), [allDocs])
+  const strip: StripCell[] = useMemo(
+    () => buildStrip(allReports, new Date().toLocaleDateString('en-CA', { timeZone: NZ_TZ })),
+    [allReports]
+  )
 
-  // Newest first
+  // Newest first (allReports is already sorted, but keep explicit sort for clarity)
   const sorted = useMemo(
-    () => [...reports].sort((a, b) => (b.startMs ?? 0) - (a.startMs ?? 0)),
-    [reports]
+    () => [...allReports].sort((a, b) => (b.startMs ?? 0) - (a.startMs ?? 0)),
+    [allReports]
   )
 
   return (
@@ -704,6 +657,7 @@ export default function SalesReportsPage({
   }, [venueId, dataVersion])
 
   const { reports: activeReports } = useMemo(() => partitionReports(allDocs), [allDocs])
+  const allReports = useMemo(() => mapAllReports(allDocs), [allDocs])
   const activeOnly = useMemo(
     () => activeReports.filter(r => isReportActive({ status: r.status })),
     [activeReports]
@@ -737,8 +691,7 @@ export default function SalesReportsPage({
 
       {tab === 'reports' && (
         <ReportsTab
-          allDocs={allDocs}
-          reports={activeReports}
+          allReports={allReports}
           matchesByReport={matchesByReport}
           canManage={canManage ?? false}
           onDataChange={() => setDataVersion(v => v + 1)}
