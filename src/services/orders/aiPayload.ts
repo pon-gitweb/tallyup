@@ -3,6 +3,8 @@
  * Keep payload tiny, deterministic, and Expo-safe.
  */
 
+import { getParLevel } from '../../utils/productFields';
+
 export type SupplierHint = { id: string; name: string };
 
 export type AggregateSignals = {
@@ -48,7 +50,7 @@ export function filterAICandidates(
   const keep: AggregateSignals[] = [];
   for (const p of products) {
     const hasSupplier = !!s(p?.supplierId, '');
-    const par = n(p?.par, 0);
+    const par = getParLevel(p) ?? 0;
     const onHand = n(p?.onHand, NaN);
     const usage = n(p?.avgDailyUsage_30, NaN);
 
@@ -83,7 +85,7 @@ export function buildAISuggestRequestBody(args: {
     name: s(p.name, p.id || 'Item'),
     supplierId: s(p?.supplierId, '') || null,
     supplierName: s(p?.supplierName, '') || null,
-    par: Number.isFinite(p?.par) ? Number(p.par) : 0,
+    par: getParLevel(p) ?? 0,
     unitCost: Number.isFinite(p?.unitCost) ? Number(p.unitCost) : 0,
     packSize: Number.isFinite(p?.packSize) ? Number(p.packSize) : null,
 

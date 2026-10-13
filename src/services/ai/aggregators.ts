@@ -6,6 +6,8 @@
  * - Keeps payloads small and predictable
  */
 
+import { getParLevel } from '../../utils/productFields';
+
 // ---------- helpers ----------
 const num = (v:any, d=0)=>{ const x=Number(v); return Number.isFinite(x) ? x : d; };
 const m1  = (v:any)=>{ const x=Number(v); return Number.isFinite(x) ? Math.max(1, Math.round(x)) : 1; };
@@ -49,7 +51,7 @@ export function buildSuggestOrdersAggregate(args:{
   const candidates = products.map(p=>{
     const productId   = s(p?.id);
     const name        = s(p?.name, productId);
-    const par         = Math.max(0, Math.round(num(p?.par, 0)));
+    const par         = Math.max(0, Math.round(getParLevel(p) ?? 0));
     const onHand      = Math.max(0, Math.round(num(p?.onHand, 0)));
     const gap         = Math.max(0, par - onHand);
     const supplierId  = s(p?.supplierId) || s(p?.supplier?.id);

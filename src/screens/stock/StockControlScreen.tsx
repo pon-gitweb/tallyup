@@ -1,5 +1,6 @@
 // src/screens/stock/StockControlScreen.tsx
 import React, { useMemo, useEffect, useState, useCallback } from 'react';
+import { getParLevel } from '../../utils/productFields';
 import {
   View,
   Text,
@@ -162,8 +163,7 @@ export default function StockControlScreen() {
         const sid = v?.supplierId || v?.supplier?.id || null;
         const sname = v?.supplierName || v?.supplier?.name || null;
 
-        const rawPar = Number(v?.par);
-        const par = Number.isFinite(rawPar) ? rawPar : null;
+        const par = getParLevel(v);
 
         const rawPack = Number(v?.packSize);
         const packSize = Number.isFinite(rawPack) ? rawPack : null;
@@ -181,7 +181,7 @@ export default function StockControlScreen() {
           : null;
 
         const missingSupplier = !sid;
-        const missingPar = !Number.isFinite(rawPar) || rawPar <= 0;
+        const missingPar = par == null || par <= 0;
         const missingCost = !Number.isFinite(costPrice) || costPrice <= 0;
         const missingPackSize = !Number.isFinite(rawPack) || rawPack <= 0;
 
@@ -354,8 +354,10 @@ export default function StockControlScreen() {
 
       if (parNum != null && Number.isFinite(parNum) && parNum > 0) {
         update.par = parNum;
+        update.parLevel = parNum;
       } else {
         update.par = null;
+        update.parLevel = null;
       }
 
       if (costNum != null && Number.isFinite(costNum) && costNum >= 0) {

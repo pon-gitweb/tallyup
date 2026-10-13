@@ -5,6 +5,7 @@ import { getAuth } from 'firebase/auth';
 import { db } from '../../../services/firebase';
 import { doc, setDoc, collection } from 'firebase/firestore';
 import { getCurrentVenueForUser } from '../../../services/devBootstrap';
+import { getParLevel } from '../../../utils/productFields';
 
 type ProductRow = {
   sku: string;
@@ -27,6 +28,7 @@ function parseCSV(text: string): ProductRow[] {
       unit: cols[2] || undefined,
       category: cols[3] || undefined,
       par: cols[4] ? Number(cols[4]) : null,
+      parLevel: cols[4] ? Number(cols[4]) : null,
     });
   }
   return rows;
@@ -69,6 +71,7 @@ export default function ProductsStep() {
           unit: r.unit || null,
           category: r.category || null,
           par: typeof r.par === 'number' && !isNaN(r.par) ? r.par : null,
+          parLevel: typeof r.par === 'number' && !isNaN(r.par) ? r.par : null,
           active: true,
         };
         await setDoc(ref, payload, { merge: true });
@@ -103,7 +106,7 @@ export default function ProductsStep() {
         renderItem={({ item }) => (
           <View style={{ paddingVertical: 6 }}>
             <Text>{item.sku} — {item.name} {item.unit ? `(${item.unit})` : ''}</Text>
-            <Text style={{ opacity: 0.7, fontSize: 12 }}>{item.category || ''} {item.par != null ? ` • par ${item.par}` : ''}</Text>
+            <Text style={{ opacity: 0.7, fontSize: 12 }}>{item.category || ''} {getParLevel(item) != null ? ` • par ${getParLevel(item)}` : ''}</Text>
           </View>
         )}
       />
