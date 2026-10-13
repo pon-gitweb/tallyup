@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { User } from 'firebase/auth'
 import { doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
 import { db } from '../firebase'
+import GetTheApp from '../components/GetTheApp'
 import styles from './SettingsPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -244,6 +245,12 @@ export default function SettingsPage({ venueId, user, canManage = false }: { ven
             </div>
           </div>
         )}
+
+        {/* Get the App */}
+        <div className={styles.card}>
+          <h2 className={styles.cardHeading}>Mobile App</h2>
+          <GetTheApp label="Count stock on your phone with the Hosti app:" />
+        </div>
 
         {/* Labour Settings */}
         <div className={styles.card}>

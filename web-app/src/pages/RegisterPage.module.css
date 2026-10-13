@@ -131,7 +131,7 @@
 .inUseBtn {
   background: none;
   border: none;
-  padding: 0;
+  padding: 8px 4px;
   font-size: 13px;
   font-weight: 700;
   color: #1b4f72;
@@ -156,7 +156,7 @@
 .linkButton {
   background: none;
   border: none;
-  padding: 0;
+  padding: 8px 4px;
   font-size: 13px;
   font-weight: 600;
   color: #1b4f72;
