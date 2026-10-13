@@ -22,6 +22,7 @@ import { computeRecipeGpPct } from './priceCascade';
 import { flagAnomalousChanges, SanityInput } from './priceChangeSanity';
 import {
   buildVelocityRowsFromReports,
+  buildStockMap,
   partitionReports,
   weekDayBreakdown,
   daySpan,
@@ -1433,7 +1434,7 @@ export function buildSalesPerformanceResult(
   // Weekly table — units from matched entries, revenue from rawLines, day-weighted
   const weeklyTable = winMondays.map(wkMon => {
     const wkSun = addDays(wkMon, 6);
-    let units = 0, revIncl = 0, revExcl = 0, anyLegacy = false;
+    let units = 0, revIncl = 0, revExcl = 0, anyInclOnly = false;
     for (const r of matchedReports) {
       if (r.startStr! > wkSun || r.endStr! < wkMon) continue;
       const md = matchesByReport[r.id]!;
@@ -1441,15 +1442,18 @@ export function buildSalesPerformanceResult(
       const os = r.startStr! > wkMon ? r.startStr! : wkMon;
       const oe = r.endStr!   < wkSun  ? r.endStr!  : wkSun;
       const frac = daySpan(os, oe) / totalDays;
-      if (r.meta?.lineTotalsBasis !== 'line_total') anyLegacy = true;
+      const canShowExGst = r.meta?.lineTotalsBasis === 'line_total' &&
+        r.meta?.gstBasis !== 'assumed_incl' && r.meta?.gstBasis !== 'unknown';
+      if (!canShowExGst) anyInclOnly = true;
       for (const m of md.matches)  units   += (m.qtySold ?? 0) * frac;
       for (const l of r.rawLines) { revIncl += (l.grossIncl ?? l.gross ?? 0) * frac; revExcl += (l.netExcl ?? l.net ?? 0) * frac; }
     }
     return {
       weekStart: wkMon,
-      revenueExGst:   anyLegacy ? null : Math.round(revExcl  * 100) / 100,
+      revenueExGst:   anyInclOnly ? null : Math.round(revExcl  * 100) / 100,
       revenueInclGst: Math.round(revIncl * 100) / 100,
       units:          Math.round(units  *  10) / 10,
+      ...(anyInclOnly ? { inclOnly: true } : {}),
     };
   });
 
@@ -1484,28 +1488,29 @@ export function buildSalesPerformanceResult(
     let last4Units = 0, prev4Units = 0;
     for (const row of velocityRows) { last4Units += row.last4Units; prev4Units += row.prev4Units; }
 
-    let l4RevIncl = 0, l4RevExcl = 0, l4Legacy = false;
-    let p4RevIncl = 0, p4RevExcl = 0, p4Legacy = false;
+    let l4RevIncl = 0, l4RevExcl = 0, l4InclOnly = false;
+    let p4RevIncl = 0, p4RevExcl = 0, p4InclOnly = false;
     for (const r of matchedReports) {
       const wdMap = weekDayBreakdown(r.startStr!, r.endStr!);
       const totalDays = r.days ?? 1;
-      const isLegacy = r.meta?.lineTotalsBasis !== 'line_total';
+      const isInclOnly = r.meta?.lineTotalsBasis !== 'line_total' ||
+        r.meta?.gstBasis === 'assumed_incl' || r.meta?.gstBasis === 'unknown';
       let lf = 0, pf = 0;
       for (const [wk, d] of Object.entries(wdMap)) {
         if (last4Set.has(wk)) lf += d / totalDays;
         else if (prev4Set.has(wk)) pf += d / totalDays;
       }
       if (lf > 0) {
-        if (isLegacy) l4Legacy = true;
+        if (isInclOnly) l4InclOnly = true;
         for (const l of r.rawLines) { l4RevIncl += (l.grossIncl ?? l.gross ?? 0) * lf; l4RevExcl += (l.netExcl ?? l.net ?? 0) * lf; }
       }
       if (pf > 0) {
-        if (isLegacy) p4Legacy = true;
+        if (isInclOnly) p4InclOnly = true;
         for (const l of r.rawLines) { p4RevIncl += (l.grossIncl ?? l.gross ?? 0) * pf; p4RevExcl += (l.netExcl ?? l.net ?? 0) * pf; }
       }
     }
-    const last4RevExGst  = l4Legacy ? null : Math.round(l4RevExcl * 100) / 100;
-    const prev4RevExGst  = p4Legacy ? null : Math.round(p4RevExcl * 100) / 100;
+    const last4RevExGst  = l4InclOnly ? null : Math.round(l4RevExcl * 100) / 100;
+    const prev4RevExGst  = p4InclOnly ? null : Math.round(p4RevExcl * 100) / 100;
     const l4cov = windowInfo.last4CoveredDays, p4cov = windowInfo.prev4CoveredDays;
     const unitChangePct = (l4cov >= 14 && p4cov >= 14 && prev4Units > 0)
       ? Math.round(((last4Units / l4cov) / (prev4Units / p4cov) - 1) * 100) : null;
@@ -1518,6 +1523,7 @@ export function buildSalesPerformanceResult(
       last4RevInclGst: Math.round(l4RevIncl   * 100) / 100,
       prev4RevInclGst: Math.round(p4RevIncl   * 100) / 100,
       unitChangePct,   revChangePct,
+      ...(l4InclOnly || p4InclOnly ? { revenueNote: 'incl-GST only (POS-sourced data)' } : {}),
     };
   }
 
@@ -1565,16 +1571,14 @@ export function buildSalesPerformanceResult(
   return result;
 }
 
-/**
- * Async resolver: loads all sales data from Firestore and returns buildSalesPerformanceResult.
- * Called from the tool loop in api.ts (resolveTool).
- */
-export async function resolveSalesPerformance(
-  db: any,
-  venueId: string,
-  input: SalesPerfInput,
-  todayNZ: string,
-): Promise<Record<string, any>> {
+export interface SalesData {
+  reports: ActiveReport[];
+  matchesByReport: Record<string, MatchData | null>;
+  stockMap: Record<string, StockEntry>;
+}
+
+/** Loads all sales data from Firestore. Call once per request and reuse. */
+export async function loadSalesData(db: any, venueId: string): Promise<SalesData> {
   const salesSnap = await db.collection(`venues/${venueId}/salesReports`).get().catch(() => null);
   const allDocs: Array<{ id: string; data(): Record<string, any> }> = salesSnap?.docs ?? [];
 
@@ -1613,34 +1617,39 @@ export async function resolveSalesPerformance(
     } catch { matchesByReport[r.id] = null; }
   }));
 
-  // Load stock from latest dept cycle snapshots (non-fatal)
-  const stockMap: Record<string, StockEntry> = {};
+  // Load stock from latest dept snapshots (non-fatal) — use snapshots, not cycles
+  let stockMap: Record<string, StockEntry> = {};
   try {
     const deptsSnap = await db.collection(`venues/${venueId}/departments`).get().catch(() => null);
     if (deptsSnap && !deptsSnap.empty) {
-      const snapshots = await Promise.all(
+      const rawSnapshots = await Promise.all(
         (deptsSnap.docs as any[]).map(async (dDoc: any) => {
           try {
-            const cs = await db.collection(`venues/${venueId}/departments/${dDoc.id}/cycles`)
-              .orderBy('createdAt', 'desc').limit(1).get();
+            const cs = await db.collection(`venues/${venueId}/departments/${dDoc.id}/snapshots`)
+              .orderBy('cycleNumber', 'desc').limit(1).get();
             if (cs.empty) return null;
             const d = cs.docs[0].data() as any;
             return { cycleNumber: d.cycleNumber ?? 0, items: d.items ?? [] };
           } catch { return null; }
         }),
       );
-      for (const s of snapshots) {
-        if (!s) continue;
-        for (const item of s.items as any[]) {
-          if (!item.productId) continue;
-          const ex = stockMap[item.productId];
-          if (item.actualClosing != null && (!ex || s.cycleNumber > ex.cycleNumber)) {
-            stockMap[item.productId] = { count: item.actualClosing, cycleNumber: s.cycleNumber };
-          }
-        }
-      }
+      stockMap = buildStockMap(rawSnapshots.filter(Boolean) as Array<{ cycleNumber: number; items: any[] }>);
     }
   } catch { /* stock optional */ }
 
-  return buildSalesPerformanceResult(reports, matchesByReport, stockMap, input, todayNZ);
+  return { reports, matchesByReport, stockMap };
+}
+
+/**
+ * Async resolver: loads sales data and returns buildSalesPerformanceResult.
+ * Called from the tool loop in api.ts (resolveTool).
+ */
+export async function resolveSalesPerformance(
+  db: any,
+  venueId: string,
+  input: SalesPerfInput,
+  todayNZ: string,
+): Promise<Record<string, any>> {
+  const d = await loadSalesData(db, venueId);
+  return buildSalesPerformanceResult(d.reports, d.matchesByReport, d.stockMap, input, todayNZ);
 }

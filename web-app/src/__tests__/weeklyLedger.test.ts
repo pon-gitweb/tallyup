@@ -8,6 +8,8 @@ import {
   buildVelocityRowsFromReports,
   buildUnmatchedRows,
   normName,
+  isSquareSource,
+  normaliseSalesReport,
   type ActiveReport,
   type MatchData,
   type StockEntry,
@@ -409,5 +411,119 @@ describe('buildUnmatchedRows', () => {
     const r = makeActiveReport('r1', [{ name: 'Ghost', qtySold: 5, grossIncl: 50 }])
     const rows = buildUnmatchedRows([r], { r1: null })
     expect(rows).toHaveLength(0)
+  })
+})
+
+// ── isSquareSource ─────────────────────────────────────────────────────────────
+
+describe('isSquareSource', () => {
+  it('returns true for square-prefixed id', () =>
+    expect(isSquareSource('square-abc', undefined)).toBe(true))
+  it('returns true for source=square', () =>
+    expect(isSquareSource('report-123', 'square')).toBe(true))
+  it('returns true for source=square-pull', () =>
+    expect(isSquareSource('report-123', 'square-pull')).toBe(true))
+  it('returns true for source=square-webhook', () =>
+    expect(isSquareSource('sq-1', 'square-webhook')).toBe(true))
+  it('returns false for non-Square CSV import', () =>
+    expect(isSquareSource('report-abc', 'bustle')).toBe(false))
+  it('returns false for undefined source with non-square id', () =>
+    expect(isSquareSource('report-abc', undefined)).toBe(false))
+})
+
+// ── normaliseSalesReport ───────────────────────────────────────────────────────
+
+describe('normaliseSalesReport', () => {
+  it('normalises a Square daily doc', () => {
+    const n = normaliseSalesReport('square-abc', {
+      source: 'square',
+      date:   '2026-09-28',
+      lines:  [{ name: 'Beer', qtySold: 5, grossIncl: 575 }],
+    })
+    expect(n.sourceFormat).toBe('square')
+    expect(n.startStr).toBe('2026-09-28')
+    expect(n.endStr).toBe('2026-09-28')
+    expect(n.days).toBe(1)
+    expect(n.lineTotalsBasis).toBe('line_total')
+    expect(n.gstBasis).toBe('assumed_incl')
+    expect(n.rawLines).toHaveLength(1)
+  })
+
+  it('normalises a CSV import doc', () => {
+    const n = normaliseSalesReport('r-csv', {
+      source: 'bustle',
+      report: {
+        period: { start: '2026-09-22', end: '2026-09-28' },
+        lines:  [{ name: 'Beer', qtySold: 3, grossIncl: 345, netExcl: 300 }],
+        meta:   { sourceFormat: 'bustle_rich', lineTotalsBasis: 'line_total', gstBasis: 'explicit' },
+      },
+    })
+    expect(n.sourceFormat).toBe('bustle_rich')
+    expect(n.lineTotalsBasis).toBe('line_total')
+    expect(n.gstBasis).toBe('explicit')
+  })
+
+  it('legacy doc (no meta) gets unknown basis', () => {
+    const n = normaliseSalesReport('old', {
+      source: 'bustle',
+      report: { lines: [{ name: 'Beer', qtySold: 2 }] },
+    })
+    expect(n.lineTotalsBasis).toBe('unknown')
+    expect(n.gstBasis).toBe('unknown')
+  })
+})
+
+// ── buildStrip with Square daily docs ─────────────────────────────────────────
+
+function makeSquareActiveReport(id: string, date: string): ActiveReport {
+  return {
+    id,
+    source:            'square',
+    startStr:          date,
+    endStr:            date,
+    startMs:           new Date(date + 'T00:00:00Z').getTime(),
+    days:              1,
+    lineCount:         1,
+    totalRevenue:      100,
+    totalQtySold:      5,
+    rawLines:          [{ name: 'Beer', qtySold: 5, grossIncl: 115 }],
+    overlappingCycles: [],
+    allocationMethod:  'none',
+    status:            null,
+    meta:              { sourceFormat: 'square', lineTotalsBasis: 'line_total', gstBasis: 'assumed_incl' },
+  }
+}
+
+describe('buildStrip with Square docs', () => {
+  it('week with 3 Square daily docs shows partial coverage', () => {
+    const docs = [
+      makeSquareActiveReport('sq-1', '2026-09-28'),  // Mon
+      makeSquareActiveReport('sq-2', '2026-09-29'),  // Tue
+      makeSquareActiveReport('sq-3', '2026-09-30'),  // Wed
+    ]
+    const strip = buildStrip(docs, '2026-10-13')
+    const wk = strip.find(c => c.monday === '2026-09-28')
+    expect(wk?.state).toBe('partial')
+  })
+
+  it('week with 7 Square daily docs shows present', () => {
+    const dates = ['2026-09-28','2026-09-29','2026-09-30','2026-10-01','2026-10-02','2026-10-03','2026-10-04']
+    const docs = dates.map((d, i) => makeSquareActiveReport(`sq-${i}`, d))
+    const strip = buildStrip(docs, '2026-10-13')
+    const wk = strip.find(c => c.monday === '2026-09-28')
+    expect(wk?.state).toBe('present')
+  })
+})
+
+// ── canVoidReport (via isSquareSource) ────────────────────────────────────────
+
+describe('Void hidden for Square-sourced reports', () => {
+  it('isSquareSource is true for Square doc → cannot void', () => {
+    const squareReport = makeSquareActiveReport('sq-1', '2026-09-28')
+    expect(isSquareSource(squareReport.id, squareReport.source)).toBe(true)
+  })
+
+  it('isSquareSource is false for CSV import id/source → can void', () => {
+    expect(isSquareSource('report-bustle-abc', 'bustle')).toBe(false)
   })
 })

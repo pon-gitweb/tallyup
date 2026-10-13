@@ -26,7 +26,8 @@ import {
   GP_TREND_TOOL, aggregateGpTrend, GpAlertRecord,
   MENU_ENGINEERING_TOOL, aggregateMenuEngineering, MenuEngineeringRecipe, RecipeSalesData,
   PRICE_CHANGE_DETAIL_TOOL, buildPriceChangeDetail, PriceDetailRawRecord,
-  SALES_PERFORMANCE_TOOL, resolveSalesPerformance, SalesPerfInput,
+  SALES_PERFORMANCE_TOOL, resolveSalesPerformance, loadSalesData, buildSalesPerformanceResult,
+  SalesPerfInput, SalesData,
 } from './suiteeTools';
 
 const app = express();
@@ -4013,18 +4014,27 @@ app.post("/suitee", async (req, res) => {
       });
     }
 
+    const todayNZ = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
+    let _salesData: SalesData | null = null;
+    const getSalesData = async () => { if (!_salesData) _salesData = await loadSalesData(db, venueId); return _salesData; };
+
     // Compact sales header — 6-line summary from all active reports + match data
     let salesCompactHeader = '';
     try {
-      const todayNZ = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
-      const perf = await resolveSalesPerformance(db, venueId, { question_type: 'summary', weeks: 4 }, todayNZ);
+      const data = await getSalesData();
+      const perf = buildSalesPerformanceResult(data.reports, data.matchesByReport, data.stockMap, { question_type: 'summary', weeks: 4 }, todayNZ);
       if (perf && (perf.weeksCovered as number) > 0) {
         const lp = (perf.matchCoverage as any)?.linesPct ?? 0;
         const up = (perf.matchCoverage as any)?.unitsPct ?? 0;
         const nm = perf.reportsNotMatched ?? 0;
         const s  = perf.summary as any ?? {};
-        const l4u = typeof s.last4Units === 'number' ? s.last4Units.toFixed(0) : 'n/a';
-        const l4r = typeof s.last4RevExGst === 'number' ? `$${s.last4RevExGst.toFixed(0)}` : 'n/a';
+        const l4u  = typeof s.last4Units === 'number' ? s.last4Units.toFixed(0) : 'n/a';
+        const inclOnly = !!s.revenueNote;
+        const l4r  = typeof s.last4RevExGst === 'number'
+          ? `$${s.last4RevExGst.toFixed(0)} ex GST`
+          : typeof s.last4RevInclGst === 'number'
+            ? `$${s.last4RevInclGst.toFixed(0)} incl GST (POS-sourced, ex GST unavailable)`
+            : 'n/a';
         const uc  = typeof s.unitChangePct === 'number'
           ? `${s.unitChangePct >= 0 ? '+' : ''}${s.unitChangePct.toFixed(0)}%` : 'n/a';
         const rc  = typeof s.revChangePct === 'number'
@@ -4035,10 +4045,11 @@ app.post("/suitee", async (req, res) => {
         const p4d = perf.prev4CoveredDays ?? 0;
         const lines6: string[] = [
           `Match coverage: ${lp}% of lines, ${up}% of units (${nm} report(s) not yet matched)`,
-          `Last 4 wks: ${l4u} units | revenue ex GST: ${l4r}`,
-          `Change vs prev 4 wks: ${uc} units, ${rc} revenue ex GST`,
+          `Last 4 wks: ${l4u} units | revenue: ${l4r}`,
+          `Change vs prev 4 wks: ${uc} units, ${rc} revenue`,
           `Coverage: ${l4d}/28 days (last 4 wks), ${p4d}/28 days (prev 4 wks)`,
           `Missing weeks: ${mw}`,
+          ...(inclOnly ? ['Note: revenue figures are incl-GST only (POS-sourced data)'] : []),
         ];
         if (perf.newestReportEnd) lines6.push(`Sales data through: ${perf.newestReportEnd}`);
         salesCompactHeader = lines6.join('\n');
@@ -4781,7 +4792,7 @@ For pour variance questions: state the spec, the implied actual, and the confide
 Never answer questions about how to use the app — direct those to Izzy.
 
 ## Sales performance
-For sales, revenue, best/worst sellers, trends or velocity questions call get_sales_performance; never compute sales figures yourself. Always state the match coverage when giving product-level figures (e.g. 'based on the 30% of units matched to products'). Revenue is ex GST unless the user asks for incl. If weeks are missing, say which.
+For sales, revenue, best/worst sellers, trends or velocity questions call get_sales_performance; never compute sales figures yourself. Always state the match coverage when giving product-level figures (e.g. 'based on the 30% of units matched to products'). Revenue is ex GST unless the user asks for incl. If ex-GST revenue is unavailable (POS-sourced data is incl-GST only), give the incl-GST figure and say so. If weeks are missing, say which.
 
 ${SUITEE_COUNTING_NOTE}
 
@@ -5084,8 +5095,8 @@ ${context}`;
         return buildPriceChangeDetail(rawRecords, days);
       }
       if (toolName === 'get_sales_performance') {
-        const todayNZ = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
-        return resolveSalesPerformance(db, venueId, input as SalesPerfInput, todayNZ);
+        const d = await getSalesData();
+        return buildSalesPerformanceResult(d.reports, d.matchesByReport, d.stockMap, input as SalesPerfInput, todayNZ);
       }
       return { error: `Unknown tool: ${toolName}` };
     };

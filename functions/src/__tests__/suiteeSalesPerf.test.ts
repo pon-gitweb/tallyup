@@ -10,6 +10,7 @@
  */
 
 import { buildSalesPerformanceResult } from '../suiteeTools';
+import { normaliseSalesReport } from '../weeklyLedger';
 import type { ActiveReport, MatchData, StockEntry } from '../weeklyLedger';
 
 const TODAY_NZ = '2026-10-13';
@@ -60,6 +61,27 @@ function makeMatch(id: string, productId: string, qtySold: number): MatchData {
 }
 
 const EMPTY_STOCK: Record<string, StockEntry> = {};
+
+function makeSquareReport(id: string, date: string, qtySold: number): ActiveReport {
+  const startMs = new Date(date + 'T00:00:00Z').getTime();
+  const grossIncl = qtySold * 115;
+  return {
+    id,
+    source:           'square',
+    startStr:         date,
+    endStr:           date,
+    startMs,
+    days:             1,
+    lineCount:        1,
+    totalRevenue:     grossIncl,
+    totalQtySold:     qtySold,
+    rawLines:         [{ name: 'Beer', qtySold, grossIncl }],
+    overlappingCycles: [],
+    allocationMethod: 'none',
+    status:           null,
+    meta:             { sourceFormat: 'square', lineTotalsBasis: 'line_total', gstBasis: 'assumed_incl' },
+  };
+}
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -189,5 +211,96 @@ describe('buildSalesPerformanceResult', () => {
     );
 
     expect(JSON.stringify(result).length).toBeLessThan(6000);
+  });
+});
+
+// ── normaliseSalesReport ──────────────────────────────────────────────────────
+
+describe('normaliseSalesReport', () => {
+  it('normalises a Square daily doc correctly', () => {
+    const n = normaliseSalesReport('square-abc123', {
+      source: 'square',
+      date:   '2026-09-28',
+      lines:  [{ name: 'Beer', qtySold: 5, grossIncl: 575 }],
+    });
+    expect(n.sourceFormat).toBe('square');
+    expect(n.startStr).toBe('2026-09-28');
+    expect(n.endStr).toBe('2026-09-28');
+    expect(n.days).toBe(1);
+    expect(n.lineTotalsBasis).toBe('line_total');
+    expect(n.gstBasis).toBe('assumed_incl');
+    expect(n.rawLines).toHaveLength(1);
+    expect(n.source).toBe('square');
+  });
+
+  it('normalises a CSV/PDF import doc', () => {
+    const n = normaliseSalesReport('report-abc', {
+      source: 'bustle',
+      report: {
+        period: { start: '2026-09-22', end: '2026-09-28' },
+        lines:  [{ name: 'Beer', qtySold: 5, grossIncl: 575, netExcl: 500 }],
+        meta:   { sourceFormat: 'bustle_rich', lineTotalsBasis: 'line_total', gstBasis: 'explicit' },
+      },
+    });
+    expect(n.sourceFormat).toBe('bustle_rich');
+    expect(n.startStr).toBe('2026-09-22');
+    expect(n.endStr).toBe('2026-09-28');
+    expect(n.lineTotalsBasis).toBe('line_total');
+    expect(n.gstBasis).toBe('explicit');
+  });
+
+  it('legacy doc (no meta) gets unknown basis', () => {
+    const n = normaliseSalesReport('old-report', {
+      source: 'bustle',
+      report: { lines: [{ name: 'Beer', qtySold: 3 }] },
+    });
+    expect(n.lineTotalsBasis).toBe('unknown');
+    expect(n.gstBasis).toBe('unknown');
+  });
+});
+
+// ── incl-only revenue ─────────────────────────────────────────────────────────
+
+describe('incl-only revenue (assumed_incl gstBasis)', () => {
+  it('Square report sets revenueExGst=null and revenueInclGst set on weekly table row', () => {
+    const r = makeSquareReport('sq-1', '2026-09-28', 10);
+    const matchesByReport: Record<string, MatchData | null> = {
+      'sq-1': makeMatch('sq-1', 'p-beer', 10),
+    };
+    const result = buildSalesPerformanceResult(
+      [r],
+      matchesByReport,
+      EMPTY_STOCK,
+      { question_type: 'summary', weeks: 4 },
+      TODAY_NZ,
+    );
+    const wkRow = (result.weeklyTable as any[]).find((w: any) => w.weekStart === '2026-09-28');
+    expect(wkRow).toBeDefined();
+    expect(wkRow.revenueExGst).toBeNull();
+    expect(typeof wkRow.revenueInclGst).toBe('number');
+    expect(wkRow.revenueInclGst).toBeGreaterThan(0);
+    expect(wkRow.inclOnly).toBe(true);
+    expect((result.summary as any)?.revenueNote).toMatch(/incl/i);
+  });
+});
+
+// ── actualClosing=0 → Sold out ────────────────────────────────────────────────
+
+describe('stock status', () => {
+  it('product with actualClosing=0 in latest snapshot → status Sold out', () => {
+    const r = makeReport('r1', '2026-09-28', '2026-10-04');
+    const matchesByReport: Record<string, MatchData | null> = {
+      r1: makeMatch('r1', 'p1', 10),
+    };
+    const stockMap: Record<string, StockEntry> = {
+      p1: { count: 0, cycleNumber: 5 },
+    };
+    const result = buildSalesPerformanceResult(
+      [r], matchesByReport, stockMap, { question_type: 'top_sellers' }, TODAY_NZ,
+    );
+    const sellers = result.top_sellers as any[];
+    const p1 = sellers.find((s: any) => s.productId === 'p1');
+    expect(p1).toBeDefined();
+    expect(p1.status).toBe('Sold out');
   });
 });

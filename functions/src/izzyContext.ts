@@ -239,9 +239,11 @@ GP MARGIN ALERTS (manager/owner only):
 - Staff users do not see these banners — owner and manager only
 
 SALES REPORTS (web only):
-- Export the Bustle "GP per product" CSV for a Tuesday-to-Monday period (one report per stocktake week); import it on the Import page — dates fill in automatically from the filename, check them before saving
-- Manage > Sales Reports shows a coverage strip (which weeks have data), revenue incl/ex GST, and match rate
-- Void (owner/manager only) removes a wrong report from analytics so it can be re-imported; saved stocktakes keep their existing figures
+- Any POS that exports an itemised CSV with item name, quantity sold and line totals (incl and/or excl GST) can be imported — one file per stocktake week (Tuesday to Monday when stocktakes are on Tuesday mornings)
+- Bustle example: export "GP per product" CSV for the Tuesday-to-Monday period; import on the Import page — dates fill in from the filename automatically
+- Square: syncs automatically once connected (Settings → Integrations) — no manual upload needed
+- Manage > Sales Reports shows a coverage strip, revenue incl/ex GST, and match rate
+- Void (owner/manager only) removes a wrong CSV import from analytics so it can be re-imported; POS-synced data (Square) cannot be voided
 - Velocity tab shows sales-led status for each product: Selling, Slowing, Stagnant, or Sold out
 - Unmatched tab lists POS line names not yet linked to products — fix them in POS Mapping
 - Ask Suitee for sales performance questions (top sellers, trends, revenue, product lookup)
