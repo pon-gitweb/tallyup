@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { onAuthStateChanged, type User } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from './firebase'
@@ -30,8 +30,61 @@ import RegisterPage from './pages/RegisterPage'
 import VerifyEmailPage from './pages/VerifyEmailPage'
 import CreateVenuePage from './pages/CreateVenuePage'
 import StocktakeCorrectionPage from './pages/StocktakeCorrectionPage'
+import SalesReportsPage from './pages/SalesReportsPage'
 import styles from './App.module.css'
 import { theme } from './theme'
+
+// ── Stale-build banner ────────────────────────────────────────────────────────
+
+function StaleBuildBanner() {
+  const [show, setShow] = useState(false)
+  const dismissed = useRef(false)
+
+  const check = useCallback(async () => {
+    if (dismissed.current) return
+    try {
+      const res = await fetch('/app/version.json', { cache: 'no-store' })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.build && data.build !== __BUILD_ID__) setShow(true)
+    } catch { /* fetch errors are silent */ }
+  }, [])
+
+  useEffect(() => {
+    check()
+    window.addEventListener('focus', check)
+    const id = setInterval(check, 5 * 60 * 1000)
+    return () => { window.removeEventListener('focus', check); clearInterval(id) }
+  }, [check])
+
+  if (!show) return null
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+      background: '#1e40af', color: '#fff',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16,
+      padding: '10px 16px', fontSize: 14, fontFamily: 'Inter, sans-serif',
+    }}>
+      <span>A newer version of Hosti is available.</span>
+      <button
+        onClick={() => location.reload()}
+        style={{
+          background: '#fff', color: '#1e40af', border: 'none',
+          borderRadius: 6, padding: '4px 14px', fontWeight: 600, cursor: 'pointer', fontSize: 13,
+        }}
+      >
+        Reload
+      </button>
+      <button
+        onClick={() => { setShow(false); dismissed.current = true }}
+        aria-label="Dismiss"
+        style={{ background: 'none', border: 'none', color: '#93c5fd', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+      >
+        ×
+      </button>
+    </div>
+  )
+}
 
 function App() {
   // undefined = auth state not yet resolved, null = signed out
@@ -189,7 +242,7 @@ function App() {
     }
   }
 
-  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'invoices', 'suppliers', 'reports', 'stock', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping', 'billing', 'stocktake-correction']
+  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'invoices', 'suppliers', 'reports', 'stock', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping', 'billing', 'stocktake-correction', 'sales-reports']
 
   const isFestival = activeVenue?.venueType === 'festival'
 
@@ -233,6 +286,8 @@ function App() {
   }
 
   return (
+    <>
+    <StaleBuildBanner />
     <DashboardLayout
       user={user}
       activeVenueName={activeVenue?.name ?? null}
@@ -263,6 +318,9 @@ function App() {
       {page === 'stocktake-correction' && activeVenue && user && (
         <StocktakeCorrectionPage venueId={activeVenue.id} user={user} />
       )}
+      {page === 'sales-reports' && activeVenue && (
+        <SalesReportsPage venueId={activeVenue.id} canManage={canManage} onNavigate={(p) => setPage(p as Page)} />
+      )}
       {page === 'pos-mapping'  && activeVenue && (
         <div style={{ padding: 32, maxWidth: 480 }}>
           <h2 style={{ fontFamily: theme.fontTitle, fontSize: 24, color: theme.navy, marginBottom: 8 }}>
@@ -292,6 +350,7 @@ function App() {
         </p>
       )}
     </DashboardLayout>
+    </>
   )
 }
 

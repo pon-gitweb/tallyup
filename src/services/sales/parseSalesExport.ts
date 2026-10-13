@@ -21,7 +21,7 @@
  * A test verifies both files are byte-for-byte identical.
  */
 
-export const PARSER_VERSION = 2;
+export const PARSER_VERSION = 3;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -592,7 +592,7 @@ export function parseSalesExport(rows: string[][]): ParsedSalesExport {
 
   // ── Report kind ──────────────────────────────────────────────────────────
   const kind: 'items' | 'summary' | 'unknown' =
-    format === 'bustle_items' ? 'items' : 'unknown';
+    (format === 'bustle_items' || format === 'bustle_rich') ? 'items' : 'unknown';
 
   return {
     format,
