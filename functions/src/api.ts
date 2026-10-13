@@ -26,6 +26,8 @@ import {
   GP_TREND_TOOL, aggregateGpTrend, GpAlertRecord,
   MENU_ENGINEERING_TOOL, aggregateMenuEngineering, MenuEngineeringRecipe, RecipeSalesData,
   PRICE_CHANGE_DETAIL_TOOL, buildPriceChangeDetail, PriceDetailRawRecord,
+  SALES_PERFORMANCE_TOOL, resolveSalesPerformance, loadSalesData, buildSalesPerformanceResult,
+  SalesPerfInput, SalesData,
 } from './suiteeTools';
 
 const app = express();
@@ -4012,10 +4014,48 @@ app.post("/suitee", async (req, res) => {
       });
     }
 
-    // Sales data from loaded snapshot
-    let salesSummary = "";
-    if (salesSnap && !salesSnap.empty) {
-      salesSummary = salesSnap.docs.map(d => JSON.stringify(d.data())).join("\n");
+    const todayNZ = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
+    let _salesData: SalesData | null = null;
+    const getSalesData = async () => { if (!_salesData) _salesData = await loadSalesData(db, venueId); return _salesData; };
+
+    // Compact sales header — 6-line summary from all active reports + match data
+    let salesCompactHeader = '';
+    try {
+      const data = await getSalesData();
+      const perf = buildSalesPerformanceResult(data.reports, data.matchesByReport, data.stockMap, { question_type: 'summary', weeks: 4 }, todayNZ);
+      if (perf && (perf.weeksCovered as number) > 0) {
+        const lp = (perf.matchCoverage as any)?.linesPct ?? 0;
+        const up = (perf.matchCoverage as any)?.unitsPct ?? 0;
+        const nm = perf.reportsNotMatched ?? 0;
+        const s  = perf.summary as any ?? {};
+        const l4u  = typeof s.last4Units === 'number' ? s.last4Units.toFixed(0) : 'n/a';
+        const inclOnly = !!s.revenueNote;
+        const l4r  = typeof s.last4RevExGst === 'number'
+          ? `$${s.last4RevExGst.toFixed(0)} ex GST`
+          : typeof s.last4RevInclGst === 'number'
+            ? `$${s.last4RevInclGst.toFixed(0)} incl GST (POS-sourced, ex GST unavailable)`
+            : 'n/a';
+        const uc  = typeof s.unitChangePct === 'number'
+          ? `${s.unitChangePct >= 0 ? '+' : ''}${s.unitChangePct.toFixed(0)}%` : 'n/a';
+        const rc  = typeof s.revChangePct === 'number'
+          ? `${s.revChangePct >= 0 ? '+' : ''}${s.revChangePct.toFixed(0)}%` : 'n/a';
+        const mw  = Array.isArray(perf.missingWeeks) && (perf.missingWeeks as string[]).length > 0
+          ? (perf.missingWeeks as string[]).join(', ') : 'none';
+        const l4d = perf.last4CoveredDays ?? 0;
+        const p4d = perf.prev4CoveredDays ?? 0;
+        const lines6: string[] = [
+          `Match coverage: ${lp}% of lines, ${up}% of units (${nm} report(s) not yet matched)`,
+          `Last 4 wks: ${l4u} units | revenue: ${l4r}`,
+          `Change vs prev 4 wks: ${uc} units, ${rc} revenue`,
+          `Coverage: ${l4d}/28 days (last 4 wks), ${p4d}/28 days (prev 4 wks)`,
+          `Missing weeks: ${mw}`,
+          ...(inclOnly ? ['Note: revenue figures are incl-GST only (POS-sourced data)'] : []),
+        ];
+        if (perf.newestReportEnd) lines6.push(`Sales data through: ${perf.newestReportEnd}`);
+        salesCompactHeader = lines6.join('\n');
+      }
+    } catch (e: any) {
+      console.log('[api/suitee] sales compact header error', e?.message);
     }
 
     // Price change history (still N+1 for priceHistory subcollection, now parallelised)
@@ -4282,8 +4322,8 @@ app.post("/suitee", async (req, res) => {
       );
     }
 
-    if (salesSummary) {
-      lines.push("", "RECENT SALES DATA:", salesSummary);
+    if (salesCompactHeader) {
+      lines.push("", "SALES SUMMARY (last 4 weeks):", salesCompactHeader);
     }
 
     if (priceChangeLines.length > 0) {
@@ -4460,10 +4500,12 @@ app.post("/suitee", async (req, res) => {
       const recipeSales = new Map<string, { recipeName: string; qtySold: number }>();
       (salesSnap?.docs || []).forEach(d => {
         const data = d.data() as any;
+        if (!isReportActive(data)) return; // voided/superseded excluded
         const report = data.report;
         if (!report || !Array.isArray(report.lines)) return;
-        const ps = report.period?.start ? new Date(report.period.start) : null;
-        const pe = report.period?.end ? new Date(report.period.end) : null;
+        // Matching is fuzzy — period used only to weight weeks, not for exact filtering
+        const ps = data.periodStart?.toDate?.() ?? (report.period?.start ? new Date(report.period.start) : null);
+        const pe = data.periodEnd?.toDate?.()   ?? (report.period?.end   ? new Date(report.period.end)   : null);
         let weeks = 0;
         if (ps && pe && pe.getTime() > ps.getTime()) weeks = (pe.getTime() - ps.getTime()) / (7 * 24 * 60 * 60 * 1000);
         if (weeks > 0) totalSalesWeeks += weeks;
@@ -4749,6 +4791,9 @@ For pour variance questions: state the spec, the implied actual, and the confide
 
 Never answer questions about how to use the app — direct those to Izzy.
 
+## Sales performance
+For sales, revenue, best/worst sellers, trends or velocity questions call get_sales_performance; never compute sales figures yourself. Always state the match coverage when giving product-level figures (e.g. 'based on the 30% of units matched to products'). Revenue is ex GST unless the user asks for incl. If ex-GST revenue is unavailable (POS-sourced data is incl-GST only), give the incl-GST figure and say so. If weeks are missing, say which.
+
 ${SUITEE_COUNTING_NOTE}
 
 ${HOSTI_BUSINESS_REDIRECT}
@@ -4796,7 +4841,7 @@ ${context}`;
           temperature: 0.3,
           system: systemPrompt,
           messages: msgs,
-          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL, BATCH_RATIO_TOOL, GP_TREND_TOOL, MENU_ENGINEERING_TOOL, PRICE_CHANGE_DETAIL_TOOL],
+          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL, BATCH_RATIO_TOOL, GP_TREND_TOOL, MENU_ENGINEERING_TOOL, PRICE_CHANGE_DETAIL_TOOL, SALES_PERFORMANCE_TOOL],
         }),
       });
       if (!resp.ok) {
@@ -5048,6 +5093,10 @@ ${context}`;
         }));
 
         return buildPriceChangeDetail(rawRecords, days);
+      }
+      if (toolName === 'get_sales_performance') {
+        const d = await getSalesData();
+        return buildSalesPerformanceResult(d.reports, d.matchesByReport, d.stockMap, input as SalesPerfInput, todayNZ);
       }
       return { error: `Unknown tool: ${toolName}` };
     };

@@ -12,6 +12,8 @@ import {
   buildVelocityRowsFromReports,
   buildUnmatchedRows,
   normName,
+  weekMonday,
+  isSquareSource,
   NZ_TZ,
   type ActiveReport,
   type MatchData,
@@ -20,6 +22,7 @@ import {
   type VelocityWindowInfo,
   type UnmatchedRow,
   type StripCell,
+  type RawSalesLine,
 } from '../utils/weeklyLedger'
 import { voidSalesReport } from '../services/voidSalesReport'
 import styles from './SalesReportsPage.module.css'
@@ -52,11 +55,16 @@ function fmtNum(n: number): string {
 
 function sourceFormatLabel(sf: string | null | undefined): { label: string; title: string } {
   switch (sf) {
+    case 'square':       return { label: 'Square',             title: 'Square POS (daily sync)' }
     case 'bustle_rich':  return { label: 'GP per product',     title: 'Bustle rich GP export' }
     case 'bustle_items': return { label: 'Sales by category',  title: 'Bustle items export' }
     case 'pdf':          return { label: 'PDF',                title: 'PDF import' }
     default:             return { label: 'Legacy',             title: 'Legacy format — re-import to see format badge' }
   }
+}
+
+function canVoidReport(r: ActiveReport, canManage: boolean): boolean {
+  return canManage && r.meta?.sourceFormat !== 'square' && reportStatus(r) === 'active'
 }
 
 function gstBasisLabel(g: string | null | undefined): string {
@@ -203,6 +211,54 @@ function LinesDrawer({
   )
 }
 
+// ── Square week helpers ───────────────────────────────────────────────────────
+
+/** Groups Square daily docs by calendar week and returns a virtual ActiveReport for each week. */
+function squareWeekRows(docs: ActiveReport[]): Array<ActiveReport & { _squareDocs: ActiveReport[] }> {
+  const byWeek = new Map<string, ActiveReport[]>()
+  for (const r of docs) {
+    if (!r.startStr) continue
+    const mon = weekMonday(r.startStr)
+    if (!byWeek.has(mon)) byWeek.set(mon, [])
+    byWeek.get(mon)!.push(r)
+  }
+  return [...byWeek.entries()].map(([mon, wkDocs]) => {
+    const sun = new Date(new Date(mon + 'T00:00:00Z').getTime() + 6 * 86_400_000).toISOString().slice(0, 10)
+    const aggLines = new Map<string, RawSalesLine>()
+    for (const d of wkDocs) {
+      for (const l of d.rawLines) {
+        const key = (l.name ?? '').toLowerCase().trim()
+        if (!aggLines.has(key)) {
+          aggLines.set(key, { name: l.name, qtySold: 0, grossIncl: 0 })
+        }
+        const e = aggLines.get(key)!
+        e.qtySold = (e.qtySold ?? 0) + (l.qtySold ?? 0)
+        e.grossIncl = (e.grossIncl ?? 0) + (l.grossIncl ?? l.gross ?? 0)
+      }
+    }
+    const rawLines = [...aggLines.values()]
+    const totalRevenue = rawLines.reduce((s, l) => s + (l.grossIncl ?? 0), 0)
+    const totalQtySold = rawLines.reduce((s, l) => s + (l.qtySold ?? 0), 0)
+    return {
+      id:               `_sq_week_${mon}`,
+      source:           'square',
+      startStr:         mon,
+      endStr:           sun,
+      startMs:          new Date(mon + 'T00:00:00Z').getTime(),
+      days:             wkDocs.length,
+      lineCount:        rawLines.length,
+      totalRevenue,
+      totalQtySold,
+      rawLines,
+      overlappingCycles: [],
+      allocationMethod: 'none',
+      status:           null,
+      meta:             { sourceFormat: 'square', lineTotalsBasis: 'line_total', gstBasis: 'assumed_incl' },
+      _squareDocs:      wkDocs,
+    }
+  })
+}
+
 // ── Tab 1: Reports ────────────────────────────────────────────────────────────
 
 function ReportsTab({
@@ -226,11 +282,14 @@ function ReportsTab({
     [allReports]
   )
 
-  // Newest first (allReports is already sorted, but keep explicit sort for clarity)
-  const sorted = useMemo(
-    () => [...allReports].sort((a, b) => (b.startMs ?? 0) - (a.startMs ?? 0)),
-    [allReports]
-  )
+  // Build table rows: Square docs collapsed by week, others individually, newest first
+  type TableRow = (ActiveReport & { _squareDocs?: ActiveReport[] })
+  const tableRows = useMemo<TableRow[]>(() => {
+    const squareDocs  = allReports.filter(r => isSquareSource(r.id, r.source))
+    const regularDocs = allReports.filter(r => !isSquareSource(r.id, r.source))
+    const squareWks   = squareWeekRows(squareDocs)
+    return [...regularDocs, ...squareWks].sort((a, b) => (b.startMs ?? 0) - (a.startMs ?? 0))
+  }, [allReports])
 
   return (
     <div>
@@ -273,25 +332,28 @@ function ReportsTab({
             </tr>
           </thead>
           <tbody>
-            {sorted.map(r => {
-              const md = matchesByReport[r.id]
+            {tableRows.map(r => {
+              const isSquareWk = r.meta?.sourceFormat === 'square'
+              const md = isSquareWk ? null : matchesByReport[r.id]
               const sf = sourceFormatLabel(r.meta?.sourceFormat)
               const hasLineTotals = r.meta?.lineTotalsBasis === 'line_total'
               const hasMeta = !!r.meta?.sourceFormat
-              const st = reportStatus(r)
+              const st = isSquareWk ? 'active' as const : reportStatus(r)
 
               const grossSum = hasLineTotals
                 ? r.rawLines.reduce((s, l) => s + (l.grossIncl ?? l.gross ?? 0), 0)
                 : null
-              const netSum = hasLineTotals
+              const netSum = (!isSquareWk && hasLineTotals)
                 ? r.rawLines.reduce((s, l) => s + (l.netExcl ?? l.net ?? 0), 0)
                 : null
 
               return (
                 <tr key={r.id}>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    {fmtDate(r.startStr)}<br />
-                    <span style={{ color: '#9ca3af', fontSize: 11 }}>→ {fmtDate(r.endStr)}</span>
+                    {isSquareWk
+                      ? <><span style={{ fontWeight: 500 }}>Square · {r.days} day{(r.days ?? 1) !== 1 ? 's' : ''}</span><br /><span style={{ color: '#9ca3af', fontSize: 11 }}>{fmtDate(r.startStr)} – {fmtDate(r.endStr)}</span></>
+                      : <>{fmtDate(r.startStr)}<br /><span style={{ color: '#9ca3af', fontSize: 11 }}>→ {fmtDate(r.endStr)}</span></>
+                    }
                   </td>
                   <td>
                     <span className={`${styles.badge} ${hasMeta ? styles.badgeFormat : styles.badgeLegacy}`} title={sf.title}>
@@ -316,16 +378,20 @@ function ReportsTab({
                     }
                   </td>
                   <td>
-                    {hasLineTotals && netSum != null && netSum > 0
-                      ? fmtMoney(netSum)
-                      : hasLineTotals ? '—' : <span style={{ color: '#9ca3af', fontSize: 11 }}>legacy</span>
+                    {isSquareWk
+                      ? <span style={{ color: '#9ca3af', fontSize: 11 }}>incl only</span>
+                      : hasLineTotals && netSum != null && netSum > 0
+                        ? fmtMoney(netSum)
+                        : hasLineTotals ? '—' : <span style={{ color: '#9ca3af', fontSize: 11 }}>legacy</span>
                     }
                   </td>
                   <td style={{ fontSize: 11, color: '#6b7280' }}>{gstBasisLabel(r.meta?.gstBasis)}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    {md
-                      ? `${md.matched}/${md.total}`
-                      : <span style={{ color: '#9ca3af' }}>—</span>
+                    {isSquareWk
+                      ? <span style={{ color: '#9ca3af' }}>—</span>
+                      : md
+                        ? `${md.matched}/${md.total}`
+                        : <span style={{ color: '#9ca3af' }}>—</span>
                     }
                   </td>
                   <td style={{ whiteSpace: 'nowrap' }}>
@@ -336,14 +402,19 @@ function ReportsTab({
                     >
                       View lines
                     </button>
-                    {canManage && st === 'active' && (
-                      <button
-                        className={`${styles.btnSmall} ${styles.btnDanger}`}
-                        onClick={() => setVoidReport(r)}
-                      >
-                        Void
-                      </button>
-                    )}
+                    {canVoidReport(r, canManage)
+                      ? (
+                        <button
+                          className={`${styles.btnSmall} ${styles.btnDanger}`}
+                          onClick={() => setVoidReport(r)}
+                        >
+                          Void
+                        </button>
+                      )
+                      : isSquareWk && canManage
+                        ? <span style={{ color: '#9ca3af', fontSize: 11, cursor: 'default' }} title="POS-synced data can't be voided">Void</span>
+                        : null
+                    }
                   </td>
                 </tr>
               )

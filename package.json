@@ -22,11 +22,12 @@
     "check:modal-safe-area": "node scripts/check-modal-safe-area.js",
     "check:parser-sync": "node scripts/check-parser-sync.js",
     "check:rules-payloads": "node scripts/check-rules-payloads.js",
-    "preflight": "npm run check:imports && npm run check:undefined && npm run check:undefined-nocheck && npm run check:write-guards && npm run check:modal-safe-area && npm run check:parser-sync && npm run check:rules-payloads && npm run check:isreportactive-sync",
+    "preflight": "npm run check:imports && npm run check:undefined && npm run check:undefined-nocheck && npm run check:write-guards && npm run check:modal-safe-area && npm run check:parser-sync && npm run check:rules-payloads && npm run check:isreportactive-sync && node scripts/check-weeklyledger-sync.js",
     "eas-build-post-install": "npm run preflight",
     "check:imports": "node scripts/check-relative-imports.js",
     "test:rules": "firebase emulators:exec --only firestore --project demo-tallyup 'npm --prefix rules-tests test'",
-    "check:isreportactive-sync": "node scripts/check-isreportactive-sync.js"
+    "check:isreportactive-sync": "node scripts/check-isreportactive-sync.js",
+    "check:weeklyledger-sync": "node scripts/check-weeklyledger-sync.js"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",

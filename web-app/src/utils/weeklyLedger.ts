@@ -99,12 +99,117 @@ export type ActiveReport = {
   } | null
 }
 
+// ── Normalised report shape ───────────────────────────────────────────────────
+
+export type NormalisedReport = {
+  id: string
+  status: string | null
+  source: string
+  sourceFormat: string
+  startStr: string | null
+  endStr: string | null
+  days: number | null
+  rawLines: RawSalesLine[]
+  lineTotalsBasis: string
+  gstBasis: string
+  createdAtMs: number | null
+}
+
+/** True for Square POS daily/webhook/pull documents. */
+export function isSquareSource(id: string, source: string | null | undefined): boolean {
+  return id.startsWith('square-') ||
+    source === 'square' ||
+    source === 'square-pull' ||
+    source === 'square-webhook'
+}
+
+/**
+ * Normalises a raw Firestore salesReport document to a single shape, handling:
+ * - CSV/PDF imports (current behaviour)
+ * - Square daily POS docs (id starts 'square-' or source is square/square-pull/square-webhook)
+ * - Legacy docs (no meta) → lineTotalsBasis 'unknown', gstBasis 'unknown'
+ */
+export function normaliseSalesReport(id: string, data: Record<string, any>): NormalisedReport {
+  const status = (data.status as string | null | undefined) ?? null
+  const createdAtMs = data.createdAt?.toMillis?.() ??
+    (typeof data.createdAt?._seconds === 'number' ? data.createdAt._seconds * 1000 : null)
+
+  if (isSquareSource(id, data.source as string | undefined) && typeof data.date === 'string') {
+    const rawLines: RawSalesLine[] = Array.isArray(data.lines) ? (data.lines as RawSalesLine[]) : []
+    return {
+      id, status,
+      source:          (data.source as string | undefined) ?? 'square',
+      sourceFormat:    'square',
+      startStr:        data.date as string,
+      endStr:          data.date as string,
+      days:            1,
+      rawLines,
+      lineTotalsBasis: 'line_total',
+      gstBasis:        'assumed_incl',
+      createdAtMs,
+    }
+  }
+
+  const report   = data.report as Record<string, any> | undefined
+  const rawLines: RawSalesLine[] =
+    (report?.lines as RawSalesLine[] | undefined) ??
+    (data.lines    as RawSalesLine[] | undefined) ?? []
+  const startStr = (report?.period?.start as string | undefined) ?? toNZDate(data.periodStart as any)
+  const endStr   = (report?.period?.end   as string | undefined) ?? toNZDate(data.periodEnd   as any)
+  const meta     = report?.meta as Record<string, any> | undefined
+
+  return {
+    id, status,
+    source:          (data.source as string | undefined) ?? '?',
+    sourceFormat:    (meta?.sourceFormat    as string | undefined) ?? 'unknown',
+    startStr:        startStr ?? null,
+    endStr:          endStr   ?? null,
+    days:            startStr && endStr ? daySpan(startStr, endStr) : null,
+    rawLines,
+    lineTotalsBasis: (meta?.lineTotalsBasis as string | undefined) ?? 'unknown',
+    gstBasis:        (meta?.gstBasis        as string | undefined) ?? 'unknown',
+    createdAtMs,
+  }
+}
+
 // ── Partition ─────────────────────────────────────────────────────────────────
 
 export type PartitionResult = {
   reports: ActiveReport[]
   prePeriod: ActiveReport[]
   inactiveCount: number
+}
+
+function docToActiveReport(docSnap: { id: string; data(): Record<string, any> }): ActiveReport {
+  const d = docSnap.data()
+  const n = normaliseSalesReport(docSnap.id, d)
+  const { rawLines } = n
+  const totalRevenue = rawLines.reduce((s, l) => s + (l.grossIncl ?? l.gross ?? 0), 0)
+  const totalQtySold = rawLines.reduce((s, l) => s + (l.qtySold   ?? 0), 0)
+  const startMs = (d.periodStart as any)?.toMillis?.() ??
+    (n.startStr ? new Date(n.startStr + 'T00:00:00Z').getTime() : null)
+  const report = d.report as Record<string, any> | undefined
+  const meta   = report?.meta as Record<string, any> | undefined
+  return {
+    id: n.id, source: n.source,
+    startStr: n.startStr, endStr: n.endStr, startMs,
+    days: n.days,
+    lineCount: rawLines.length,
+    totalRevenue, totalQtySold, rawLines,
+    overlappingCycles: (d.overlappingCycles as unknown[]) ?? [],
+    allocationMethod:  (d.allocationMethod  as string)   ?? 'none',
+    status: n.status,
+    meta: {
+      sourceFormat:    n.sourceFormat,
+      lineTotalsBasis: n.lineTotalsBasis,
+      gstBasis:        n.gstBasis,
+      parserVersion:   (meta?.parserVersion as number | null | undefined)  ?? null,
+      kind:            (meta?.kind          as string | null | undefined)  ?? null,
+      reportTotals:    meta?.reportTotals  ?? null,
+      categoryTotals:  meta?.categoryTotals ?? null,
+      fileHash:        (meta?.fileHash     as string | null | undefined)  ?? null,
+    },
+  }
 }
 
 export function partitionReports(
@@ -119,30 +224,7 @@ export function partitionReports(
     activeDocs.push(docSnap)
   }
 
-  const mapped: ActiveReport[] = activeDocs.map(docSnap => {
-    const d = docSnap.data()
-    const rawLines: RawSalesLine[] = d.report?.lines ?? d.lines ?? []
-    const totalRevenue  = rawLines.reduce((s, l) => s + (l.grossIncl ?? l.gross ?? 0), 0)
-    const totalQtySold  = rawLines.reduce((s, l) => s + (l.qtySold ?? 0), 0)
-    const startStr = d.report?.period?.start ?? toNZDate(d.periodStart)
-    const endStr   = d.report?.period?.end   ?? toNZDate(d.periodEnd)
-    const startMs  = d.periodStart?.toMillis?.() ??
-                     (startStr ? new Date(startStr + 'T00:00:00Z').getTime() : null)
-    return {
-      id: docSnap.id,
-      source: d.source ?? '?',
-      startStr, endStr, startMs,
-      days: startStr && endStr ? daySpan(startStr, endStr) : null,
-      lineCount: rawLines.length,
-      totalRevenue,
-      totalQtySold,
-      rawLines,
-      overlappingCycles: d.overlappingCycles ?? [],
-      allocationMethod:  d.allocationMethod  ?? 'none',
-      status: d.status ?? null,
-      meta: d.report?.meta ?? null,
-    }
-  })
+  const mapped = activeDocs.map(docToActiveReport)
 
   mapped.sort((a, b) => {
     if (a.startMs == null && b.startMs == null) return 0
@@ -152,8 +234,8 @@ export function partitionReports(
   })
 
   return {
-    reports:      mapped.filter(r => !r.startStr == false && r.startStr != null),
-    prePeriod:    mapped.filter(r => r.startStr == null),
+    reports:   mapped.filter(r => r.startStr != null),
+    prePeriod: mapped.filter(r => r.startStr == null),
     inactiveCount,
   }
 }
@@ -165,30 +247,7 @@ export function partitionReports(
 export function mapAllReports(
   allDocs: Array<{ id: string; data(): Record<string, any> }>
 ): ActiveReport[] {
-  const mapped: ActiveReport[] = allDocs.map(docSnap => {
-    const d = docSnap.data()
-    const rawLines: RawSalesLine[] = d.report?.lines ?? d.lines ?? []
-    const totalRevenue  = rawLines.reduce((s, l) => s + (l.grossIncl ?? l.gross ?? 0), 0)
-    const totalQtySold  = rawLines.reduce((s, l) => s + (l.qtySold ?? 0), 0)
-    const startStr = d.report?.period?.start ?? toNZDate(d.periodStart)
-    const endStr   = d.report?.period?.end   ?? toNZDate(d.periodEnd)
-    const startMs  = d.periodStart?.toMillis?.() ??
-                     (startStr ? new Date(startStr + 'T00:00:00Z').getTime() : null)
-    return {
-      id: docSnap.id,
-      source: d.source ?? '?',
-      startStr, endStr, startMs,
-      days: startStr && endStr ? daySpan(startStr, endStr) : null,
-      lineCount: rawLines.length,
-      totalRevenue,
-      totalQtySold,
-      rawLines,
-      overlappingCycles: d.overlappingCycles ?? [],
-      allocationMethod:  d.allocationMethod  ?? 'none',
-      status: d.status ?? null,
-      meta: d.report?.meta ?? null,
-    }
-  })
+  const mapped = allDocs.map(docToActiveReport)
   return mapped.sort((a, b) => {
     if (a.startMs == null && b.startMs == null) return 0
     if (a.startMs == null) return 1
