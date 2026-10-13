@@ -3,7 +3,7 @@
     "name": "Hosti-Stock",
     "slug": "tallyup",
     "owner": "poni",
-    "version": "1.0.11",
+    "version": "1.1.0",
     "orientation": "portrait",
     "scheme": "tallyup",
     "icon": "./assets/icon.png",
