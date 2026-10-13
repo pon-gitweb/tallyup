@@ -6,6 +6,7 @@
  */
 import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
+import { loadSnapshotItems } from '../../utils/snapshotItems';
 import { isReportActive } from '../sales/isReportActive';
 import { generateAbductiveInsights, AbductiveInsight } from './abductiveInsights';
 import { generateStockoutPredictions, PredictionSummary } from './predictions';
@@ -295,7 +296,10 @@ async function calculateFullScore(
       ))).docs[0];
       if (!latestSnap) continue;
       const snapData = latestSnap.data() as any;
-      const items: any[] = snapData.items || [];
+      const items: any[] = await loadSnapshotItems(snapData, () =>
+        getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots', latestSnap.id, 'itemChunks'))
+          .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+      );
       for (const item of items) {
         // Prefer display-tier dollars (stamped + invoice-verified) so that items with no
         // stamped price but a matched invoice line are visible in the Pareto list.
@@ -668,7 +672,11 @@ async function calculateFullScore(
             if (!snapDoc.exists()) continue;
             const snapData = snapDoc.data() as any;
 
-            (snapData.items || []).forEach((item: any) => {
+            const snapItems = await loadSnapshotItems(snapData, () =>
+              getDocs(collection(db, 'venues', venueId, 'departments', deptId, 'snapshots', `cycle-${cycleNumber}`, 'itemChunks'))
+                .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+            );
+            snapItems.forEach((item: any) => {
               const name = (item.name || '').toLowerCase().trim();
               const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
               const costPrice = (item.displayCostPrice ?? item.costPrice) ?? 0;
@@ -715,9 +723,13 @@ async function calculateFullScore(
             )
           );
 
-          recentSnaps.docs.forEach(snapDoc => {
+          for (const snapDoc of recentSnaps.docs) {
             const snapData = snapDoc.data() as any;
-            (snapData.items || []).forEach((item: any) => {
+            const recentItems = await loadSnapshotItems(snapData, () =>
+              getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots', snapDoc.id, 'itemChunks'))
+                .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+            );
+            recentItems.forEach((item: any) => {
               const key = (item.name || item.productId || '').toLowerCase().trim();
               if (!key) return;
               const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
@@ -731,7 +743,7 @@ async function calculateFullScore(
                 productCycleMap[key].dollarImpact += Math.abs(varianceUnits) * costPrice;
               }
             });
-          });
+          }
         }
 
         // Systematic loss = products negative in 2+ of last 3 cycles

@@ -15,6 +15,7 @@ import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './name
 import { matchSalesLine, buildProductIndex, isBlankSalesLine } from './salesMatching';
 import { isReportActive } from './isReportActive';
 import { voidSalesReportLogic } from './voidSalesReportLogic';
+import { loadSnapshotItems } from './snapshotItems';
 import { flagAnomalousChanges } from './priceChangeSanity';
 import { detectNewProducts } from './inventoryMatching';
 import {
@@ -705,17 +706,22 @@ app.post("/ai-insights", async (req, res) => {
           .get();
         if (!latestSnap.empty) {
           const s = latestSnap.docs[0].data() as any;
+          const sItems = await loadSnapshotItems(s, () =>
+            latestSnap.docs[0].ref.collection('itemChunks').get().then((ss: any) =>
+              ss.docs.map((dd: any) => dd.data() as { index: number; items: any[] })
+            )
+          );
           snapshotSummaries.push({
             department: s.departmentName,
             cycleNumber: s.cycleNumber,
             tier: s.dataCompleteness?.tier ?? 1,
             summary: s.summary,
-            topLosses: (s.items || [])
+            topLosses: sItems
               .filter((i: any) => i.totalVarianceQty < 0)
               .sort((a: any, b: any) => a.totalVarianceQty - b.totalVarianceQty)
               .slice(0, 5)
               .map((i: any) => ({ name: i.name, varianceQty: i.totalVarianceQty, varianceDollars: i.totalVarianceDollars })),
-            topGains: (s.items || [])
+            topGains: sItems
               .filter((i: any) => i.totalVarianceQty > 0)
               .sort((a: any, b: any) => b.totalVarianceQty - a.totalVarianceQty)
               .slice(0, 5)
@@ -3933,7 +3939,12 @@ app.post("/suitee", async (req, res) => {
             const snap = snapDoc.data() as any;
             const daysSince: number | null = snap.daysSinceLastCycle != null ? snap.daysSinceLastCycle : null;
             const cycleWeeks = daysSince != null && daysSince > 0 ? daysSince / 7 : null;
-            for (const item of (snap.items || [])) {
+            const snapItems = await loadSnapshotItems(snap, () =>
+              snapDoc.ref.collection('itemChunks').get().then((ss: any) =>
+                ss.docs.map((dd: any) => dd.data() as { index: number; items: any[] })
+              )
+            );
+            for (const item of snapItems) {
               const key = (item.name || '').toLowerCase().trim();
               if (!key) continue;
               const openingCount = typeof item.openingCount === 'number' ? item.openingCount : null;

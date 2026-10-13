@@ -7,6 +7,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { collection, getDocs, orderBy, query, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { loadSnapshotItems } from '../../utils/snapshotItems';
 import { useVenueId } from '../../context/VenueProvider';
 import * as Print from 'expo-print';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -184,7 +185,10 @@ export default function StocktakeHistoryScreen() {
       const snapRef = _doc(db, 'venues', venueId, 'departments', e.deptId, 'snapshots', e.id);
       const snapDoc = await _getDoc(snapRef);
       const snapData = snapDoc.exists() ? (snapDoc.data() as any) : {};
-      const items: any[] = snapData.items || [];
+      const items: any[] = await loadSnapshotItems(snapData, () =>
+        getDocs(collection(db, 'venues', venueId, 'departments', e.deptId, 'snapshots', e.id, 'itemChunks'))
+          .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+      );
 
       const dateStr = fmtDate(e.completedAt) + ' ' + fmtTime(e.completedAt);
       const safeDept = e.departmentName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 20);
@@ -248,7 +252,11 @@ td { padding: 5px 8px; border-bottom: 1px solid #eee; }
       const { doc: _doc, getDoc: _getDoc } = await import('firebase/firestore');
       const snapRef = _doc(db, 'venues', venueId, 'departments', e.deptId, 'snapshots', e.id);
       const snapDoc = await _getDoc(snapRef);
-      const items: any[] = snapDoc.exists() ? (snapDoc.data() as any).items ?? [] : [];
+      const csvData = snapDoc.exists() ? (snapDoc.data() as any) : {};
+      const items: any[] = await loadSnapshotItems(csvData, () =>
+        getDocs(collection(db, 'venues', venueId, 'departments', e.deptId, 'snapshots', e.id, 'itemChunks'))
+          .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+      );
 
       const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
       const dateStr = e.completedAt.toISOString().slice(0, 10);

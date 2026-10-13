@@ -17,6 +17,7 @@ import {
   writeBatch,
   serverTimestamp,
 } from 'firebase/firestore'
+import { loadSnapshotItems } from '../utils/snapshotItems'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -192,7 +193,11 @@ export async function findSnapshotItem(
   const snap = await getDoc(ref)
   if (!snap.exists()) return null
   const data = snap.data() as any
-  const items: SnapshotItem[] = data.items ?? []
+  const items = await loadSnapshotItems(data, () =>
+    getDocs(collection(ref, 'itemChunks')).then(s =>
+      s.docs.map(d => d.data() as { index: number; items: any[] })
+    )
+  ) as SnapshotItem[]
   const summary: Record<string, unknown> = data.summary ?? {}
   return { items, snapshotRef: ref, summary }
 }
@@ -397,7 +402,13 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
   const summaryN = computeSummary(updatedItemsN, snapN.summary)
   const batch = writeBatch(db)
 
-  batch.update(snapN.snapshotRef, { items: updatedItemsN, summary: summaryN })
+  batch.update(snapN.snapshotRef, { items: updatedItemsN.slice(0, 200), summary: summaryN })
+  if (updatedItemsN.length > 200) {
+    const chunkIdxN = Math.floor(idxN / 200)
+    batch.update(doc(collection(snapN.snapshotRef, 'itemChunks'), String(chunkIdxN).padStart(3, '0')), {
+      items: updatedItemsN.slice(chunkIdxN * 200, (chunkIdxN + 1) * 200),
+    })
+  }
 
   // Check for downstream cycle and update its openingCount
   let downstreamUpdated = false
@@ -424,7 +435,13 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
       }
 
       const summaryN1 = computeSummary(updatedItemsN1, snapN1.summary)
-      batch.update(snapN1.snapshotRef, { items: updatedItemsN1, summary: summaryN1 })
+      batch.update(snapN1.snapshotRef, { items: updatedItemsN1.slice(0, 200), summary: summaryN1 })
+      if (updatedItemsN1.length > 200) {
+        const chunkIdxN1 = Math.floor(idxN1 / 200)
+        batch.update(doc(collection(snapN1.snapshotRef, 'itemChunks'), String(chunkIdxN1).padStart(3, '0')), {
+          items: updatedItemsN1.slice(chunkIdxN1 * 200, (chunkIdxN1 + 1) * 200),
+        })
+      }
       downstreamUpdated = true
     }
   }

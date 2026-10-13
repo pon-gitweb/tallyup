@@ -7,6 +7,7 @@
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calculateVelocity } from './velocityService';
+import { loadSnapshotItems } from '../utils/snapshotItems';
 
 export interface StockoutPrediction {
   productId: string;
@@ -49,13 +50,21 @@ export async function generateStockoutPredictions(
 
     if (allSnapshotsSnap.docs.length < 2) continue;
 
-    const velocityMap = calculateVelocity(
-      allSnapshotsSnap.docs.map(d => d.data()),
-    );
+    const snapDatas: any[] = [];
+    for (const snapDoc of allSnapshotsSnap.docs) {
+      const d = snapDoc.data() as any;
+      const items = await loadSnapshotItems(d, () =>
+        getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots', snapDoc.id, 'itemChunks')).then(s =>
+          s.docs.map(dd => dd.data() as { index: number; items: any[] })
+        )
+      );
+      snapDatas.push({ ...d, items });
+    }
+    const velocityMap = calculateVelocity(snapDatas);
 
-    const latestSnap = allSnapshotsSnap.docs[allSnapshotsSnap.docs.length - 1].data() as any;
+    const latestSnap = snapDatas[snapDatas.length - 1];
 
-    for (const item of (latestSnap.items || [])) {
+    for (const item of (latestSnap?.items || [])) {
       const name = item.name || 'Unknown';
       const key = name.toLowerCase().trim();
       const currentStock = item.actualClosing ?? 0;

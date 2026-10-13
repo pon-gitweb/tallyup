@@ -342,7 +342,7 @@ export function buildStockMap(
 ): Record<string, StockEntry> {
   const stockMap: Record<string, StockEntry> = {}
   for (const s of snapshots) {
-    for (const item of s.items) {
+    for (const item of s.items) { // snapshot-items-ok: pre-loaded by caller
       if (!item.productId) continue
       const existing = stockMap[item.productId]
       if (item.actualClosing != null &&

@@ -7,6 +7,7 @@ import {
 import { useRoute } from '@react-navigation/native';
 import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { loadSnapshotItems } from '../../utils/snapshotItems';
 import * as Print from 'expo-print';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -41,6 +42,7 @@ export default function StocktakeCycleDetailScreen() {
 
   const [loading, setLoading] = useState(true);
   const [snapshot, setSnapshot] = useState<any>(null);
+  const [items, setItems] = useState<any[]>([]);
   const [areaEditsMap, setAreaEditsMap] = useState<Record<string, any[]>>({});
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortMode>('area');
@@ -58,8 +60,13 @@ export default function StocktakeCycleDetailScreen() {
       if (snapDoc.exists()) {
         const data = snapDoc.data();
         setSnapshot(data);
+        const loadedItems = await loadSnapshotItems(data as any, () =>
+          getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', snapshotId, 'itemChunks'))
+            .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+        );
+        setItems(loadedItems);
         // Load area edits to show audit trail per item
-        const areaIds = [...new Set((data.items || []).map((it: any) => it.areaId).filter(Boolean))];
+        const areaIds = [...new Set(loadedItems.map((it: any) => it.areaId).filter(Boolean))];
         const editsMap: Record<string, any[]> = {};
         await Promise.all(areaIds.map(async (areaId: string) => {
           try {
@@ -89,7 +96,7 @@ export default function StocktakeCycleDetailScreen() {
     [snapshot],
   );
 
-  const items: any[] = useMemo(() => snapshot?.items ?? [], [snapshot]);
+
 
   const filteredItems = useMemo(() => {
     let result = items;
