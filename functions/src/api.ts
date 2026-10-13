@@ -4027,26 +4027,30 @@ app.post("/suitee", async (req, res) => {
         const lp = (perf.matchCoverage as any)?.linesPct ?? 0;
         const up = (perf.matchCoverage as any)?.unitsPct ?? 0;
         const nm = perf.reportsNotMatched ?? 0;
-        const s  = perf.summary as any ?? {};
-        const l4u  = typeof s.last4Units === 'number' ? s.last4Units.toFixed(0) : 'n/a';
+        const s   = perf.summary as any ?? {};
+        const as  = s.allSales ?? {};
+        const mp  = s.matchedProducts ?? {};
         const inclOnly = !!s.revenueNote;
-        const l4r  = typeof s.last4RevExGst === 'number'
-          ? `$${s.last4RevExGst.toFixed(0)} ex GST`
-          : typeof s.last4RevInclGst === 'number'
-            ? `$${s.last4RevInclGst.toFixed(0)} incl GST (POS-sourced, ex GST unavailable)`
+        const l4u  = typeof as.last4Units === 'number' ? as.last4Units.toFixed(0) : 'n/a';
+        const l4r  = typeof as.last4RevExGst === 'number'
+          ? `$${as.last4RevExGst.toFixed(0)} ex GST`
+          : typeof as.last4RevInclGst === 'number'
+            ? `$${as.last4RevInclGst.toFixed(0)} incl GST (POS-sourced, ex GST unavailable)`
             : 'n/a';
-        const uc  = typeof s.unitChangePct === 'number'
-          ? `${s.unitChangePct >= 0 ? '+' : ''}${s.unitChangePct.toFixed(0)}%` : 'n/a';
-        const rc  = typeof s.revChangePct === 'number'
-          ? `${s.revChangePct >= 0 ? '+' : ''}${s.revChangePct.toFixed(0)}%` : 'n/a';
+        const uc  = typeof as.unitChangePct === 'number'
+          ? `${as.unitChangePct >= 0 ? '+' : ''}${as.unitChangePct.toFixed(0)}%` : 'n/a';
+        const rc  = typeof as.revChangePct === 'number'
+          ? `${as.revChangePct >= 0 ? '+' : ''}${as.revChangePct.toFixed(0)}%` : 'n/a';
+        const mpU = typeof mp.last4Units === 'number' ? mp.last4Units.toFixed(0) : 'n/a';
         const mw  = Array.isArray(perf.missingWeeks) && (perf.missingWeeks as string[]).length > 0
           ? (perf.missingWeeks as string[]).join(', ') : 'none';
         const l4d = perf.last4CoveredDays ?? 0;
         const p4d = perf.prev4CoveredDays ?? 0;
         const lines6: string[] = [
           `Match coverage: ${lp}% of lines, ${up}% of units (${nm} report(s) not yet matched)`,
-          `Last 4 wks: ${l4u} units | revenue: ${l4r}`,
-          `Change vs prev 4 wks: ${uc} units, ${rc} revenue`,
+          `Last 4 wks all sales: ${l4u} units | revenue: ${l4r}`,
+          `Last 4 wks matched products: ${mpU} units`,
+          `Change vs prev 4 wks: ${uc} units (all sales), ${rc} revenue`,
           `Coverage: ${l4d}/28 days (last 4 wks), ${p4d}/28 days (prev 4 wks)`,
           `Missing weeks: ${mw}`,
           ...(inclOnly ? ['Note: revenue figures are incl-GST only (POS-sourced data)'] : []),
@@ -4792,7 +4796,7 @@ For pour variance questions: state the spec, the implied actual, and the confide
 Never answer questions about how to use the app — direct those to Izzy.
 
 ## Sales performance
-For sales, revenue, best/worst sellers, trends or velocity questions call get_sales_performance; never compute sales figures yourself. Always state the match coverage when giving product-level figures (e.g. 'based on the 30% of units matched to products'). Revenue is ex GST unless the user asks for incl. If ex-GST revenue is unavailable (POS-sourced data is incl-GST only), give the incl-GST figure and say so. If weeks are missing, say which.
+For sales, revenue, best/worst sellers, trends or velocity call get_sales_performance; never compute sales figures yourself. allSales = the whole venue's sales (all POS lines); matchedProducts = only lines linked to Hosti products. Use allSales for venue totals and trends. Never compare matchedProducts units with allSales revenue or draw spend-per-unit conclusions across the two. For product-level figures state the match coverage (units %). Revenue is ex GST unless asked; if ex GST is unavailable give incl and say so. Name any missing weeks. Keep answers short: at most one small table.
 
 ${SUITEE_COUNTING_NOTE}
 
@@ -4837,7 +4841,7 @@ ${context}`;
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
-          max_tokens: 800,
+          max_tokens: 2000,
           temperature: 0.3,
           system: systemPrompt,
           messages: msgs,

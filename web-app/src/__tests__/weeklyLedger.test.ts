@@ -10,6 +10,7 @@ import {
   normName,
   isSquareSource,
   normaliseSalesReport,
+  matchDocToMatchData,
   type ActiveReport,
   type MatchData,
   type StockEntry,
@@ -525,5 +526,41 @@ describe('Void hidden for Square-sourced reports', () => {
 
   it('isSquareSource is false for CSV import id/source → can void', () => {
     expect(isSquareSource('report-bustle-abc', 'bustle')).toBe(false)
+  })
+})
+
+// ── matchDocToMatchData ───────────────────────────────────────────────────────
+
+describe('matchDocToMatchData', () => {
+  it('computes matchedQty and matchedRevenue from matches array', () => {
+    const md = matchDocToMatchData({
+      matches: [
+        { qtySold: 5, gross: 500 },
+        { qtySold: 3, gross: 300 },
+      ],
+    })
+    expect(md.matchedQty).toBe(8)
+    expect(md.matchedRevenue).toBe(800)
+    expect(md.matched).toBe(2)   // matches.length (no counts.matched)
+    expect(md.total).toBeNull()  // d.counts?.total ?? null
+  })
+
+  it('uses counts.matched and counts.total when present', () => {
+    const md = matchDocToMatchData({
+      counts: { matched: 10, total: 15 },
+      matches: [{ qtySold: 3, gross: 300 }],
+    })
+    expect(md.matched).toBe(10)
+    expect(md.total).toBe(15)
+    expect(md.matchedQty).toBe(3)   // still computed from matches[]
+    expect(md.matchedRevenue).toBe(300)
+  })
+
+  it('empty matches array gives zero quantities and null total', () => {
+    const md = matchDocToMatchData({})
+    expect(md.matchedQty).toBe(0)
+    expect(md.matchedRevenue).toBe(0)
+    expect(md.matched).toBe(0)
+    expect(md.total).toBeNull()
   })
 })
