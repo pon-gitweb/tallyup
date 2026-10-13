@@ -67,10 +67,22 @@ export type MatchEntry = {
 
 export type MatchData = {
   matched: number
-  total: number
+  total: number | null
   matchedRevenue: number
   matchedQty: number
   matches: MatchEntry[]
+}
+
+/** Maps a raw Firestore salesReportMatches document to MatchData. */
+export function matchDocToMatchData(d: Record<string, any>): MatchData {
+  const matches: MatchEntry[] = Array.isArray(d.matches) ? (d.matches as MatchEntry[]) : []
+  return {
+    matched:        d.counts?.matched ?? matches.length,
+    total:          d.counts?.total   ?? null,
+    matchedQty:     matches.reduce((s, m) => s + (m.qtySold ?? 0), 0),
+    matchedRevenue: matches.reduce((s, m) => s + (m.gross   ?? 0), 0),
+    matches,
+  }
 }
 
 export type ActiveReport = {

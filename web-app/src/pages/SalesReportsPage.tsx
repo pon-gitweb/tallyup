@@ -14,6 +14,7 @@ import {
   normName,
   weekMonday,
   isSquareSource,
+  matchDocToMatchData,
   NZ_TZ,
   type ActiveReport,
   type MatchData,
@@ -390,7 +391,7 @@ function ReportsTab({
                     {isSquareWk
                       ? <span style={{ color: '#9ca3af' }}>—</span>
                       : md
-                        ? `${md.matched}/${md.total}`
+                        ? `${md.matched}/${md.total ?? r.lineCount}`
                         : <span style={{ color: '#9ca3af' }}>—</span>
                     }
                   </td>
@@ -675,15 +676,7 @@ export default function SalesReportsPage({
           if (!q2.empty) matchDoc = q2.docs[0] as any
         }
         if (!matchDoc.exists()) { mByR[r.id] = null; return }
-        const md = matchDoc.data()
-        const matches = md.matches ?? []
-        mByR[r.id] = {
-          matched: md.counts?.matched ?? matches.length,
-          total:   md.counts?.total   ?? r.lineCount,
-          matchedRevenue: matches.reduce((s: number, m: any) => s + (m.gross ?? 0), 0),
-          matchedQty:     matches.reduce((s: number, m: any) => s + (m.qtySold ?? 0), 0),
-          matches,
-        }
+        mByR[r.id] = matchDocToMatchData(matchDoc.data() as Record<string, any>)
       }))
       if (cancelled) return
       setMatchesByReport(mByR)

@@ -278,4 +278,21 @@ describe('runToolLoop — loop mechanics', () => {
     const parsed = JSON.parse(resultContent.content);
     expect(parsed.error).toMatch(/Tool execution error/);
   });
+
+  it('D5: stop_reason max_tokens → truncation notice appended to answer', async () => {
+    const callFn = jest.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'Here is a detailed analysis.' }],
+      stop_reason: 'max_tokens',
+    });
+
+    const result = await runToolLoop(
+      callFn,
+      [{ role: 'user', content: 'Give me a detailed analysis.' }],
+      (_name, _input) => ({}),
+    );
+
+    expect(result).toContain('Here is a detailed analysis.');
+    expect(result).toContain('(Answer shortened — ask me to continue.)');
+    expect(callFn).toHaveBeenCalledTimes(1);
+  });
 });

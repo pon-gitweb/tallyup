@@ -10,7 +10,7 @@
  */
 
 import { buildSalesPerformanceResult } from '../suiteeTools';
-import { normaliseSalesReport } from '../weeklyLedger';
+import { normaliseSalesReport, matchDocToMatchData } from '../weeklyLedger';
 import type { ActiveReport, MatchData, StockEntry } from '../weeklyLedger';
 
 const TODAY_NZ = '2026-10-13';
@@ -124,11 +124,11 @@ describe('buildSalesPerformanceResult', () => {
       TODAY_NZ,
     );
 
-    // The week containing 2026-09-28 is in the last4 window; its revenueExGst must be null
+    // The week containing 2026-09-28 is in the last4 window; its allSales.revenueExGst must be null
     const table: any[] = result.weeklyTable;
     const wk = table.find((r: any) => r.weekStart === '2026-09-28');
     expect(wk).toBeDefined();
-    expect(wk!.revenueExGst).toBeNull();
+    expect(wk!.allSales.revenueExGst).toBeNull();
   });
 
   it('product ambiguity returns candidates (up to 5), not a guess', () => {
@@ -276,10 +276,10 @@ describe('incl-only revenue (assumed_incl gstBasis)', () => {
     );
     const wkRow = (result.weeklyTable as any[]).find((w: any) => w.weekStart === '2026-09-28');
     expect(wkRow).toBeDefined();
-    expect(wkRow.revenueExGst).toBeNull();
-    expect(typeof wkRow.revenueInclGst).toBe('number');
-    expect(wkRow.revenueInclGst).toBeGreaterThan(0);
-    expect(wkRow.inclOnly).toBe(true);
+    expect(wkRow.allSales.revenueExGst).toBeNull();
+    expect(typeof wkRow.allSales.revenueInclGst).toBe('number');
+    expect(wkRow.allSales.revenueInclGst).toBeGreaterThan(0);
+    expect(wkRow.allSales.inclOnly).toBe(true);
     expect((result.summary as any)?.revenueNote).toMatch(/incl/i);
   });
 });
@@ -302,5 +302,100 @@ describe('stock status', () => {
     const p1 = sellers.find((s: any) => s.productId === 'p1');
     expect(p1).toBeDefined();
     expect(p1.status).toBe('Sold out');
+  });
+});
+
+// ── matchDocToMatchData unitsPct ───────────────────────────────────────────────
+
+describe('matchDocToMatchData — match doc without matchedQty gives correct unitsPct', () => {
+  it('computes matchedQty from matches array when top-level matchedQty is absent', () => {
+    const rawDoc = {
+      matches: [
+        { productId: 'p1', productName: 'Beer', name: 'Beer', qtySold: 5, gross: 500 },
+        { productId: 'p2', productName: 'Wine', name: 'Wine', qtySold: 3, gross: 300 },
+      ],
+      // no top-level matchedQty
+    };
+    const md = matchDocToMatchData(rawDoc);
+    expect(md.matchedQty).toBe(8);
+    expect(md.matchedRevenue).toBe(800);
+    expect(md.matched).toBe(2);   // matches.length
+    expect(md.total).toBeNull();  // d.counts?.total ?? null
+  });
+
+  it('correct unitsPct in buildSalesPerformanceResult with doc-style match data', () => {
+    const report = makeReport('r1', '2026-09-28', '2026-10-04', { qtySold: 20 });
+    // Match doc: 10 of 20 units matched
+    const rawDoc = {
+      matches: [{ productId: 'p1', productName: 'Beer', name: 'Beer', qtySold: 10, gross: 1000 }],
+    };
+    const md = matchDocToMatchData(rawDoc);
+    const result = buildSalesPerformanceResult(
+      [report],
+      { r1: md },
+      EMPTY_STOCK,
+      { question_type: 'summary', weeks: 4 },
+      TODAY_NZ,
+    );
+    const unitsPct = (result.matchCoverage as any).unitsPct;
+    expect(unitsPct).toBe(50); // 10 matched / 20 total = 50%
+  });
+});
+
+// ── separate allSales vs matchedProducts ──────────────────────────────────────
+
+describe('summary allSales vs matchedProducts', () => {
+  it('allSales.units equals sum of all raw lines in the window (not just matched)', () => {
+    // One matched report (10 units) + one unmatched report (15 units)
+    const matched   = makeReport('r-matched',   '2026-09-28', '2026-10-04', { qtySold: 10 });
+    const unmatched = makeReport('r-unmatched', '2026-09-28', '2026-10-04', { qtySold: 15 });
+    const matchesByReport: Record<string, MatchData | null> = {
+      'r-matched':   makeMatch('r-matched', 'p1', 10),
+      'r-unmatched': null,
+    };
+    const result = buildSalesPerformanceResult(
+      [matched, unmatched],
+      matchesByReport,
+      EMPTY_STOCK,
+      { question_type: 'summary', weeks: 4 },
+      TODAY_NZ,
+    );
+    const s = result.summary as any;
+    // allSales should include both reports (25 units in last4)
+    expect(s.allSales.last4Units).toBeCloseTo(25, 0);
+    // matchedProducts should include only matched (10 units)
+    expect(s.matchedProducts.last4Units).toBeCloseTo(10, 0);
+  });
+
+  it('matchedProducts.units < allSales.units when coverage < 100%', () => {
+    const r = makeReport('r1', '2026-09-28', '2026-10-04', { qtySold: 20 });
+    const md = matchDocToMatchData({
+      matches: [{ productId: 'p1', productName: 'Beer', name: 'Beer', qtySold: 8, gross: 800 }],
+    });
+    const result = buildSalesPerformanceResult(
+      [r],
+      { r1: md },
+      EMPTY_STOCK,
+      { question_type: 'summary', weeks: 4 },
+      TODAY_NZ,
+    );
+    const s = result.summary as any;
+    expect(s.allSales.last4Units).toBeGreaterThan(s.matchedProducts.last4Units);
+  });
+
+  it('weekly table row has allSales and matchedProducts fields', () => {
+    const r = makeReport('r1', '2026-09-28', '2026-10-04', { qtySold: 20 });
+    const result = buildSalesPerformanceResult(
+      [r],
+      { r1: makeMatch('r1', 'p1', 20) },
+      EMPTY_STOCK,
+      { question_type: 'summary', weeks: 4 },
+      TODAY_NZ,
+    );
+    const wk = (result.weeklyTable as any[]).find((w: any) => w.weekStart === '2026-09-28');
+    expect(wk).toBeDefined();
+    expect(typeof wk.allSales.units).toBe('number');
+    expect(typeof wk.allSales.revenueInclGst).toBe('number');
+    expect(typeof wk.matchedProducts.units).toBe('number');
   });
 });
