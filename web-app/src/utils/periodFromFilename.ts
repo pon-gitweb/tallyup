@@ -38,5 +38,6 @@ export function periodFromFilename(filename: string): { start: string; end: stri
   const start = parseDate(m[1], m[2], m[3])
   const end   = parseDate(m[4], m[5], m[6])
   if (!start || !end) return null
+  if (end < start) return null
   return { start, end }
 }

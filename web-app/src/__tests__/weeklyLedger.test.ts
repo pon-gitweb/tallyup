@@ -133,19 +133,16 @@ describe('buildVelocityRowsFromReports — day-weighting and status', () => {
   const stockMap: Record<string, StockEntry> = {}
 
   it('Tue–Mon report spanning two weeks distributes units by day-weight', () => {
-    // 7-day report: Tue 29 Sep – Mon 5 Oct
-    // 6/7 of units go to week 28 Sep, 1/7 to week 5 Oct
+    // anchorMon = Oct 12 (todayNZ Oct 20, currentWeekMon Oct 19, anchorMon Oct 12)
+    // last4 = [Sep 21, Sep 28, Oct 5, Oct 12]
+    // Sep 28 week: 6 days (Tue-Sun); Oct 5 week: 1 day (Mon) → total last4Units = 7
     const report = makeReport('r1', '2026-09-29', '2026-10-05')
     const matches = makeMatches('r1', [{ productId: 'p1', name: 'Beer', qtySold: 7, gross: 70 }])
-    const todayNZ = '2026-10-20' // current week Mon = 19 Oct
-    const rows = buildVelocityRowsFromReports([report], { r1: matches }, stockMap, todayNZ)
+    const todayNZ = '2026-10-20'
+    const { rows } = buildVelocityRowsFromReports([report], { r1: matches }, stockMap, todayNZ)
     expect(rows).toHaveLength(1)
-    const row = rows[0]
-    // Both weeks are before 19 Oct, and they are in the "sortedWeeks" window
-    // last4 = last 4 complete weeks before 19 Oct: 5 Oct, 28 Sep, 21 Sep, 14 Sep
-    // 5 Oct week has 1/7 × 7 = 1 unit; 28 Sep week has 6/7 × 7 = 6 units
-    expect(row.last4Units).toBeCloseTo(7, 0) // both weeks in last 4
-    expect(row.name).toBe('Beer')
+    expect(rows[0].last4Units).toBeCloseTo(7, 0)
+    expect(rows[0].name).toBe('Beer')
   })
 
   it('voided report is not in results when excluded by caller', () => {
@@ -153,34 +150,105 @@ describe('buildVelocityRowsFromReports — day-weighting and status', () => {
     const voided = makeReport('r2', '2026-09-08', '2026-09-14')
     const mActive = makeMatches('r1', [{ productId: 'p1', name: 'Wine', qtySold: 10, gross: 100 }])
     const mVoided = makeMatches('r2', [{ productId: 'p1', name: 'Wine', qtySold: 100, gross: 1000 }])
-    // Voided reports should be excluded BEFORE calling this function (caller filters)
-    const rows = buildVelocityRowsFromReports([active], { r1: mActive, r2: mVoided }, stockMap, '2026-10-20')
+    const { rows } = buildVelocityRowsFromReports([active], { r1: mActive, r2: mVoided }, stockMap, '2026-10-20')
     expect(rows).toHaveLength(1)
-    // Units only from active report (voided excluded)
     expect(rows[0].last4Units + rows[0].prev4Units).toBeLessThanOrEqual(10 + 1)
+  })
+
+  it('Tue-Mon report Monday spill into current week is ignored', () => {
+    // todayNZ = Oct 12 (Mon), anchorMon = Oct 5
+    // Report Tue Oct 6 to Mon Oct 12 (7 days); Oct 12 is current week → excluded
+    // Only 6/7 of units in Oct 5 week
+    const report = makeReport('r1', '2026-10-06', '2026-10-12')
+    const { rows } = buildVelocityRowsFromReports(
+      [report],
+      { r1: makeMatches('r1', [{ productId: 'p1', name: 'Beer', qtySold: 7, gross: 70 }]) },
+      {},
+      '2026-10-12',
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0].last4Units).toBeCloseTo(6, 1)
+  })
+
+  it('coverage < 14 days in last4 → No recent data status', () => {
+    // anchorMon = Oct 12 (todayNZ Oct 19). 7-day report in anchor week only → 7 covered days < 14
+    const report = makeReport('r1', '2026-10-12', '2026-10-18')
+    const { rows } = buildVelocityRowsFromReports(
+      [report],
+      { r1: makeMatches('r1', [{ productId: 'p1', name: 'Beer', qtySold: 10, gross: 100 }]) },
+      {},
+      '2026-10-19',
+    )
+    expect(rows[0].status).toBe('No recent data')
+  })
+
+  it('missing week inside last4 with < 14 covered days → No recent data, not Slowing/Stagnant', () => {
+    // todayNZ = Oct 12, anchorMon = Oct 5, last4 = [Sep 14, Sep 21, Sep 28, Oct 5]
+    // Only Sep 28 week covered (7 days) → last4CoveredDays = 7 < 14
+    const prevReport = makeReport('r0', '2026-08-17', '2026-09-13')
+    const lastReport = makeReport('r1', '2026-09-28', '2026-10-04')
+    const { rows } = buildVelocityRowsFromReports(
+      [prevReport, lastReport],
+      {
+        r0: makeMatches('r0', [{ productId: 'p1', name: 'Beer', qtySold: 40, gross: 400 }]),
+        r1: makeMatches('r1', [{ productId: 'p1', name: 'Beer', qtySold: 2, gross: 20 }]),
+      },
+      {},
+      '2026-10-12',
+    )
+    expect(rows[0].status).toBe('No recent data')
+  })
+
+  it('partial anchor week coverage uses rate when total last4 >= 14 days', () => {
+    // todayNZ = Oct 12, anchorMon = Oct 5, last4 = [Sep 14, Sep 21, Sep 28, Oct 5]
+    // r1: Sep 14-27 (14 days); r2: Oct 5-7 (3 days partial anchor)
+    // last4CoveredDays = 14 + 3 = 17 >= 14 → changePct is not null
+    const r0 = makeReport('r0', '2026-08-17', '2026-09-13') // 28 days, prev4
+    const r1 = makeReport('r1', '2026-09-14', '2026-09-27') // 14 days, Sep 14 + Sep 21 weeks
+    const r2 = makeReport('r2', '2026-10-05', '2026-10-07') // 3 days, partial anchor
+    const { rows } = buildVelocityRowsFromReports(
+      [r0, r1, r2],
+      {
+        r0: makeMatches('r0', [{ productId: 'p1', name: 'Beer', qtySold: 28, gross: 280 }]),
+        r1: makeMatches('r1', [{ productId: 'p1', name: 'Beer', qtySold: 14, gross: 140 }]),
+        r2: makeMatches('r2', [{ productId: 'p1', name: 'Beer', qtySold: 3, gross: 30 }]),
+      },
+      {},
+      '2026-10-12',
+    )
+    expect(rows[0].changePct).not.toBeNull()
+  })
+
+  it('weeksSinceLastSale = 0 when last sale in anchor week', () => {
+    // todayNZ = Oct 12, anchorMon = Oct 5; report covers anchor week exactly
+    const { rows } = buildVelocityRowsFromReports(
+      [makeReport('r1', '2026-10-05', '2026-10-11')],
+      { r1: makeMatches('r1', [{ productId: 'p1', name: 'Beer', qtySold: 5, gross: 50 }]) },
+      {},
+      '2026-10-12',
+    )
+    expect(rows[0].weeksSinceLastSale).toBe(0)
+  })
+
+  it('weeksSinceLastSale counts calendar weeks back from anchor (gap case)', () => {
+    // todayNZ = Oct 19, anchorMon = Oct 12; last sale Aug 17 = 8 weeks before anchor
+    const { rows } = buildVelocityRowsFromReports(
+      [makeReport('r1', '2026-08-17', '2026-08-23')],
+      { r1: makeMatches('r1', [{ productId: 'p1', name: 'Beer', qtySold: 5, gross: 50 }]) },
+      {},
+      '2026-10-19',
+    )
+    expect(rows[0].weeksSinceLastSale).toBe(8)
   })
 
   describe('status precedence', () => {
     function velocityStatus(last4: number, prev4: number, stock: number | null): string {
       const stock2: Record<string, StockEntry> = stock != null ? { p1: { count: stock, cycleNumber: 1 } } : {}
-
-      // Build a synthetic 10-week period so we have last4 and prev4 populated
-      // We need 8 weeks of complete data before "today"
-      // today = 2026-10-19 (Mon), week -1 = 12 Oct, week -2 = 5 Oct, ...
-      // We'll use a report spanning 8 complete Mon-Sun weeks
-      // week 1: 2026-08-17, week 8: 2026-10-04
-      const r = makeReport('r1', '2026-08-17', '2026-10-11')
-      const totalDays = daySpan('2026-08-17', '2026-10-11')
-      // 8 weeks = 56 days; each week gets 1/8 of units
-      // last4 weeks = 2026-09-14, 2026-09-21, 2026-09-28, 2026-10-05
-      // prev4 weeks = 2026-08-17, 2026-08-24, 2026-08-31, 2026-09-07
-
-      // We want last4Units ≈ last4, prev4Units ≈ prev4
-      // With uniform distribution: qtySold * (7 / totalDays) per week
-      // But we want EXACT control, so we'll use separate reports per week.
+      // todayNZ = Oct 19 (Mon), anchorMon = Oct 12
+      // prev4 = [Aug 24, Aug 31, Sep 7, Sep 14]; last4 = [Sep 21, Sep 28, Oct 5, Oct 12]
       const weeks = [
-        '2026-08-17', '2026-08-24', '2026-08-31', '2026-09-07', // prev4
-        '2026-09-14', '2026-09-21', '2026-09-28', '2026-10-05', // last4
+        '2026-08-24', '2026-08-31', '2026-09-07', '2026-09-14', // prev4
+        '2026-09-21', '2026-09-28', '2026-10-05', '2026-10-12', // last4
       ]
       const reports = weeks.map((w, i) => makeReport(`r${i}`, w, new Date(new Date(w + 'T00:00:00Z').getTime() + 6 * 86_400_000).toISOString().slice(0, 10)))
       const matchMap: Record<string, MatchData> = {}
@@ -189,8 +257,7 @@ describe('buildVelocityRowsFromReports — day-weighting and status', () => {
         const qty = isPrev4 ? Math.round(prev4 / 4) : Math.round(last4 / 4)
         matchMap[`r${i}`] = makeMatches(`r${i}`, [{ productId: 'p1', name: 'Beer', qtySold: qty, gross: qty * 10 }])
       })
-
-      const rows = buildVelocityRowsFromReports(reports, matchMap, stock2, '2026-10-19')
+      const { rows } = buildVelocityRowsFromReports(reports, matchMap, stock2, '2026-10-19')
       return rows[0]?.status ?? 'none'
     }
 
@@ -203,20 +270,17 @@ describe('buildVelocityRowsFromReports — day-weighting and status', () => {
     })
 
     it('prev4 = 8, last4 < 75% of prev4 (threshold: 75%) → Slowing', () => {
-      // last4 = 5, prev4 = 8, 5 < 8 * 0.75 = 6 → Slowing
+      // last4 = 5 → round(5/4)=1/wk → last4Units=4; prev4 = 8 → round(8/4)=2/wk → prev4Units=8
+      // rate: 4/28 < 0.75 * 8/28 → Slowing
       expect(velocityStatus(5, 8, 5)).toBe('Slowing')
     })
 
     it('prev4 = 8, last4 >= 75% of prev4 → Selling', () => {
-      // last4 = 6, prev4 = 8, 6 >= 6 → Selling
+      // last4 = 6 → round(6/4)=2/wk → last4Units=8; same rate as prev4 → Selling
       expect(velocityStatus(6, 8, 5)).toBe('Selling')
     })
 
     it('prev4 < 8 → Slowing threshold not applied even when last4 < prev4', () => {
-      // prev4 = 4 per-week × 4 = 4 units prev; last4 = 1 per-week × 4 = 4 units last4
-      // But we can also test: prev4=4 rounds to 1/wk (round(4/4)=1),
-      // last4=4 rounds to 1/wk → last4Units=4, prev4Units=4, ratio = 1 → Selling
-      // The key check: prev4Units < 8, so Slowing condition is NOT evaluated
       expect(velocityStatus(4, 4, 5)).toBe('Selling')
     })
   })
@@ -270,9 +334,15 @@ describe('buildUnmatchedRows', () => {
       { name: 'B', qtySold: 10 },
       { name: 'C', qtySold: 1 },
     ])
-    const rows = buildUnmatchedRows([r], { r1: null })
+    const rows = buildUnmatchedRows([r], { r1: makeMatches('r1', []) })
     expect(rows[0].normalisedName).toBe('b')
     expect(rows[1].normalisedName).toBe('a')
     expect(rows[2].normalisedName).toBe('c')
+  })
+
+  it('excludes reports with null match doc (F3 — matching run not completed)', () => {
+    const r = makeActiveReport('r1', [{ name: 'Ghost', qtySold: 5, grossIncl: 50 }])
+    const rows = buildUnmatchedRows([r], { r1: null })
+    expect(rows).toHaveLength(0)
   })
 })

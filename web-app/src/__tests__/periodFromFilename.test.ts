@@ -52,4 +52,16 @@ describe('periodFromFilename', () => {
   it('returns null for February 30 (invalid date)', () => {
     expect(periodFromFilename('sales_28Feb25-30Feb25.csv')).toBeNull()
   })
+
+  it('returns null when end date is before start date', () => {
+    expect(periodFromFilename('sales_07Sep26-01Sep26.csv')).toBeNull()
+  })
+
+  it('second file always returns its own dates (overwrites first)', () => {
+    const first  = periodFromFilename('sales_01Sep26-07Sep26.csv')!
+    const second = periodFromFilename('sales_08Sep26-14Sep26.csv')!
+    expect(first.start).toBe('2026-09-01')
+    expect(second.start).toBe('2026-09-08') // new file's dates, not carried from first
+    expect(second.end).toBe('2026-09-14')
+  })
 })

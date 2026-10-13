@@ -16,6 +16,7 @@ import {
   type MatchData,
   type StockEntry,
   type VelocityRow,
+  type VelocityWindowInfo,
   type UnmatchedRow,
 } from '../utils/weeklyLedger'
 import { voidSalesReport } from '../services/voidSalesReport'
@@ -154,7 +155,7 @@ function VoidModal({
   }
 
   return (
-    <div className={styles.modalOverlay} onClick={onClose}>
+    <div className={styles.modalOverlay} onClick={() => { if (!pending) onClose() }}>
       <div className={styles.modal} onClick={e => e.stopPropagation()}>
         <p className={styles.modalTitle}>Void sales report</p>
         <p className={styles.modalWarning}>
@@ -186,7 +187,7 @@ function VoidModal({
         {error && <p className={styles.errorText}>{error}</p>}
 
         <div className={styles.modalActions}>
-          <button className={styles.btnSecondary} onClick={onClose}>Cancel</button>
+          <button className={styles.btnSecondary} onClick={() => { if (!pending) onClose() }}>Cancel</button>
           <button className={styles.btnPrimary} disabled={!canSubmit} onClick={submit}>
             {pending ? 'Voiding…' : 'Void report'}
           </button>
@@ -434,55 +435,24 @@ function VelocityTab({
   const todayNZ = new Date().toLocaleDateString('en-CA', { timeZone: NZ_TZ })
   const [sortKey, setSortKey] = useState<VelocitySortKey>('last4')
 
-  const rows: VelocityRow[] = useMemo(
+  const { rows: rawRows, windowInfo } = useMemo(
     () => buildVelocityRowsFromReports(activeReports, matchesByReport, stockMap, todayNZ),
     [activeReports, matchesByReport, stockMap, todayNZ]
-  )
+  ) as { rows: VelocityRow[]; windowInfo: VelocityWindowInfo }
 
-  // Banner metrics
-  const allWeekSet = useMemo(() => {
-    const s = new Set<string>()
-    for (const r of activeReports) {
-      if (!r.startStr || !r.endStr) continue
-      let cur = new Date(r.startStr + 'T00:00:00Z')
-      const end = new Date(r.endStr + 'T00:00:00Z')
-      while (cur <= end) {
-        const wk = weekMonday(cur.toISOString().slice(0, 10))
-        if (wk < weekMonday(todayNZ)) s.add(wk)
-        cur = new Date(cur.getTime() + 7 * 86_400_000)
-      }
-    }
-    return s
-  }, [activeReports, todayNZ])
-
-  const sortedWeeks = [...allWeekSet].sort()
-  const last6 = sortedWeeks.slice(-6)
-  const missingWeeks: string[] = []
-  if (last6.length > 0) {
-    let cur = new Date(last6[0] + 'T00:00:00Z')
-    const end = new Date(last6[last6.length - 1] + 'T00:00:00Z')
-    while (cur <= end) {
-      const wk = cur.toISOString().slice(0, 10)
-      if (!allWeekSet.has(wk)) missingWeeks.push(wk)
-      cur = new Date(cur.getTime() + 7 * 86_400_000)
-    }
-  }
-
-  const totalMatched   = activeReports.reduce((s, r) => s + (matchesByReport[r.id]?.matched ?? 0), 0)
-  const totalLines     = activeReports.reduce((s, r) => s + r.lineCount, 0)
-  const matchedUnits   = activeReports.reduce((s, r) => s + (matchesByReport[r.id]?.matchedQty ?? 0), 0)
-  const totalUnits     = activeReports.reduce((s, r) => s + r.totalQtySold, 0)
-  const limitedHistory = sortedWeeks.length < 6
+  const unmatchedCount = activeReports.filter(r => matchesByReport[r.id] == null).length
+  const totalMatched = activeReports.reduce((s, r) => s + (matchesByReport[r.id]?.matched ?? 0), 0)
+  const totalLines   = activeReports.reduce((s, r) => s + r.lineCount, 0)
+  const dataEndsBefore = windowInfo.newestReportEnd != null && windowInfo.newestReportEnd < windowInfo.anchorMonday
 
   const sorted = useMemo(() => {
-    return [...rows].sort((a, b) => {
-      if (sortKey === 'last4')   return b.last4Units - a.last4Units
-      if (sortKey === 'change')  return (b.changePct ?? -Infinity) - (a.changePct ?? -Infinity)
-      // status sort: Sold out > Stagnant > Slowing > Selling
-      const order: Record<string, number> = { 'Sold out': 0, 'Stagnant': 1, 'Slowing': 2, 'Selling': 3 }
-      return (order[a.status] ?? 4) - (order[b.status] ?? 4)
+    return [...rawRows].sort((a, b) => {
+      if (sortKey === 'last4')  return b.last4Units - a.last4Units
+      if (sortKey === 'change') return (b.changePct ?? -Infinity) - (a.changePct ?? -Infinity)
+      const order: Record<string, number> = { 'Sold out': 0, 'No recent data': 1, 'Stagnant': 2, 'Slowing': 3, 'Selling': 4 }
+      return (order[a.status] ?? 5) - (order[b.status] ?? 5)
     })
-  }, [rows, sortKey])
+  }, [rawRows, sortKey])
 
   function SortBtn({ k, label }: { k: VelocitySortKey; label: string }) {
     return (
@@ -498,15 +468,17 @@ function VelocityTab({
 
   return (
     <div>
-      {limitedHistory && (
+      {unmatchedCount > 0 && (
         <div className={`${styles.banner} ${styles.bannerAmber}`}>
-          Limited history — only {sortedWeeks.length} week(s) of matched data.
+          {unmatchedCount} report{unmatchedCount !== 1 ? 's' : ''} not matched yet — excluded from velocity.
         </div>
       )}
       <div className={`${styles.banner} ${styles.bannerGray}`}>
-        {sortedWeeks.length} weeks covered
-        {missingWeeks.length > 0 && ` · missing: ${missingWeeks.join(', ')}`}
-        {' · '}match coverage: {totalMatched}/{totalLines} lines, {matchedUnits}/{totalUnits} units
+        Anchor week: {windowInfo.anchorMonday}
+        {' · '}last 4 wks: {windowInfo.last4CoveredDays} covered days
+        {' · '}prev 4 wks: {windowInfo.prev4CoveredDays} covered days
+        {dataEndsBefore && ` · Sales data ends ${windowInfo.newestReportEnd}`}
+        {' · '}match coverage: {totalMatched}/{totalLines} lines
       </div>
 
       <div style={{ marginBottom: 12 }}>
@@ -538,9 +510,10 @@ function VelocityTab({
                 <td>{r.weeksSinceLastSale != null ? `${r.weeksSinceLastSale} wk(s)` : '—'}</td>
                 <td>{r.latestStock != null ? r.latestStock : '—'}</td>
                 <td className={
-                  r.status === 'Sold out'  ? styles.statusSoldOut  :
-                  r.status === 'Stagnant'  ? styles.statusStagnant :
-                  r.status === 'Slowing'   ? styles.statusSlowing  :
+                  r.status === 'Sold out'       ? styles.statusSoldOut   :
+                  r.status === 'Stagnant'       ? styles.statusStagnant  :
+                  r.status === 'No recent data' ? styles.statusNoData    :
+                  r.status === 'Slowing'        ? styles.statusSlowing   :
                   styles.statusSelling
                 }>
                   {r.status === 'Stagnant' && r.latestStock == null ? 'No stock data' : r.status}
@@ -565,6 +538,8 @@ function UnmatchedTab({
   matchesByReport: Record<string, MatchData | null>
   onNavigate: (page: string) => void
 }) {
+  const unmatchedCount = activeReports.filter(r => matchesByReport[r.id] == null).length
+
   const rows: UnmatchedRow[] = useMemo(
     () => buildUnmatchedRows(activeReports, matchesByReport),
     [activeReports, matchesByReport]
@@ -577,6 +552,11 @@ function UnmatchedTab({
 
   return (
     <div>
+      {unmatchedCount > 0 && (
+        <div className={`${styles.banner} ${styles.bannerAmber}`}>
+          {unmatchedCount} report{unmatchedCount !== 1 ? 's' : ''} not matched yet — excluded from unmatched analysis.
+        </div>
+      )}
       <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>
         Lines whose normalised name is not in any report's matches. Top 50 by units.
         Click Map to go to POS Mapping.

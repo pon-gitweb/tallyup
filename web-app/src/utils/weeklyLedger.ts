@@ -246,7 +246,7 @@ export function buildStockMap(
 
 // ── Velocity status ───────────────────────────────────────────────────────────
 
-export type VelocityStatus = 'Sold out' | 'Stagnant' | 'Slowing' | 'Selling'
+export type VelocityStatus = 'Sold out' | 'No recent data' | 'Stagnant' | 'Slowing' | 'Selling'
 
 export type VelocityRow = {
   productId: string
@@ -259,41 +259,84 @@ export type VelocityRow = {
   status: VelocityStatus
 }
 
+export type VelocityWindowInfo = {
+  anchorMonday: string
+  last4CoveredDays: number
+  prev4CoveredDays: number
+  newestReportEnd: string | null
+}
 
 /**
- * Full velocity row builder that tracks per-product per-week units directly.
- * This is the accurate version used in SalesReportsPage.
+ * Velocity row builder with calendar-anchored, coverage-normalised windows.
+ *
+ * Anchor = last complete calendar week (Mon-start) before the current NZ week.
+ * last4 = 4 calendar weeks ending at the anchor.
+ * prev4 = 4 calendar weeks before last4.
+ * Coverage = distinct dates covered by at least one active, dated, matched report
+ *            (union; no double-counting).  Reports with null matchesByReport are
+ *            excluded (match run hasn't completed — F3).
+ * changePct is rate-based (units/coveredDays); null when either window < 14 days.
+ * Tue–Mon report Monday spill into the current week is excluded from units and coverage.
  */
 export function buildVelocityRowsFromReports(
   reports: ActiveReport[],
   matchesByReport: Record<string, MatchData | null>,
   stockMap: Record<string, StockEntry>,
   todayNZDate: string,
-): VelocityRow[] {
-  const currentWeekMon = weekMonday(todayNZDate)
+): { rows: VelocityRow[]; windowInfo: VelocityWindowInfo } {
+  function addDays(s: string, n: number): string {
+    return new Date(new Date(s + 'T00:00:00Z').getTime() + n * 86_400_000).toISOString().slice(0, 10)
+  }
 
-  // First pass: collect all weeks
-  const allWeekSet = new Set<string>()
-  for (const r of reports) {
-    if (!r.startStr || !r.endStr) continue
-    for (const wk of Object.keys(weekDayBreakdown(r.startStr, r.endStr))) {
-      allWeekSet.add(wk)
+  const currentWeekMon = weekMonday(todayNZDate)
+  const anchorMon = addDays(currentWeekMon, -7)
+
+  const last4Mondays = [-21, -14, -7, 0].map(d => addDays(anchorMon, d))
+  const prev4Mondays = [-49, -42, -35, -28].map(d => addDays(anchorMon, d))
+  const last4Set = new Set(last4Mondays)
+  const prev4Set = new Set(prev4Mondays)
+
+  const last4WinStart = last4Mondays[0]
+  const last4WinEnd   = addDays(anchorMon, 6)
+  const prev4WinStart = prev4Mondays[0]
+  const prev4WinEnd   = addDays(anchorMon, -22)
+
+  // Active dated matched reports only (null = match run hasn't completed)
+  const matchedReports = reports.filter(
+    r => r.startStr && r.endStr && matchesByReport[r.id] != null
+  )
+
+  // Global covered days per window — union of distinct calendar dates
+  const last4CovSet = new Set<string>()
+  const prev4CovSet = new Set<string>()
+  const currentWkStart = new Date(currentWeekMon + 'T00:00:00Z')
+
+  for (const r of matchedReports) {
+    let cur = new Date(r.startStr! + 'T00:00:00Z')
+    const end = new Date(r.endStr! + 'T00:00:00Z')
+    while (cur <= end && cur < currentWkStart) {
+      const d = cur.toISOString().slice(0, 10)
+      if (d >= last4WinStart && d <= last4WinEnd) last4CovSet.add(d)
+      if (d >= prev4WinStart && d <= prev4WinEnd) prev4CovSet.add(d)
+      cur = new Date(cur.getTime() + 86_400_000)
     }
   }
-  const sortedWeeks = [...allWeekSet].sort().filter(w => w < currentWeekMon)
-  const last4 = sortedWeeks.slice(-4)
-  const prev4 = sortedWeeks.slice(-8, -4)
-  const last4Set = new Set(last4)
-  const prev4Set = new Set(prev4)
 
-  // Per-product per-week unit accumulator
+  const last4CoveredDays = last4CovSet.size
+  const prev4CoveredDays = prev4CovSet.size
+
+  const newestReportEnd = matchedReports.reduce<string | null>(
+    (best, r) => r.endStr && (!best || r.endStr > best) ? r.endStr : best,
+    null
+  )
+
+  // Per-product per-week unit accumulation (excludes current week days)
   const prodWeekUnits = new Map<string, { name: string; byWeek: Map<string, number> }>()
 
-  for (const r of reports) {
-    const md = matchesByReport[r.id]
-    if (!r.startStr || !r.endStr || !md) continue
+  for (const r of matchedReports) {
+    const md = matchesByReport[r.id]!
+    const wdMap = weekDayBreakdown(r.startStr!, r.endStr!)
     const totalDays = r.days ?? 1
-    const wdMap = weekDayBreakdown(r.startStr, r.endStr)
 
     for (const m of md.matches) {
       const pid = m.productId
@@ -305,8 +348,8 @@ export function buildVelocityRowsFromReports(
       const e = prodWeekUnits.get(pid)!
 
       for (const [wk, daysInWk] of Object.entries(wdMap)) {
-        const prev = e.byWeek.get(wk) ?? 0
-        e.byWeek.set(wk, prev + qty * (daysInWk / totalDays))
+        if (wk >= currentWeekMon) continue  // ignore current-week spill
+        e.byWeek.set(wk, (e.byWeek.get(wk) ?? 0) + qty * (daysInWk / totalDays))
       }
     }
   }
@@ -316,31 +359,29 @@ export function buildVelocityRowsFromReports(
   for (const [pid, { name, byWeek }] of prodWeekUnits.entries()) {
     let last4Units = 0
     let prev4Units = 0
-    let lastSaleWeekIdx = -1
+    for (const [wk, u] of byWeek.entries()) {
+      if (last4Set.has(wk)) last4Units += u
+      else if (prev4Set.has(wk)) prev4Units += u
+    }
 
-    for (let i = 0; i < sortedWeeks.length; i++) {
-      const wk = sortedWeeks[i]
-      const u = byWeek.get(wk) ?? 0
-      if (last4Set.has(wk)) { last4Units += u; if (u > 0) lastSaleWeekIdx = i }
-      else if (prev4Set.has(wk)) { prev4Units += u }
+    // weeksSinceLastSale: calendar weeks between anchor and week of last sale
+    let lastSaleWkMon: string | null = null
+    for (const [wk, u] of byWeek.entries()) {
+      if (u > 0 && (lastSaleWkMon === null || wk > lastSaleWkMon)) lastSaleWkMon = wk
+    }
+    let weeksSinceLastSale: number | null = null
+    if (lastSaleWkMon !== null) {
+      const diff = new Date(anchorMon + 'T00:00:00Z').getTime() -
+                   new Date(lastSaleWkMon + 'T00:00:00Z').getTime()
+      weeksSinceLastSale = Math.max(0, Math.round(diff / (7 * 86_400_000)))
     }
 
     const latestStock = stockMap[pid]?.count ?? null
-    const changePct = prev4Units > 0
-      ? ((last4Units - prev4Units) / prev4Units) * 100
-      : null
 
-    let weeksSinceLastSale: number | null = null
-    if (lastSaleWeekIdx < 0) {
-      // Not seen in last 4 weeks — find last sale across all weeks
-      for (let i = sortedWeeks.length - 1; i >= 0; i--) {
-        if ((byWeek.get(sortedWeeks[i]) ?? 0) > 0) {
-          weeksSinceLastSale = sortedWeeks.length - 1 - i
-          break
-        }
-      }
-    } else {
-      weeksSinceLastSale = sortedWeeks.length - 1 - lastSaleWeekIdx
+    // Rate-based changePct; null if either window < 14 covered days or prev rate = 0
+    let changePct: number | null = null
+    if (last4CoveredDays >= 14 && prev4CoveredDays >= 14 && prev4Units > 0) {
+      changePct = ((last4Units / last4CoveredDays) / (prev4Units / prev4CoveredDays) - 1) * 100
     }
 
     const hasSales = [...byWeek.values()].some(u => u > 0)
@@ -348,16 +389,22 @@ export function buildVelocityRowsFromReports(
     let status: VelocityStatus = 'Selling'
     if (latestStock === 0) {
       status = 'Sold out'
+    } else if (last4CoveredDays < 14) {
+      status = 'No recent data'
     } else if (last4Units === 0 && hasSales) {
       status = 'Stagnant'
-    } else if (prev4Units >= 8 && last4Units < prev4Units * 0.75) {
+    } else if (
+      prev4Units >= 8 &&
+      prev4CoveredDays >= 14 &&
+      (last4Units / last4CoveredDays) < (prev4Units / prev4CoveredDays) * 0.75
+    ) {
       status = 'Slowing'
     }
 
     rows.push({ productId: pid, name, last4Units, prev4Units, changePct, weeksSinceLastSale, latestStock, status })
   }
 
-  return rows
+  return { rows, windowInfo: { anchorMonday: anchorMon, last4CoveredDays, prev4CoveredDays, newestReportEnd } }
 }
 
 // ── Normalised line name ──────────────────────────────────────────────────────
@@ -384,8 +431,9 @@ export function buildUnmatchedRows(
 
   for (const r of reports) {
     const md = matchesByReport[r.id]
+    if (md == null) continue  // match run not completed — excluded per F3
     const matchedNames = new Set(
-      (md?.matches ?? []).map(m => normName(m.name ?? m.productName))
+      md.matches.map(m => normName(m.name ?? m.productName))
     )
     const hasLineTotals = r.meta?.lineTotalsBasis === 'line_total'
 

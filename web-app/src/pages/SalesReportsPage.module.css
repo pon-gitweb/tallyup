@@ -314,10 +314,11 @@
 }
 
 /* Velocity table */
-.statusSelling   { color: #065f46; font-weight: 600; }
-.statusStagnant  { color: #92400e; font-weight: 600; }
-.statusSlowing   { color: #d97706; font-weight: 600; }
-.statusSoldOut   { color: #dc2626; font-weight: 600; }
+.statusSelling    { color: #065f46; font-weight: 600; }
+.statusStagnant   { color: #92400e; font-weight: 600; }
+.statusSlowing    { color: #d97706; font-weight: 600; }
+.statusSoldOut    { color: #dc2626; font-weight: 600; }
+.statusNoData     { color: #6b7280; font-weight: 600; }
 
 /* Unmatched cumulative bar */
 .cumBar {

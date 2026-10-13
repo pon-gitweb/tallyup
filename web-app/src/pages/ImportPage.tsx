@@ -562,7 +562,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [bPeriodEnd,   setBPeriodEnd]   = useState('')
   const [bPeriodError, setBPeriodError] = useState<string|null>(null)
   const [bSalesWarning, setBSalesWarning] = useState<string|null>(null)
-  const [bFilenameWarning, setBFilenameWarning] = useState<string|null>(null)
+  const [bFilenamePeriod, setBFilenamePeriod] = useState<{start:string; end:string} | null>(null)
   // ── Period-overlap conflict ──
   type BConflict = {
     start: string; end: string; source: 'pdf'|'csv'
@@ -705,6 +705,10 @@ export default function ImportPage({ venueId }: { venueId: string }) {
 
       setBConflict(null)
       setBConflictKeepBothConfirm(false)
+      setBPeriodStart('')
+      setBPeriodEnd('')
+      setBFilenamePeriod(null)
+      if (source === 'csv') { setBRows([]); setBParseResult(null) }
       if (source === 'pdf') setBPdfStatus('done')
       else setBStatus('done')
     } catch (e: any) {
@@ -790,23 +794,18 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       setBParseResult(parsed)
       setBPeriodError(null)
       setBSalesWarning(null)
-      setBFilenameWarning(null)
       setBConflict(null)
 
-      // Auto-fill period from filename when inputs are empty; warn when they differ.
+      // Always apply the filename period (overwrite any previous dates); clear if none.
       const fnPeriod = periodFromFilename(file.name)
       if (fnPeriod) {
-        const curStart = bPeriodStart
-        const curEnd   = bPeriodEnd
-        if (!curStart && !curEnd) {
-          setBPeriodStart(fnPeriod.start)
-          setBPeriodEnd(fnPeriod.end)
-          setBFilenameWarning('Dates taken from the file name')
-        } else if (curStart !== fnPeriod.start || curEnd !== fnPeriod.end) {
-          setBFilenameWarning(
-            `File name suggests ${fnPeriod.start} – ${fnPeriod.end}, but you have ${curStart || '?'} – ${curEnd || '?'} entered.`
-          )
-        }
+        setBPeriodStart(fnPeriod.start)
+        setBPeriodEnd(fnPeriod.end)
+        setBFilenamePeriod(fnPeriod)
+      } else {
+        setBPeriodStart('')
+        setBPeriodEnd('')
+        setBFilenamePeriod(null)
       }
 
       setBStatus('ready')
@@ -1280,6 +1279,16 @@ export default function ImportPage({ venueId }: { venueId: string }) {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  // Render-time filename period warning (derived from bFilenamePeriod vs current inputs)
+  const fnMatchesInputs = bFilenamePeriod != null &&
+    bPeriodStart === bFilenamePeriod.start && bPeriodEnd === bFilenamePeriod.end
+  const fnWarning = bFilenamePeriod != null && !fnMatchesInputs
+    ? `The file name says ${bFilenamePeriod.start} – ${bFilenamePeriod.end}; you've entered ${bPeriodStart || '?'} – ${bPeriodEnd || '?'}.`
+    : null
+  const fnInfo = bFilenamePeriod != null && fnMatchesInputs
+    ? 'Dates taken from the file name'
+    : null
+
   return (
     <div className={styles.page}>
       <h1 className={styles.heading}>Import</h1>
@@ -1577,9 +1586,12 @@ export default function ImportPage({ venueId }: { venueId: string }) {
                     style={{ display: 'block', marginTop: 4, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
                 </label>
               </div>
-              {bFilenameWarning && (
+              {fnInfo && (
+                <p style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>{fnInfo}</p>
+              )}
+              {fnWarning && (
                 <p style={{ fontSize: 12, color: '#92400e', background: '#fef3c7', borderRadius: 6, padding: '8px 12px', marginTop: 6 }}>
-                  {bFilenameWarning}
+                  {fnWarning}
                 </p>
               )}
               {bPeriodError && <p style={{ fontSize: 12, color: '#dc2626', marginTop: 6 }}>{bPeriodError}</p>}
@@ -1587,7 +1599,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
             <div className={styles.actions}>
               <button
                 className={styles.cancelBtn}
-                onClick={() => { setBRows([]); setBParseResult(null); setBStatus('idle'); setBError(null); setBPeriodStart(''); setBPeriodEnd(''); setBPeriodError(null); setBFilenameWarning(null) }}
+                onClick={() => { setBRows([]); setBParseResult(null); setBFilenamePeriod(null); setBStatus('idle'); setBError(null); setBPeriodStart(''); setBPeriodEnd(''); setBPeriodError(null) }}
               >
                 Cancel
               </button>
