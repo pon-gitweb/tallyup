@@ -81,6 +81,7 @@ export function computeSnapshotItemFigures(
   salesLines: SnapshotSalesLine[],
   productResolution: ProductResolution = EMPTY_RESOLUTION,
   supplierResolution: SupplierResolution = EMPTY_SUPPLIER_RESOLUTION,
+  baselineCycleNumber?: number,
 ): {
   snapshotItems: any[];
   hasBaseline: boolean;
@@ -113,7 +114,7 @@ export function computeSnapshotItemFigures(
     if (openingCount != null) hasBaseline = true;
     if (costPrice != null) { hasPrices = true; totalPricedItems++; }
 
-    const totalVarianceQty = actualClosing - (openingCount ?? 0);
+    const totalVarianceQty = openingCount != null ? actualClosing - openingCount : 0;
     const totalVarianceDollars = costPrice != null ? totalVarianceQty * costPrice : null;
 
     // Supplier info stamped from the resolved product — uses the already-fetched
@@ -163,7 +164,9 @@ export function computeSnapshotItemFigures(
       varianceConfidence: openingCount != null ? 'high' : 'low',
       confidenceReason: openingCount == null
         ? (cycleNumber === 1 ? 'First cycle for department' : 'New product — no prior cycle')
-        : 'Baseline from previous cycle snapshot',
+        : baselineCycleNumber != null
+          ? `Baseline from cycle ${baselineCycleNumber}`
+          : 'Baseline from previous cycle snapshot',
 
       lastCountBy: item.lastCountBy || null,
       lastCountByName: item.lastCountByName || null,
@@ -350,8 +353,10 @@ export async function writeDepartmentSnapshot(
     const deptData = deptSnap.exists() ? (deptSnap.data() as any) : {};
     const departmentName: string = deptData.name || departmentId;
 
-    // ── FIX 1: Load previous cycle snapshot for correct openingCount ──────────
+    // ── Load previous cycle snapshot for openingCount — with gap fallback ────
     const prevItemMap = new Map<string, number>(); // name.toLowerCase() → actualClosing
+    let baselineCycleNumber: number | undefined;
+    let baselineGapNote: string | null = null;
     if (cycleNumber > 0) {
       try {
         const prevSnapshotId = `cycle-${cycleNumber - 1}`;
@@ -365,6 +370,36 @@ export async function writeDepartmentSnapshot(
             if (key && typeof item.actualClosing === 'number') {
               prevItemMap.set(key, item.actualClosing);
             }
+          }
+          baselineCycleNumber = cycleNumber - 1;
+        } else if (cycleNumber > 1) {
+          // cycle-{n-1} missing — find most recent earlier snapshot (single-field query)
+          try {
+            const fallbackSnap = await getDocs(query(
+              collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots'),
+              where('cycleNumber', '<', cycleNumber),
+              orderBy('cycleNumber', 'desc'),
+              limit(1),
+            ));
+            if (!fallbackSnap.empty) {
+              const fallbackData = fallbackSnap.docs[0].data() as any;
+              const m = fallbackData.cycleNumber as number;
+              baselineCycleNumber = m;
+              const missingCycles = Array.from(
+                { length: cycleNumber - 1 - m },
+                (_, i) => m + 1 + i,
+              );
+              baselineGapNote = `Compared with cycle ${m}; cycle(s) ${missingCycles.join(', ')} were not saved`;
+              for (const item of (fallbackData.items || [])) {
+                const key = (item.name || '').toLowerCase().trim();
+                if (key && typeof item.actualClosing === 'number') {
+                  prevItemMap.set(key, item.actualClosing);
+                }
+              }
+              console.warn('[snapshotWriter] baseline fallback used:', baselineGapNote);
+            }
+          } catch (e: any) {
+            console.warn('[snapshotWriter] baseline fallback query failed:', e?.message);
           }
         }
       } catch (e: any) { console.warn('[snapshotWriter] previous snapshot read failed:', e?.message); }
@@ -488,7 +523,7 @@ export async function writeDepartmentSnapshot(
 
     // ── Pure computation ──────────────────────────────────────────────────────
     const { snapshotItems, hasBaseline, hasPrices, totalPricedItems, hasInvoices, hasSales, likelyMissingInvoices } =
-      computeSnapshotItemFigures(rawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines, productResolution, supplierResolution);
+      computeSnapshotItemFigures(rawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines, productResolution, supplierResolution, baselineCycleNumber);
 
     // STEP C — PO reconciliation
     const poDiscrepancies: any[] = [];
@@ -631,6 +666,8 @@ export async function writeDepartmentSnapshot(
       itemsWithPositiveVariance: snapshotItems.filter(si => si.totalVarianceQty > 0).length,
       itemsWithNegativeVariance: snapshotItems.filter(si => si.totalVarianceQty < 0).length,
       itemsPricedByInvoice: snapshotItems.filter(si => si.costPriceTier === 'invoice_verified').length,
+      itemsWithBaseline: snapshotItems.filter(si => si.openingCount != null).length,
+      itemsWithoutBaseline: snapshotItems.filter(si => si.openingCount == null).length,
       displayTotalStockValue: snapshotItems.some(si => si.displayCostPrice != null)
         ? snapshotItems.reduce((s, si) => s + (si.displayCostPrice != null ? si.actualClosing * si.displayCostPrice : 0), 0)
         : null,
@@ -663,6 +700,8 @@ export async function writeDepartmentSnapshot(
       cycleEnd: Timestamp.fromDate(cycleEnd),
       daysSinceLastCycle,
       durationMinutes,
+      baselineCycleNumber: baselineCycleNumber ?? null,
+      baselineGapNote,
       dataCompleteness,
       summary,
       items: cleanItems,
