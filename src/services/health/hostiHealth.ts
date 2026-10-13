@@ -43,6 +43,7 @@ export interface HostiHealthStage3 {
   estimatedImpact: number | null;  // dollars recovered this cycle, null if no cost prices
   kpis: {
     stockAccuracy: number | null;    // 0–100 or null if no data
+    stockAccuracyNullReason?: 'limited_baseline' | null;
     labourEfficiency: number | null; // 0–100 or null if no hourlyRate or no segments
     inventoryHealth: number | null;  // 0–100 or null if < 2 monthly snapshots
     orderingIntelligence: number | null; // 0–100 or null if < 3 cycles
@@ -179,10 +180,15 @@ async function calculateFullScore(
   let targetDaysOfCover = 10; // lifted to function scope — populated by Labour Efficiency's labourSnap read, used by Inventory Health and Constraint Analysis
 
   // ── Stock Accuracy — latest snapshot per department, aggregated ──────────
+  // Only items with a baseline (openingCount != null) contribute. If baseline
+  // items are < 50% of counted items across all departments, the score is
+  // returned as null with reason 'limited_baseline'.
   let totalVarianceDollars: number | null = null; // sum of absolute values per department — shortages and excesses both count
   let totalStockValueAgg: number | null = null;
   let pricedItemPercentSum = 0;
   let pricedItemPercentCount = 0;
+  let totalBaselineItems = 0;
+  let totalCountedItems = 0;
   try {
     let anyHasPrices = false;
     let sumVariance = 0;
@@ -195,11 +201,28 @@ async function calculateFullScore(
       ));
       if (snapsSnap.empty) continue;
       const snap = snapsSnap.docs[0].data() as any;
+
+      // Track baseline coverage across all departments
+      const snapBaseline = typeof snap.summary?.itemsWithBaseline === 'number'
+        ? snap.summary.itemsWithBaseline : null;
+      const snapTotal = typeof snap.summary?.totalItemsCounted === 'number'
+        ? snap.summary.totalItemsCounted : 0;
+      if (snapBaseline != null) {
+        totalBaselineItems += snapBaseline;
+        totalCountedItems += snapTotal;
+      } else {
+        // Pre-baseline-tracking snapshot: assume all items have baseline (conservative)
+        totalBaselineItems += snapTotal;
+        totalCountedItems += snapTotal;
+      }
+
       // Widen hasPrices gate: snapshots with display-only pricing (invoice-verified items,
       // no stamped costPrice) also contribute to Stock Accuracy and stock value totals.
       if (snap?.dataCompleteness?.hasPrices || (snap.summary?.displayTotalStockValue ?? 0) > 0) {
         anyHasPrices = true;
         // Sum absolute variance — shortages and excesses both count, don't cancel.
+        // After item-2 change, no-baseline items have 0 variance so displayTotalVarianceDollars
+        // already reflects baseline-only variance. Stock value includes all items (conservative).
         // Prefer display-tier dollars (stamped + invoice-verified); fall back to stamped-only
         // for pre-Phase-1 snapshots that don't carry the display fields.
         sumVariance += Math.abs((snap.summary?.displayTotalVarianceDollars ?? snap.summary?.totalVarianceDollars) ?? 0);
@@ -231,8 +254,14 @@ async function calculateFullScore(
     // Non-fatal — stockAccuracy stays null below
   }
 
+  // Baseline coverage gate: < 50% items have a prior-cycle baseline → score is unreliable
+  const limitedBaseline = totalCountedItems > 0 && totalBaselineItems / totalCountedItems < 0.5;
+
   let stockAccuracy: number | null = null;
-  if (totalStockValueAgg != null && totalStockValueAgg !== 0 && totalVarianceDollars != null) {
+  let stockAccuracyNullReason: 'limited_baseline' | null = null;
+  if (limitedBaseline) {
+    stockAccuracyNullReason = 'limited_baseline';
+  } else if (totalStockValueAgg != null && totalStockValueAgg !== 0 && totalVarianceDollars != null) {
     // totalVarianceDollars is already a sum of absolute values — no Math.abs() needed here.
     const variancePct = totalVarianceDollars / totalStockValueAgg * 100;
     // Four-zone piecewise curve. Boundaries verified:
@@ -1002,6 +1031,7 @@ async function calculateFullScore(
     estimatedImpact,
     kpis: {
       stockAccuracy,
+      stockAccuracyNullReason,
       labourEfficiency,
       inventoryHealth,
       orderingIntelligence,
