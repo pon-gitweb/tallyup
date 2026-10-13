@@ -20,6 +20,16 @@ import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './name
 import { computeGpPercent } from './priceTracking';
 import { computeRecipeGpPct } from './priceCascade';
 import { flagAnomalousChanges, SanityInput } from './priceChangeSanity';
+import {
+  buildVelocityRowsFromReports,
+  partitionReports,
+  weekDayBreakdown,
+  daySpan,
+  type ActiveReport,
+  type MatchData,
+  type StockEntry,
+} from './weeklyLedger';
+import { isReportActive } from './isReportActive';
 
 // ── Stage 0: get_gp_analysis interfaces ──────────────────────────────────────
 
@@ -1340,4 +1350,297 @@ export async function runToolLoop(
   }
 
   return answer;
+}
+
+// ── Sales performance tool ────────────────────────────────────────────────────
+
+export interface SalesPerfInput {
+  question_type: 'summary' | 'product' | 'top_sellers' | 'slowing' | 'stagnant';
+  product_name?: string;
+  weeks?: number;
+}
+
+export const SALES_PERFORMANCE_TOOL = {
+  name: 'get_sales_performance',
+  description: [
+    'Returns sales velocity and revenue data from imported sales reports.',
+    'Use for any question about sales volume, revenue, best sellers, slow movers, stagnant lines,',
+    'sales trends, or a specific product\'s recent performance.',
+    'question_type: summary=window totals + change%, product=single product lookup (use product_name),',
+    'top_sellers=top 15 by units, slowing=15 lines with >25% rate drop, stagnant=lines with zero last-4-week sales.',
+    'weeks defaults to 4 (max 26). product_name is required for question_type=product.',
+  ].join(' '),
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      question_type: {
+        type: 'string',
+        enum: ['summary', 'product', 'top_sellers', 'slowing', 'stagnant'],
+      },
+      product_name: {
+        type: 'string',
+        description: 'Required for question_type=product. Case-insensitive substring match.',
+      },
+      weeks: {
+        type: 'number',
+        description: 'Window size in weeks (default 4, max 26).',
+      },
+    },
+    required: ['question_type'] as const,
+  },
+} as const;
+
+/**
+ * Pure aggregation for sales performance. Filters allReports to active only internally.
+ * Exported for tests — pass pre-loaded ActiveReport[], MatchData, StockEntry records.
+ */
+export function buildSalesPerformanceResult(
+  allReports: ActiveReport[],
+  matchesByReport: Record<string, MatchData | null>,
+  stockMap: Record<string, StockEntry>,
+  input: SalesPerfInput,
+  todayNZ: string,
+): Record<string, any> {
+  const reports = allReports.filter(r => isReportActive({ status: r.status }));
+  const weeksParam = Math.min(26, Math.max(1, typeof input.weeks === 'number' ? Math.round(input.weeks) : 4));
+
+  const { rows: velocityRows, windowInfo } = buildVelocityRowsFromReports(
+    reports, matchesByReport, stockMap, todayNZ,
+  );
+
+  const anchorMon = windowInfo.anchorMonday;
+
+  function addDays(s: string, n: number): string {
+    return new Date(new Date(s + 'T00:00:00Z').getTime() + n * 86_400_000).toISOString().slice(0, 10);
+  }
+
+  // Calendar weeks in the requested window (oldest first)
+  const winMondays: string[] = [];
+  for (let i = weeksParam - 1; i >= 0; i--) winMondays.push(addDays(anchorMon, -(i * 7)));
+
+  // Active dated matched reports for data computation
+  const matchedReports = reports.filter(r => r.startStr && r.endStr && matchesByReport[r.id] != null);
+
+  // Match coverage across all active reports
+  const totalLines  = reports.reduce((s, r) => s + r.lineCount, 0);
+  const totalQty    = reports.reduce((s, r) => s + r.totalQtySold, 0);
+  const matchedLines = reports.reduce((s, r) => s + (matchesByReport[r.id]?.matched ?? 0), 0);
+  const matchedQty   = reports.reduce((s, r) => s + (matchesByReport[r.id]?.matchedQty ?? 0), 0);
+  const linesPct = totalLines > 0 ? Math.round(matchedLines / totalLines * 100) : 0;
+  const unitsPct = totalQty   > 0 ? Math.round(matchedQty   / totalQty   * 100) : 0;
+  const reportsNotMatched = reports.filter(r => matchesByReport[r.id] == null).length;
+
+  // Weekly table — units from matched entries, revenue from rawLines, day-weighted
+  const weeklyTable = winMondays.map(wkMon => {
+    const wkSun = addDays(wkMon, 6);
+    let units = 0, revIncl = 0, revExcl = 0, anyLegacy = false;
+    for (const r of matchedReports) {
+      if (r.startStr! > wkSun || r.endStr! < wkMon) continue;
+      const md = matchesByReport[r.id]!;
+      const totalDays = r.days ?? 1;
+      const os = r.startStr! > wkMon ? r.startStr! : wkMon;
+      const oe = r.endStr!   < wkSun  ? r.endStr!  : wkSun;
+      const frac = daySpan(os, oe) / totalDays;
+      if (r.meta?.lineTotalsBasis !== 'line_total') anyLegacy = true;
+      for (const m of md.matches)  units   += (m.qtySold ?? 0) * frac;
+      for (const l of r.rawLines) { revIncl += (l.grossIncl ?? l.gross ?? 0) * frac; revExcl += (l.netExcl ?? l.net ?? 0) * frac; }
+    }
+    return {
+      weekStart: wkMon,
+      revenueExGst:   anyLegacy ? null : Math.round(revExcl  * 100) / 100,
+      revenueInclGst: Math.round(revIncl * 100) / 100,
+      units:          Math.round(units  *  10) / 10,
+    };
+  });
+
+  // Missing weeks (no matched report overlaps the week at all)
+  const missingWeeks: string[] = [];
+  let weeksCovered = 0;
+  for (const wkMon of winMondays) {
+    const wkSun = addDays(wkMon, 6);
+    if (matchedReports.some(r => r.startStr! <= wkSun && r.endStr! >= wkMon)) weeksCovered++;
+    else missingWeeks.push(wkMon);
+  }
+
+  const result: Record<string, any> = {
+    weeksCovered,
+    missingWeeks,
+    last4CoveredDays: windowInfo.last4CoveredDays,
+    prev4CoveredDays: windowInfo.prev4CoveredDays,
+    newestReportEnd:  windowInfo.newestReportEnd,
+    matchCoverage:    { linesPct, unitsPct },
+    revenueBasis:     'ex GST',
+    reportsNotMatched,
+    weeklyTable,
+  };
+
+  // ── question_type: summary ──────────────────────────────────────────────────
+  if (input.question_type === 'summary') {
+    const last4Mondays = [-21, -14, -7, 0].map(d => addDays(anchorMon, d));
+    const prev4Mondays = [-49, -42, -35, -28].map(d => addDays(anchorMon, d));
+    const last4Set = new Set(last4Mondays);
+    const prev4Set = new Set(prev4Mondays);
+
+    let last4Units = 0, prev4Units = 0;
+    for (const row of velocityRows) { last4Units += row.last4Units; prev4Units += row.prev4Units; }
+
+    let l4RevIncl = 0, l4RevExcl = 0, l4Legacy = false;
+    let p4RevIncl = 0, p4RevExcl = 0, p4Legacy = false;
+    for (const r of matchedReports) {
+      const wdMap = weekDayBreakdown(r.startStr!, r.endStr!);
+      const totalDays = r.days ?? 1;
+      const isLegacy = r.meta?.lineTotalsBasis !== 'line_total';
+      let lf = 0, pf = 0;
+      for (const [wk, d] of Object.entries(wdMap)) {
+        if (last4Set.has(wk)) lf += d / totalDays;
+        else if (prev4Set.has(wk)) pf += d / totalDays;
+      }
+      if (lf > 0) {
+        if (isLegacy) l4Legacy = true;
+        for (const l of r.rawLines) { l4RevIncl += (l.grossIncl ?? l.gross ?? 0) * lf; l4RevExcl += (l.netExcl ?? l.net ?? 0) * lf; }
+      }
+      if (pf > 0) {
+        if (isLegacy) p4Legacy = true;
+        for (const l of r.rawLines) { p4RevIncl += (l.grossIncl ?? l.gross ?? 0) * pf; p4RevExcl += (l.netExcl ?? l.net ?? 0) * pf; }
+      }
+    }
+    const last4RevExGst  = l4Legacy ? null : Math.round(l4RevExcl * 100) / 100;
+    const prev4RevExGst  = p4Legacy ? null : Math.round(p4RevExcl * 100) / 100;
+    const l4cov = windowInfo.last4CoveredDays, p4cov = windowInfo.prev4CoveredDays;
+    const unitChangePct = (l4cov >= 14 && p4cov >= 14 && prev4Units > 0)
+      ? Math.round(((last4Units / l4cov) / (prev4Units / p4cov) - 1) * 100) : null;
+    const revChangePct = (last4RevExGst !== null && prev4RevExGst !== null && prev4RevExGst > 0)
+      ? Math.round((last4RevExGst / prev4RevExGst - 1) * 100) : null;
+    result.summary = {
+      last4Units:      Math.round(last4Units  * 10) / 10,
+      prev4Units:      Math.round(prev4Units  * 10) / 10,
+      last4RevExGst,   prev4RevExGst,
+      last4RevInclGst: Math.round(l4RevIncl   * 100) / 100,
+      prev4RevInclGst: Math.round(p4RevIncl   * 100) / 100,
+      unitChangePct,   revChangePct,
+    };
+  }
+
+  // ── question_type: product ──────────────────────────────────────────────────
+  if (input.question_type === 'product') {
+    const q = ((input.product_name ?? '') + '').toLowerCase().trim();
+    if (!q) {
+      result.product = { error: 'product_name is required for question_type=product' };
+    } else {
+      const hits = velocityRows.filter(r => r.name.toLowerCase().includes(q));
+      if (hits.length === 0)      result.product = { found: false, query: q };
+      else if (hits.length === 1) result.product = { found: true, ...hits[0] };
+      else result.product = { found: false, ambiguous: true, query: q, candidates: hits.slice(0, 5).map(r => r.name) };
+    }
+  }
+
+  // ── question_type: top_sellers / slowing / stagnant ─────────────────────────
+  if (input.question_type === 'top_sellers') {
+    result.top_sellers = [...velocityRows].sort((a, b) => b.last4Units - a.last4Units).slice(0, 15);
+  }
+  if (input.question_type === 'slowing') {
+    result.slowing  = velocityRows.filter(r => r.status === 'Slowing').slice(0, 15);
+  }
+  if (input.question_type === 'stagnant') {
+    result.stagnant = velocityRows.filter(r => r.status === 'Stagnant').slice(0, 15);
+  }
+
+  // 6 000-char cap — trim rows, mark truncated
+  let json = JSON.stringify(result);
+  if (json.length > 6000) {
+    result.truncated = true;
+    if (result.weeklyTable.length > 4) result.weeklyTable = result.weeklyTable.slice(-4);
+    for (const k of ['top_sellers', 'slowing', 'stagnant']) {
+      if (Array.isArray(result[k]) && (result[k] as any[]).length > 8) result[k] = (result[k] as any[]).slice(0, 8);
+    }
+    json = JSON.stringify(result);
+    if (json.length > 6000) {
+      result.weeklyTable = result.weeklyTable.slice(-2);
+      for (const k of ['top_sellers', 'slowing', 'stagnant']) {
+        if (Array.isArray(result[k])) result[k] = (result[k] as any[]).slice(0, 4);
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Async resolver: loads all sales data from Firestore and returns buildSalesPerformanceResult.
+ * Called from the tool loop in api.ts (resolveTool).
+ */
+export async function resolveSalesPerformance(
+  db: any,
+  venueId: string,
+  input: SalesPerfInput,
+  todayNZ: string,
+): Promise<Record<string, any>> {
+  const salesSnap = await db.collection(`venues/${venueId}/salesReports`).get().catch(() => null);
+  const allDocs: Array<{ id: string; data(): Record<string, any> }> = salesSnap?.docs ?? [];
+
+  const { reports } = partitionReports(allDocs);
+
+  // Load match docs: try direct lookup first, fallback to query-by-reportId
+  const matchesByReport: Record<string, MatchData | null> = {};
+  await Promise.all(reports.map(async r => {
+    try {
+      const direct = await db.doc(`venues/${venueId}/salesReportMatches/${r.id}`).get();
+      if (direct.exists) {
+        const d = direct.data() as any;
+        matchesByReport[r.id] = {
+          matched:        typeof d.matched        === 'number' ? d.matched        : (d.matches?.length ?? 0),
+          total:          typeof d.total          === 'number' ? d.total          : r.lineCount,
+          matchedRevenue: typeof d.matchedRevenue === 'number' ? d.matchedRevenue : 0,
+          matchedQty:     typeof d.matchedQty     === 'number' ? d.matchedQty     : 0,
+          matches:        Array.isArray(d.matches) ? d.matches : [],
+        };
+      } else {
+        const qs = await db.collection(`venues/${venueId}/salesReportMatches`)
+          .where('reportId', '==', r.id).limit(1).get();
+        if (!qs.empty) {
+          const d = qs.docs[0].data() as any;
+          matchesByReport[r.id] = {
+            matched:        typeof d.matched        === 'number' ? d.matched        : (d.matches?.length ?? 0),
+            total:          typeof d.total          === 'number' ? d.total          : r.lineCount,
+            matchedRevenue: typeof d.matchedRevenue === 'number' ? d.matchedRevenue : 0,
+            matchedQty:     typeof d.matchedQty     === 'number' ? d.matchedQty     : 0,
+            matches:        Array.isArray(d.matches) ? d.matches : [],
+          };
+        } else {
+          matchesByReport[r.id] = null;
+        }
+      }
+    } catch { matchesByReport[r.id] = null; }
+  }));
+
+  // Load stock from latest dept cycle snapshots (non-fatal)
+  const stockMap: Record<string, StockEntry> = {};
+  try {
+    const deptsSnap = await db.collection(`venues/${venueId}/departments`).get().catch(() => null);
+    if (deptsSnap && !deptsSnap.empty) {
+      const snapshots = await Promise.all(
+        (deptsSnap.docs as any[]).map(async (dDoc: any) => {
+          try {
+            const cs = await db.collection(`venues/${venueId}/departments/${dDoc.id}/cycles`)
+              .orderBy('createdAt', 'desc').limit(1).get();
+            if (cs.empty) return null;
+            const d = cs.docs[0].data() as any;
+            return { cycleNumber: d.cycleNumber ?? 0, items: d.items ?? [] };
+          } catch { return null; }
+        }),
+      );
+      for (const s of snapshots) {
+        if (!s) continue;
+        for (const item of s.items as any[]) {
+          if (!item.productId) continue;
+          const ex = stockMap[item.productId];
+          if (item.actualClosing != null && (!ex || s.cycleNumber > ex.cycleNumber)) {
+            stockMap[item.productId] = { count: item.actualClosing, cycleNumber: s.cycleNumber };
+          }
+        }
+      }
+    }
+  } catch { /* stock optional */ }
+
+  return buildSalesPerformanceResult(reports, matchesByReport, stockMap, input, todayNZ);
 }

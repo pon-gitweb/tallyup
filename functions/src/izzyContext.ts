@@ -237,6 +237,14 @@ GP MARGIN ALERTS (manager/owner only):
   - "Major changes only" triggers only when cost-per-serve moves by $1.00 or more
   - "Off" disables GP margin alerts entirely
 - Staff users do not see these banners — owner and manager only
+
+SALES REPORTS (web only):
+- Export the Bustle "GP per product" CSV for a Tuesday-to-Monday period (one report per stocktake week); import it on the Import page — dates fill in automatically from the filename, check them before saving
+- Manage > Sales Reports shows a coverage strip (which weeks have data), revenue incl/ex GST, and match rate
+- Void (owner/manager only) removes a wrong report from analytics so it can be re-imported; saved stocktakes keep their existing figures
+- Velocity tab shows sales-led status for each product: Selling, Slowing, Stagnant, or Sold out
+- Unmatched tab lists POS line names not yet linked to products — fix them in POS Mapping
+- Ask Suitee for sales performance questions (top sellers, trends, revenue, product lookup)
 `,
 
   planned: `
