@@ -446,6 +446,7 @@ export default function ProfitInsightsScreen() {
                     usedInvoiceData={key === 'inventoryHealth' ? health.inventoryHealthUsedInvoiceData : undefined}
                     targetDaysOfCover={key === 'inventoryHealth' ? health.targetDaysOfCover : undefined}
                     orderingWeight={key === 'orderingIntelligence' ? health.orderingIntelligenceWeight : undefined}
+                    stockAccuracyNullReason={key === 'stockAccuracy' ? (health.kpis as any).stockAccuracyNullReason : undefined}
                     externalExpanded={expandedKpi === key}
                   />
                 </View>
@@ -625,15 +626,21 @@ function InsightCard({
 }
 
 function KpiCard({
-  c, theme, kpiKey, score, daysOfCover, usedInvoiceData, targetDaysOfCover, orderingWeight, externalExpanded,
+  c, theme, kpiKey, score, daysOfCover, usedInvoiceData, targetDaysOfCover, orderingWeight,
+  stockAccuracyNullReason, externalExpanded,
 }: {
   c: any; theme: any; kpiKey: string; score: number | null; daysOfCover?: number | null; usedInvoiceData?: boolean;
-  targetDaysOfCover?: number; orderingWeight?: number; externalExpanded?: boolean;
+  targetDaysOfCover?: number; orderingWeight?: number;
+  stockAccuracyNullReason?: 'limited_baseline' | null; externalExpanded?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { if (externalExpanded) setExpanded(true); }, [externalExpanded]);
   const meta = KPI_META[kpiKey];
   const lit = score != null ? Math.round(score / 20) : 0;
+
+  const nullStatusLabel = kpiKey === 'stockAccuracy' && stockAccuracyNullReason === 'limited_baseline'
+    ? 'Limited data'
+    : meta.nullStatus;
 
   return (
     <TouchableOpacity
@@ -649,12 +656,17 @@ function KpiCard({
           {dots(lit)}
         </Text>
         <Text style={{ fontSize: 12, fontWeight: '700', color: c.navy, width: 90, textAlign: 'right' }}>
-          {score != null ? `${Math.round(score)} / 100` : meta.nullStatus}
+          {score != null ? `${Math.round(score)} / 100` : nullStatusLabel}
         </Text>
       </View>
       {kpiKey === 'inventoryHealth' && daysOfCover != null && (
         <Text style={{ fontSize: 11, color: c.textSecondary, marginTop: 3 }}>
           {Math.round(daysOfCover)} days of cover · your target: {targetDaysOfCover ?? 10} days
+        </Text>
+      )}
+      {kpiKey === 'stockAccuracy' && stockAccuracyNullReason === 'limited_baseline' && (
+        <Text style={{ fontSize: 11, color: c.textSecondary, marginTop: 3 }}>
+          Several items had no previous count
         </Text>
       )}
       <Text style={{ fontSize: 11, color: c.deepBlue, marginTop: 4 }}>
@@ -663,6 +675,9 @@ function KpiCard({
       {expanded && (
         <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17, marginTop: 6 }}>
           {meta.calc}
+          {kpiKey === 'stockAccuracy' && stockAccuracyNullReason === 'limited_baseline'
+            ? ' Limited data — several items had no previous count.'
+            : ''}
           {kpiKey === 'inventoryHealth' && usedInvoiceData != null
             ? usedInvoiceData
               ? ' Calculated using your actual invoice data for this cycle.'

@@ -543,3 +543,37 @@ describe('writeDepartmentSnapshot — primarySupplierId/primarySupplierName stam
     expect(snapshotData.items[0].supplierName).toBe('Acme Beverages');
   });
 });
+
+// ── Suite 8: baseline fallback + no-baseline variance ─────────────────────────
+
+describe('computeSnapshotItemFigures — baseline fallback and no-baseline variance', () => {
+  it('baseline fallback: baselineCycleNumber param sets confidenceReason to "Baseline from cycle {m}"', () => {
+    const item = makeItem({ name: 'Rum 1L', lastCount: 8 });
+    const prev = prevMap({ 'rum 1l': 5 }); // fallback from cycle 3 (not cycle 4)
+
+    const { snapshotItems } = computeSnapshotItemFigures(
+      [item], prev, 5, [], [],
+      undefined, undefined,
+      3, // baselineCycleNumber — cycle-4 was missing, using cycle-3
+    );
+
+    const si = snapshotItems[0];
+    expect(si.openingCount).toBe(5);
+    expect(si.totalVarianceQty).toBe(3); // 8 − 5
+    expect(si.confidenceReason).toBe('Baseline from cycle 3');
+  });
+
+  it('no-baseline items have totalVarianceQty = 0 regardless of actualClosing', () => {
+    // New product in cycle 4: not in prevMap → openingCount null
+    const item = makeItem({ name: 'New Gin', lastCount: 12, costPrice: 30 });
+
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 4, [], []);
+
+    const si = snapshotItems[0];
+    expect(si.openingCount).toBeNull();
+    expect(si.isNewProduct).toBe(true);
+    expect(si.totalVarianceQty).toBe(0);
+    expect(si.totalVarianceDollars).toBe(0);
+    expect(si.unexplainedVarianceQty).toBe(0);
+  });
+});
