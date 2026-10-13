@@ -189,11 +189,11 @@ export default function DepartmentVarianceScreen() {
         Full detail is in the PDF and on the web app.
       </Text>
 
-      <Top10Section title=”Top 10 Shortages” items={top10Shortages} emptyText=”No shortages” valueColor=”#DC2626” />
-      <Top10Section title=”Top 10 Excess” items={top10Excess} emptyText=”No excess” valueColor=”#16A34A” />
+      <Top10Section title="Top 10 Shortages" items={top10Shortages} emptyText="No shortages" valueColor="#DC2626" />
+      <Top10Section title="Top 10 Excess" items={top10Excess} emptyText="No excess" valueColor="#16A34A" />
 
       <FlatList
-        keyboardShouldPersistTaps=”handled”
+        keyboardShouldPersistTaps="handled"
         data={data}
         keyExtractor={(r) => String(r.productId)}
         renderItem={renderRow}
@@ -204,7 +204,7 @@ export default function DepartmentVarianceScreen() {
               <Text style={S.emptyTitle}>No material variances</Text>
               <Text style={S.emptyText}>
                 Your latest stock take is within the accepted range. You can still view minor
-                variances by tapping “Show minor”.
+                variances by tapping "Show minor".
               </Text>
             </View>
           ) : null
