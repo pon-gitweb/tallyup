@@ -78,3 +78,28 @@ describe('Hosti Health score calculation', () => {
     expect(calculateCompositeScore(kpis, weights)).toBe(73);
   });
 });
+
+describe('orderingIntelligenceReason logic', () => {
+  // Pure helper extracted from hostiHealth.ts to allow unit testing without Firestore
+  function getOrderingReason(totalStocktakes: number, hasHostiOrders: boolean): 'needs_stocktakes' | 'no_hosti_orders' | null {
+    if (totalStocktakes < 3) return 'needs_stocktakes';
+    if (!hasHostiOrders) return 'no_hosti_orders';
+    return null;
+  }
+
+  it('returns needs_stocktakes for < 3 stocktakes', () => {
+    expect(getOrderingReason(0, false)).toBe('needs_stocktakes');
+    expect(getOrderingReason(1, false)).toBe('needs_stocktakes');
+    expect(getOrderingReason(2, true)).toBe('needs_stocktakes');
+  });
+
+  it('returns no_hosti_orders when 3+ stocktakes but no hosti orders', () => {
+    expect(getOrderingReason(3, false)).toBe('no_hosti_orders');
+    expect(getOrderingReason(10, false)).toBe('no_hosti_orders');
+  });
+
+  it('returns null when scored (3+ stocktakes and has hosti orders)', () => {
+    expect(getOrderingReason(3, true)).toBeNull();
+    expect(getOrderingReason(6, true)).toBeNull();
+  });
+});

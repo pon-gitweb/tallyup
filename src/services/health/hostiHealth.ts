@@ -50,6 +50,12 @@ export interface HostiHealthStage3 {
     wasteControlMode: 'stock_integrity' | 'waste_control' | null;
     wasteControlLabel: string | null; // human-readable mode description
   };
+  orderingIntelligenceReason?: 'needs_stocktakes' | 'no_hosti_orders' | null;
+  invoicePurchasingSummary?: {
+    invoiceCount: number;
+    supplierCount: number;
+    total: number;
+  } | null;
   completedStocktakes: number;
   stockValue: number | null;
   varianceDollars: number | null;
@@ -476,7 +482,12 @@ async function calculateFullScore(
   // every reader use the subcollection; an old drafts.ts variant with an array field
   // is dead code, unreferenced from src/services/orders/index.ts).
   let orderingIntelligence: number | null = null;
-  if (totalStocktakesCompleted >= 3) {
+  let orderingIntelligenceReason: 'needs_stocktakes' | 'no_hosti_orders' | null = null;
+  let invoicePurchasingSummary: { invoiceCount: number; supplierCount: number; total: number } | null = null;
+
+  if (totalStocktakesCompleted < 3) {
+    orderingIntelligenceReason = 'needs_stocktakes';
+  } else {
     try {
       const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000);
       const ordersSnap = await getDocs(
@@ -487,7 +498,31 @@ async function calculateFullScore(
         ),
       );
 
-      if (!ordersSnap.empty) {
+      if (ordersSnap.empty) {
+        orderingIntelligenceReason = 'no_hosti_orders';
+        // Fetch invoice purchasing summary for last 90 days
+        try {
+          const invoicesSnap = await getDocs(query(
+            collection(db, 'venues', venueId, 'invoices'),
+            where('invoiceDateTimestamp', '>=', ninetyDaysAgo),
+          ));
+          if (!invoicesSnap.empty) {
+            let invoiceCount = 0;
+            let total = 0;
+            const supplierIds = new Set<string>();
+            invoicesSnap.forEach(d => {
+              const inv = d.data() as any;
+              invoiceCount++;
+              total += typeof inv.totalAmount === 'number' ? inv.totalAmount : 0;
+              const sid = inv.supplierId || (inv.supplierName ? inv.supplierName.toLowerCase().trim() : null);
+              if (sid) supplierIds.add(sid);
+            });
+            invoicePurchasingSummary = { invoiceCount, supplierCount: supplierIds.size, total };
+          }
+        } catch (e: any) {
+          captureError(e, 'hostiHealth:invoiceSummary');
+        }
+      } else {
         const complianceRates: number[] = [];
 
         for (const orderDoc of ordersSnap.docs) {
@@ -1009,6 +1044,8 @@ async function calculateFullScore(
       wasteControlMode,
       wasteControlLabel,
     },
+    orderingIntelligenceReason,
+    invoicePurchasingSummary,
     completedStocktakes: totalStocktakesCompleted,
     stockValue: stockValueResolved,
     varianceDollars: totalVarianceDollars,
