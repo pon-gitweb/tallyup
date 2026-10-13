@@ -8,6 +8,7 @@ import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDoc, deleteDoc, updateDoc, arrayRemove } from 'firebase/firestore';
 import { useVenue } from '../../context/VenueProvider';
+import { canSelfRegister } from '../../utils/platformPolicy';
 import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
@@ -341,17 +342,19 @@ export default function VenueListScreen() {
           );
         })}
 
-        <TouchableOpacity
-          style={{
-            backgroundColor: c.oat, borderRadius: 14, padding: 16,
-            marginTop: 4, alignItems: 'center', borderWidth: 1, borderColor: c.border,
-          }}
-          onPress={() => nav.navigate('CreateVenue')}
-        >
-          <Text style={{ fontSize: 15, fontWeight: '700', color: c.deepBlue }}>
-            + Add new project
-          </Text>
-        </TouchableOpacity>
+        {canSelfRegister && (
+          <TouchableOpacity
+            style={{
+              backgroundColor: c.oat, borderRadius: 14, padding: 16,
+              marginTop: 4, alignItems: 'center', borderWidth: 1, borderColor: c.border,
+            }}
+            onPress={() => nav.navigate('CreateVenue')}
+          >
+            <Text style={{ fontSize: 15, fontWeight: '700', color: c.deepBlue }}>
+              + Add new project
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {recentlyDeleted.length > 0 && (
           <View style={{ marginTop: 24 }}>

@@ -60,10 +60,11 @@ export default function SetupWizardScreen() {
 
   const dismiss = async () => {
     await AsyncStorage.setItem(SETUP_WIZARD_KEY, '1').catch(() => {});
-    nav.reset({
-      index: 0,
-      routes: [{ name: 'Home' }],
-    });
+    if (nav.canGoBack()) {
+      nav.goBack();
+    } else {
+      nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+    }
   };
 
   const next = async () => {

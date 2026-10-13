@@ -2,11 +2,14 @@ import React from 'react';
 import { View, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVenue } from '../../context/VenueProvider';
+import { canSelfRegister } from '../../utils/platformPolicy';
 
 export function TrialCountBanner() {
   const { trialState, billingState, enforceReadOnly, ready } = useVenue();
   const insets = useSafeAreaInsets();
 
+  // Hidden on iOS — trial/pricing info must not appear (Apple guideline 3.1.1)
+  if (!canSelfRegister) return null;
   if (!enforceReadOnly || !ready) return null;
   if (!trialState || trialState.status !== 'active') return null;
   if (billingState.accessMode === 'readOnly') return null;
