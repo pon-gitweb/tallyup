@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { isEntitled } from '../../services/entitlement';
+import { canSelfRegister } from '../../utils/platformPolicy';
 import { explainVariance } from '../../services/aiExplain';
 import { useToast } from '../common/Toast';
 
@@ -48,7 +49,11 @@ export default function AiExplainButton({
     // isEntitled() is currently hardcoded true (beta); gate is kept here for paid rollout.
     const ok = await isEntitled(venueId, '');
     if (!ok) {
-      showInfo('AI variance explanations require the Ops Intelligence module. Visit Settings → Billing on desktop to subscribe.');
+      showInfo(
+        canSelfRegister
+          ? 'AI variance explanations require the Ops Intelligence module. Visit Settings → Billing on desktop to subscribe.'
+          : "AI variance explanations aren't enabled for this venue.",
+      );
       return;
     }
 

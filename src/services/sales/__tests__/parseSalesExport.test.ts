@@ -360,8 +360,8 @@ Subtotal,,,50.40
 describe('parseSalesExport — Format A new fields', () => {
   const result = parseSalesExport(parseCsvText(FORMAT_A_CSV));
 
-  it('kind = unknown (bustle_rich is a flat list, not hierarchical items)', () => {
-    expect(result.kind).toBe('unknown');
+  it('kind = items (itemised export)', () => {
+    expect(result.kind).toBe('items');
   });
 
   it('categoryTotals = [] (no category rows in bustle_rich)', () => {

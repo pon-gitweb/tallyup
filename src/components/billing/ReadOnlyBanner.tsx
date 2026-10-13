@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
+import { canSelfRegister } from '../../utils/platformPolicy';
 
 type Props = {
   onPress?: () => void;
@@ -21,26 +22,34 @@ export function ReadOnlyBanner({ onPress, trialsLeftLabel }: Props) {
         marginBottom: 6,
       }}
     >
-      <Text style={{ fontWeight: '800', marginBottom: 4 }}>
-        {trialsLeftLabel ? trialsLeftLabel : 'Your subscription is paused.'}
-      </Text>
-      <Text style={{ opacity: 0.85, marginBottom: 10 }}>
-        You can still view and export your data. Update your payment details to regain full access.
-      </Text>
-      {onPress ? (
-        <TouchableOpacity
-          onPress={onPress}
-          style={{
-            paddingVertical: 8,
-            paddingHorizontal: 12,
-            backgroundColor: '#0B132B',
-            borderRadius: 10,
-            alignSelf: 'flex-start',
-          }}
-        >
-          <Text style={{ color: 'white', fontWeight: '700' }}>Re-Subscribe</Text>
-        </TouchableOpacity>
-      ) : null}
+      {canSelfRegister ? (
+        <>
+          <Text style={{ fontWeight: '800', marginBottom: 4 }}>
+            {trialsLeftLabel ? trialsLeftLabel : 'Your subscription is paused.'}
+          </Text>
+          <Text style={{ opacity: 0.85, marginBottom: 10 }}>
+            You can still view and export your data. Update your payment details to regain full access.
+          </Text>
+          {onPress ? (
+            <TouchableOpacity
+              onPress={onPress}
+              style={{
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                backgroundColor: '#0B132B',
+                borderRadius: 10,
+                alignSelf: 'flex-start',
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '700' }}>Re-Subscribe</Text>
+            </TouchableOpacity>
+          ) : null}
+        </>
+      ) : (
+        <Text style={{ fontWeight: '700' }}>
+          {"Your venue's access has ended. Contact your venue owner."}
+        </Text>
+      )}
     </View>
   );
 }
