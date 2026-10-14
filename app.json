@@ -31,7 +31,9 @@
           "remote-notification"
         ]
       },
-      "runtimeVersion": "1.0.0"
+      "runtimeVersion": {
+        "policy": "fingerprint"
+      }
     },
     "android": {
       "adaptiveIcon": {
