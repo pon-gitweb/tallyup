@@ -13,6 +13,7 @@
 
 import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
+import { loadSnapshotItems } from '../../utils/snapshotItems';
 
 // ---------- helpers ----------
 const n = (v: any, d = 0) => Number.isFinite(+v) ? +v : d;
@@ -120,12 +121,17 @@ export async function computeVarianceSnapshot(
     );
     if (snapshotsSnap.empty) continue;
 
-    const snapshot = snapshotsSnap.docs[0].data() as any;
+    const snapshotDoc = snapshotsSnap.docs[0];
+    const snapshot = snapshotDoc.data() as any;
 
     // Skip snapshots with no baseline — cycle-0 always, legacy first cycles, and any with missing prev snapshot
     if (!snapshot.dataCompleteness?.hasBaseline) continue;
 
-    for (const item of (snapshot.items || [])) {
+    const items = await loadSnapshotItems(snapshot, () =>
+      getDocs(collection(db, 'venues', venueId, 'departments', dId, 'snapshots', snapshotDoc.id, 'itemChunks'))
+        .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+    );
+    for (const item of items) {
       // Only items with a baseline (openingCount known from previous cycle)
       if (item.openingCount == null) continue;
 

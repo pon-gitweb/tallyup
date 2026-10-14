@@ -4,6 +4,7 @@ import {
   query, where, orderBy, limit,
 } from 'firebase/firestore'
 import { db } from '../firebase'
+import { loadSnapshotItems } from '../utils/snapshotItems'
 import { isReportActive } from '../utils/isReportActive'
 import {
   partitionReports,
@@ -692,8 +693,13 @@ export default function SalesReportsPage({
           )
         )
         for (const sDoc of snapsSnap.docs) {
-          const s = sDoc.data()
-          allSnaps.push({ cycleNumber: s.cycleNumber ?? 0, items: s.items ?? [] })
+          const s = sDoc.data() as any
+          const items = await loadSnapshotItems(s, () =>
+            getDocs(collection(sDoc.ref, 'itemChunks')).then(ss =>
+              ss.docs.map(d => d.data() as { index: number; items: any[] })
+            )
+          )
+          allSnaps.push({ cycleNumber: s.cycleNumber ?? 0, items })
         }
       }))
 
@@ -702,7 +708,7 @@ export default function SalesReportsPage({
       // Build stock map: latest actualClosing per product
       const sm: Record<string, StockEntry> = {}
       for (const s of allSnaps) {
-        for (const item of s.items) {
+        for (const item of s.items) { // snapshot-items-ok: pre-loaded above via loadSnapshotItems
           if (!item.productId) continue
           if (item.actualClosing != null) {
             const ex = sm[item.productId]

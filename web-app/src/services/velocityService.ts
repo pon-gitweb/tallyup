@@ -93,7 +93,7 @@ export function calculateVelocity(snapshots: any[]): Map<string, VelocityData> {
     const rawCycleWeeks = daysSince != null && daysSince > 0 ? daysSince / 7 : null;
     const cycleWeeks = rawCycleWeeks != null && rawCycleWeeks >= MIN_CYCLE_WEEKS ? rawCycleWeeks : null;
 
-    for (const item of snap.items || []) {
+    for (const item of snap.items || []) { // snapshot-items-ok: pre-loaded by caller
       const key = (item.name || '').toLowerCase().trim();
       if (!key) continue;
 

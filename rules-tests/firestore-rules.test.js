@@ -314,5 +314,54 @@ describe('venue onboarding update', () => {
   });
 
 });
+
+// ─────────────────────────────────────────────
+//  snapshots/itemChunks subcollection access
+// ─────────────────────────────────────────────
+describe('snapshots itemChunks access', () => {
+  const DEPT_ID = 'dept-rules-test';
+  const SNAP_ID = 'cycle-1';
+  const CHUNK_ID = '000';
+
+  function chunkDoc(ctx) {
+    return ctx.firestore().doc(
+      `venues/${VENUE_ID}/departments/${DEPT_ID}/snapshots/${SNAP_ID}/itemChunks/${CHUNK_ID}`
+    );
+  }
+
+  beforeAll(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore()
+        .doc(`venues/${VENUE_ID}/departments/${DEPT_ID}/snapshots/${SNAP_ID}/itemChunks/${CHUNK_ID}`)
+        .set({ index: 0, items: [] });
+    });
+  });
+
+  test('member can write an itemChunks doc', async () => {
+    await assertSucceeds(chunkDoc(asMember(MEMBER_UID)).set({ index: 0, items: [] }));
+  });
+
+  test('member can read an itemChunks doc', async () => {
+    await assertSucceeds(chunkDoc(asMember(MEMBER_UID)).get());
+  });
+
+  test('non-member cannot read an itemChunks doc', async () => {
+    await assertFails(chunkDoc(asOutsider(OUTSIDER_UID)).get());
+  });
+
+  test('non-member cannot write an itemChunks doc', async () => {
+    await assertFails(chunkDoc(asOutsider(OUTSIDER_UID)).set({ index: 0, items: [] }));
+  });
+
+  test('member batch-writing snapshot + 3 chunk docs succeeds', async () => {
+    const memberDb = asMember(MEMBER_UID).firestore();
+    const batch = memberDb.batch();
+    batch.set(memberDb.doc(`venues/${VENUE_ID}/departments/${DEPT_ID}/snapshots/${SNAP_ID}`), { cycleNumber: 1, itemChunkCount: 3 });
+    batch.set(memberDb.doc(`venues/${VENUE_ID}/departments/${DEPT_ID}/snapshots/${SNAP_ID}/itemChunks/000`), { index: 0, items: [] });
+    batch.set(memberDb.doc(`venues/${VENUE_ID}/departments/${DEPT_ID}/snapshots/${SNAP_ID}/itemChunks/001`), { index: 1, items: [] });
+    batch.set(memberDb.doc(`venues/${VENUE_ID}/departments/${DEPT_ID}/snapshots/${SNAP_ID}/itemChunks/002`), { index: 2, items: [] });
+    await assertSucceeds(batch.commit());
+  });
+});
 // Full hardening coverage (new-field gap, entitlement denial, country, gpAlertSensitivity,
 // productCategories, lastFullVenueStocktakeAt, global_products) is in hardening.test.js.

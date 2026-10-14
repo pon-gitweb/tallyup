@@ -32,6 +32,7 @@ import {
   type StockEntry,
 } from './weeklyLedger';
 import { isReportActive } from './isReportActive';
+import { loadSnapshotItems } from './snapshotItems';
 
 // ── Stage 0: get_gp_analysis interfaces ──────────────────────────────────────
 
@@ -1663,7 +1664,12 @@ export async function loadSalesData(db: any, venueId: string): Promise<SalesData
               .orderBy('cycleNumber', 'desc').limit(1).get();
             if (cs.empty) return null;
             const d = cs.docs[0].data() as any;
-            return { cycleNumber: d.cycleNumber ?? 0, items: d.items ?? [] };
+            const items = await loadSnapshotItems(d, () =>
+              cs.docs[0].ref.collection('itemChunks').get().then((s: any) =>
+                s.docs.map((dd: any) => dd.data() as { index: number; items: any[] })
+              )
+            );
+            return { cycleNumber: d.cycleNumber ?? 0, items };
           } catch { return null; }
         }),
       );

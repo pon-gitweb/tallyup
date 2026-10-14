@@ -4,12 +4,21 @@ import type { ProductResolution, SupplierResolution } from '../snapshotWriter';
 // snapshotWriter.ts imports firebase SDK at module level; mock it so tests
 // run without an initialised Firebase app.
 jest.mock('../../firebase', () => ({ db: {} }));
+// Shared mock batch used across tests
+const mockBatch = {
+  set: jest.fn(),
+  delete: jest.fn(),
+  update: jest.fn(),
+  commit: jest.fn().mockResolvedValue(undefined),
+};
 jest.mock('firebase/firestore', () => ({
   collection: jest.fn(),
   getDocs: jest.fn(),
   doc: jest.fn(),
   getDoc: jest.fn(),
   setDoc: jest.fn(),
+  writeBatch: jest.fn(),
+  deleteDoc: jest.fn(),
   query: jest.fn(),
   where: jest.fn(),
   orderBy: jest.fn(),
@@ -461,6 +470,7 @@ describe('writeDepartmentSnapshot — primarySupplierId/primarySupplierName stam
     getDocs: jest.Mock;
     getDoc: jest.Mock;
     setDoc: jest.Mock;
+    writeBatch: jest.Mock;
     collection: jest.Mock;
     doc: jest.Mock;
     query: jest.Mock;
@@ -523,24 +533,144 @@ describe('writeDepartmentSnapshot — primarySupplierId/primarySupplierName stam
 
     // getDoc call order:
     //   1. department document
-    //   2. previous cycle snapshot (cycle-0) — doesn't exist; cycleNumber=1 triggers the fetch
+    //   2. previous cycle snapshot (cycle-0) — doesn't exist
+    //   3. existing snapshot doc (oldChunkCount) — first write, doesn't exist
     ff.getDoc
       .mockResolvedValueOnce({ exists: () => true, data: () => ({ name: 'Bar Dept' }) })
+      .mockResolvedValueOnce({ exists: () => false, data: () => null })
       .mockResolvedValueOnce({ exists: () => false, data: () => null });
 
     ff.setDoc.mockResolvedValue(undefined);
+    mockBatch.set.mockReset();
+    mockBatch.delete.mockReset();
+    mockBatch.commit.mockReset().mockResolvedValue(undefined);
+    ff.writeBatch.mockReturnValue(mockBatch);
   });
 
   it('stamps supplierId/supplierName from product doc primarySupplierId/primarySupplierName', async () => {
     await writeDepartmentSnapshot('v1', 'd1', 1);
 
-    // setDoc is called twice: first for the dept snapshot, then for latestSnapshot.
-    expect(ff.setDoc).toHaveBeenCalledTimes(2);
-    const [, snapshotData] = ff.setDoc.mock.calls[0];
+    // Dept snapshot is written via writeBatch; latestSnapshot uses setDoc
+    expect(mockBatch.commit).toHaveBeenCalledTimes(1);
+    expect(ff.setDoc).toHaveBeenCalledTimes(1); // latestSnapshot only
 
+    // batch.set call 0 = snapshot doc
+    const [, snapshotData] = mockBatch.set.mock.calls[0];
     expect(snapshotData.items).toHaveLength(1);
     expect(snapshotData.items[0].supplierId).toBe('sup-xyz');
     expect(snapshotData.items[0].supplierName).toBe('Acme Beverages');
+    expect(snapshotData.itemCount).toBe(1);
+    expect(snapshotData.itemChunkCount).toBe(1);
+  });
+});
+
+// ── Suite 9: writer chunking ──────────────────────────────────────────────────
+
+describe('writeDepartmentSnapshot — item chunking', () => {
+  const ff = jest.requireMock('firebase/firestore') as {
+    getDocs: jest.Mock;
+    getDoc: jest.Mock;
+    setDoc: jest.Mock;
+    writeBatch: jest.Mock;
+    collection: jest.Mock;
+    doc: jest.Mock;
+    query: jest.Mock;
+    where: jest.Mock;
+    orderBy: jest.Mock;
+    limit: jest.Mock;
+  };
+
+  function fakeQSnap(docs: Array<{ id: string; dataObj: Record<string, any> }>) {
+    const fakeDocs = docs.map(({ id, dataObj }) => ({ id, data: () => dataObj }));
+    return {
+      docs: fakeDocs,
+      empty: fakeDocs.length === 0,
+      size: fakeDocs.length,
+      forEach: (fn: (d: any) => void) => fakeDocs.forEach(fn),
+    };
+  }
+
+  function makeAreaItems(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `item-${i}`,
+      dataObj: { name: `Product ${i}`, lastCount: 1, productId: `prod-${i}` },
+    }));
+  }
+
+  function setupMocks(itemCount: number, oldChunkCount = 0) {
+    jest.clearAllMocks();
+    ff.collection.mockReturnValue({ _ref: 'coll' });
+    ff.doc.mockReturnValue({ _ref: 'doc' });
+    ff.query.mockReturnValue({ _ref: 'query' });
+    ff.where.mockReturnValue({ _ref: 'where' });
+    ff.orderBy.mockReturnValue({ _ref: 'orderBy' });
+    ff.limit.mockReturnValue({ _ref: 'limit' });
+
+    // getDocs: products, areas, items (in area), all-departments
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([]))                  // products
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'area-1', dataObj: { name: 'Main' } }]))
+      .mockResolvedValueOnce(fakeQSnap(makeAreaItems(itemCount)))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'd1', dataObj: { name: 'Dept' } }]));
+
+    // getDoc: dept doc, prev snapshot (missing), existing snapshot (oldChunkCount)
+    ff.getDoc
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ name: 'Dept' }) })
+      .mockResolvedValueOnce({ exists: () => false, data: () => null })
+      .mockResolvedValueOnce({
+        exists: () => oldChunkCount > 0,
+        data: () => oldChunkCount > 0 ? { itemChunkCount: oldChunkCount } : null,
+      });
+
+    ff.setDoc.mockResolvedValue(undefined);
+    mockBatch.set.mockReset();
+    mockBatch.delete.mockReset();
+    mockBatch.commit.mockReset().mockResolvedValue(undefined);
+    ff.writeBatch.mockReturnValue(mockBatch);
+  }
+
+  it('570 items: doc.items keeps 200, itemCount=570, itemChunkCount=3, 3 chunk writes', async () => {
+    setupMocks(570);
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    // batch.set call 0 = snapshot doc
+    const [, snapData] = mockBatch.set.mock.calls[0];
+    expect(snapData.items).toHaveLength(200);      // legacy field capped at 200
+    expect(snapData.itemCount).toBe(570);
+    expect(snapData.itemChunkCount).toBe(3);
+
+    // batch.set calls 1-3 = chunk docs (index 0, 1, 2)
+    expect(mockBatch.set.mock.calls).toHaveLength(4); // 1 snap + 3 chunks
+    const chunk0 = mockBatch.set.mock.calls[1][1];
+    const chunk1 = mockBatch.set.mock.calls[2][1];
+    const chunk2 = mockBatch.set.mock.calls[3][1];
+    expect(chunk0.index).toBe(0);
+    expect(chunk0.items).toHaveLength(200);
+    expect(chunk1.index).toBe(1);
+    expect(chunk1.items).toHaveLength(200);
+    expect(chunk2.index).toBe(2);
+    expect(chunk2.items).toHaveLength(170);
+  });
+
+  it('stale chunk cleanup: old 4 chunks reduced to 3 → deletes chunk doc "003"', async () => {
+    // Use cycleNumber=1 so the fallback getDocs path (cycleNumber > 1) is not triggered,
+    // keeping the getDocs mock call count predictable.
+    setupMocks(570, 4); // oldChunkCount=4
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    // batch.delete should be called once for chunk index 3
+    expect(mockBatch.delete.mock.calls).toHaveLength(1);
+  });
+
+  it('≤200 items: no chunks written beyond snapshot doc', async () => {
+    setupMocks(50);
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    const [, snapData] = mockBatch.set.mock.calls[0];
+    expect(snapData.items).toHaveLength(50);
+    expect(snapData.itemCount).toBe(50);
+    expect(snapData.itemChunkCount).toBe(1); // one chunk even for ≤200 items
+    expect(mockBatch.set.mock.calls).toHaveLength(2); // snap doc + 1 chunk
   });
 });
 

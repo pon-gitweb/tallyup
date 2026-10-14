@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore'
+import { loadSnapshotItems } from '../utils/snapshotItems'
 import {
   BarChart, Bar, LabelList, ComposedChart, Line, Cell, ReferenceLine,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -207,7 +208,13 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
           }
 
           // Latest snapshot → summary card + variance rows
-          const latestData = snapsSnap.docs[0].data() as any
+          const latestDoc = snapsSnap.docs[0]
+          const latestData = latestDoc.data() as any
+          const latestItems = await loadSnapshotItems(latestData, () =>
+            getDocs(collection(latestDoc.ref, 'itemChunks')).then(s =>
+              s.docs.map(d => d.data() as { index: number; items: any[] })
+            )
+          )
           summaries.push({
             deptId: deptDoc.id,
             deptName,
@@ -224,7 +231,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
             itemsPricedByInvoice: latestData.summary?.itemsPricedByInvoice ?? 0,
           })
 
-          for (const item of (latestData.items || []) as any[]) {
+          for (const item of latestItems as any[]) {
             const varianceUnits: number = item.unexplainedVarianceQty ?? item.totalVarianceQty ?? 0
             if (varianceUnits === 0) continue
             const stampedName = item.name || '—'
@@ -1038,9 +1045,17 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
   useEffect(() => {
     if (!selectedDeptId || !selectedCycle) return
     setLoadingItems(true)
-    getDoc(doc(db, 'venues', venueId, 'departments', selectedDeptId, 'snapshots', selectedCycle))
-      .then(snap => {
-        setItems(snap.exists() ? ((snap.data() as any).items || []) : [])
+    const snapRef = doc(db, 'venues', venueId, 'departments', selectedDeptId, 'snapshots', selectedCycle)
+    getDoc(snapRef)
+      .then(async snap => {
+        if (!snap.exists()) { setItems([]); setLoadingItems(false); return }
+        const data = snap.data() as any
+        const loaded = await loadSnapshotItems(data, () =>
+          getDocs(collection(snapRef, 'itemChunks')).then(s =>
+            s.docs.map(d => d.data() as { index: number; items: any[] })
+          )
+        )
+        setItems(loaded)
         setLoadingItems(false)
       })
       .catch(() => setLoadingItems(false))
@@ -1049,8 +1064,18 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
   // Load compare items
   useEffect(() => {
     if (!compareMode || !compareDeptId || !compareCycle) { setCompareItems([]); return }
-    getDoc(doc(db, 'venues', venueId, 'departments', compareDeptId, 'snapshots', compareCycle))
-      .then(snap => { setCompareItems(snap.exists() ? ((snap.data() as any).items || []) : []) })
+    const cmpRef = doc(db, 'venues', venueId, 'departments', compareDeptId, 'snapshots', compareCycle)
+    getDoc(cmpRef)
+      .then(async snap => {
+        if (!snap.exists()) { setCompareItems([]); return }
+        const data = snap.data() as any
+        const loaded = await loadSnapshotItems(data, () =>
+          getDocs(collection(cmpRef, 'itemChunks')).then(s =>
+            s.docs.map(d => d.data() as { index: number; items: any[] })
+          )
+        )
+        setCompareItems(loaded)
+      })
       .catch(() => setCompareItems([]))
   }, [venueId, compareDeptId, compareCycle, compareMode])
 
@@ -1299,10 +1324,15 @@ function AnalysisTab({ venueId }: { venueId: string }) {
           const snapsSnap = await getDocs(
             query(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'), orderBy('cycleNumber', 'desc'), limit(10))
           )
-          snapsSnap.docs.forEach(snapDoc => {
+          for (const snapDoc of snapsSnap.docs) {
             const sd = snapDoc.data() as any
             const completedAt = sd.completedAt?.toDate?.() ?? null
-            ;(sd.items || []).forEach((item: any) => {
+            const sdItems = await loadSnapshotItems(sd, () =>
+              getDocs(collection(snapDoc.ref, 'itemChunks')).then(s =>
+                s.docs.map(d => d.data() as { index: number; items: any[] })
+              )
+            )
+            for (const item of sdItems) {
               allItems.push({
                 name: item.name || '',
                 productId: item.productId || null,
@@ -1315,8 +1345,8 @@ function AnalysisTab({ venueId }: { venueId: string }) {
                 completedAt,
                 deptId: deptDoc.id,
               })
-            })
-          })
+            }
+          }
         }))
 
         // Supplier spend aggregation — groups by supplierId when present (post-fix

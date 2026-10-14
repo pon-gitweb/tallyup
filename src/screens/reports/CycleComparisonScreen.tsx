@@ -5,8 +5,9 @@ import {
   TextInput, SafeAreaView, StyleSheet, Alert,
 } from 'react-native';
 import { useRoute } from '@react-navigation/native';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { loadSnapshotItems } from '../../utils/snapshotItems';
 import * as Print from 'expo-print';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -36,6 +37,8 @@ export default function CycleComparisonScreen() {
   const [loading, setLoading] = useState(true);
   const [snapA, setSnapA] = useState<any>(null);
   const [snapB, setSnapB] = useState<any>(null);
+  const [itemsA, setItemsA] = useState<any[]>([]);
+  const [itemsB, setItemsB] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<ProductFilter>('all');
   const [sort, setSort] = useState<'az' | 'change' | 'value'>('change');
@@ -52,8 +55,22 @@ export default function CycleComparisonScreen() {
         getDoc(doc(db, 'venues', venueId, 'departments', deptIdA, 'snapshots', snapshotIdA)),
         getDoc(doc(db, 'venues', venueId, 'departments', deptIdB, 'snapshots', snapshotIdB)),
       ]);
-      if (docA.exists()) setSnapA(docA.data());
-      if (docB.exists()) setSnapB(docB.data());
+      if (docA.exists()) {
+        const dataA = docA.data() as any;
+        setSnapA(dataA);
+        setItemsA(await loadSnapshotItems(dataA, () =>
+          getDocs(collection(db, 'venues', venueId, 'departments', deptIdA, 'snapshots', snapshotIdA, 'itemChunks'))
+            .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+        ));
+      }
+      if (docB.exists()) {
+        const dataB = docB.data() as any;
+        setSnapB(dataB);
+        setItemsB(await loadSnapshotItems(dataB, () =>
+          getDocs(collection(db, 'venues', venueId, 'departments', deptIdB, 'snapshots', snapshotIdB, 'itemChunks'))
+            .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+        ));
+      }
     } catch (e: any) {
       console.error('[CycleComparison] load error', e?.message);
     } finally {
@@ -66,8 +83,8 @@ export default function CycleComparisonScreen() {
     if (!snapA || !snapB) return [];
     const mapA: Record<string, any> = {};
     const mapB: Record<string, any> = {};
-    (snapA.items || []).forEach((it: any) => { mapA[it.name?.toLowerCase().trim()] = it; });
-    (snapB.items || []).forEach((it: any) => { mapB[it.name?.toLowerCase().trim()] = it; });
+    itemsA.forEach((it: any) => { mapA[it.name?.toLowerCase().trim()] = it; });
+    itemsB.forEach((it: any) => { mapB[it.name?.toLowerCase().trim()] = it; });
 
     const allKeys = new Set([...Object.keys(mapA), ...Object.keys(mapB)]);
     const result: any[] = [];

@@ -12,6 +12,7 @@
  */
 import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
+import { loadSnapshotItems } from '../utils/snapshotItems';
 import { isReportActive } from '../utils/isReportActive';
 import { generateAbductiveInsights, calcVarianceImprovementPct } from './abductiveInsights';
 import type { AbductiveInsight } from './abductiveInsights';
@@ -258,7 +259,11 @@ async function calculateFullScore(
       if (!latestSnap) continue;
       diagWithSnapshot++;
       const snapData = latestSnap.data() as any;
-      const items: any[] = snapData.items || [];
+      const items: any[] = await loadSnapshotItems(snapData, () =>
+        getDocs(collection(latestSnap.ref, 'itemChunks')).then(s =>
+          s.docs.map(d => d.data() as { index: number; items: any[] })
+        )
+      );
       diagItemsSeen += items.length;
       for (const item of items) {
         const displayVarianceDollars = item.displayTotalVarianceDollars ?? item.totalVarianceDollars;
@@ -587,7 +592,12 @@ async function calculateFullScore(
             if (!snapDoc.exists()) continue;
             const snapData = snapDoc.data() as any;
 
-            (snapData.items || []).forEach((item: any) => {
+            const snapItems = await loadSnapshotItems(snapData, () =>
+              getDocs(collection(db, 'venues', venueId, 'departments', deptId, 'snapshots', `cycle-${cycleNumber}`, 'itemChunks')).then(s =>
+                s.docs.map(d => d.data() as { index: number; items: any[] })
+              )
+            );
+            for (const item of snapItems) {
               const name = (item.name || '').toLowerCase().trim();
               const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
               const costPrice = (item.displayCostPrice ?? item.costPrice) ?? 0;
@@ -600,7 +610,7 @@ async function calculateFullScore(
                 const actualWaste = Math.max(0, consumed - soldUnits);
                 totalWasteDollars += actualWaste * costPrice;
               }
-            });
+            }
           }
         }
 
@@ -629,11 +639,16 @@ async function calculateFullScore(
             )
           );
 
-          recentSnaps.docs.forEach(snapDoc => {
+          for (const snapDoc of recentSnaps.docs) {
             const snapData = snapDoc.data() as any;
-            (snapData.items || []).forEach((item: any) => {
+            const snapItems = await loadSnapshotItems(snapData, () =>
+              getDocs(collection(snapDoc.ref, 'itemChunks')).then(s =>
+                s.docs.map(d => d.data() as { index: number; items: any[] })
+              )
+            );
+            for (const item of snapItems) {
               const key = (item.name || item.productId || '').toLowerCase().trim();
-              if (!key) return;
+              if (!key) continue;
               const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
               const costPrice = (item.displayCostPrice ?? item.costPrice) ?? 0;
               if (!productCycleMap[key]) productCycleMap[key] = { negative: 0, total: 0, dollarImpact: 0 };
@@ -642,8 +657,8 @@ async function calculateFullScore(
                 productCycleMap[key].negative++;
                 productCycleMap[key].dollarImpact += Math.abs(varianceUnits) * costPrice;
               }
-            });
-          });
+            }
+          }
         }
 
         let systematicLossDollars = 0;

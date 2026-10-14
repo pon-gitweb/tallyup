@@ -4,6 +4,7 @@ import { ScrollView, Text, TouchableOpacity, View, ActivityIndicator } from 'rea
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, getDocs, doc, getDoc, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { loadSnapshotItems } from '../../utils/snapshotItems';
 import { useVenueId } from '../../context/VenueProvider';
 import { resetDepartment } from '../../services/reset';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
@@ -65,6 +66,7 @@ function DepartmentSummaryScreen() {
   const [otherDepts, setOtherDepts] = useState<OtherDept[]>([]);
   const [resetting, setResetting] = useState(false);
   const [snapshot, setSnapshot] = useState<any>(null);
+  const [snapshotItems, setSnapshotItems] = useState<any[]>([]);
   const [snapshotLoading, setSnapshotLoading] = useState(true);
   const [noSupplierCount, setNoSupplierCount] = useState(0);
   const [supplierNudgeDismissed, setSupplierNudgeDismissed] = useState(false);
@@ -80,7 +82,13 @@ function DepartmentSummaryScreen() {
         const snapDoc = await getDoc(snapRef);
         if (!cancelled) {
           if (snapDoc.exists()) {
-            setSnapshot(snapDoc.data());
+            const snapData = snapDoc.data() as any;
+            setSnapshot(snapData);
+            const loadedItems = await loadSnapshotItems(snapData, () =>
+              getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', snapshotId, 'itemChunks'))
+                .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
+            );
+            setSnapshotItems(loadedItems);
             setSnapshotLoading(false);
           } else if (attemptsLeft > 0) {
             setTimeout(() => tryLoad(attemptsLeft - 1), 2000);
@@ -231,7 +239,7 @@ function DepartmentSummaryScreen() {
 
           {/* Top losses / below-PAR items (label differs by cycle) */}
           {(() => {
-            const losses = (snapshot.items || [])
+            const losses = snapshotItems
               .filter((i: any) => i.totalVarianceQty < 0)
               .sort((a: any, b: any) => a.totalVarianceQty - b.totalVarianceQty)
               .slice(0, 3);
@@ -258,7 +266,7 @@ function DepartmentSummaryScreen() {
 
           {/* Top gains */}
           {(() => {
-            const gains = (snapshot.items || [])
+            const gains = snapshotItems
               .filter((i: any) => i.totalVarianceQty > 0)
               .sort((a: any, b: any) => b.totalVarianceQty - a.totalVarianceQty)
               .slice(0, 3);

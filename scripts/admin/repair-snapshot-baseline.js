@@ -15,29 +15,33 @@ const { Firestore } = require('@google-cloud/firestore');
 const fs = require('fs');
 const path = require('path');
 
-// ── CLI args ────────────────────────────────────────────────────────────────
-const args = process.argv.slice(2);
-function getArg(flag) {
-  const i = args.indexOf(flag);
-  return i !== -1 && i + 1 < args.length ? args[i + 1] : null;
-}
-const venueId  = getArg('--venue');
-const deptId   = getArg('--dept');
-const cycleArg = getArg('--cycle');
-const execute  = args.includes('--execute');
+// ── CLI args (only parsed when run directly) ─────────────────────────────────
+let venueId, deptId, cycleNumber, execute;
 
-if (!venueId || !deptId || !cycleArg) {
-  console.error('Usage: node repair-snapshot-baseline.js --venue <id> --dept <id> --cycle <n> [--execute]');
-  process.exit(1);
-}
-const cycleNumber = parseInt(cycleArg, 10);
-if (isNaN(cycleNumber) || cycleNumber < 1) {
-  console.error('--cycle must be a positive integer');
-  process.exit(1);
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  function getArg(flag) {
+    const i = args.indexOf(flag);
+    return i !== -1 && i + 1 < args.length ? args[i + 1] : null;
+  }
+  venueId  = getArg('--venue');
+  deptId   = getArg('--dept');
+  const cycleArg = getArg('--cycle');
+  execute  = args.includes('--execute');
+
+  if (!venueId || !deptId || !cycleArg) {
+    console.error('Usage: node repair-snapshot-baseline.js --venue <id> --dept <id> --cycle <n> [--execute]');
+    process.exit(1);
+  }
+  cycleNumber = parseInt(cycleArg, 10);
+  if (isNaN(cycleNumber) || cycleNumber < 1) {
+    console.error('--cycle must be a positive integer');
+    process.exit(1);
+  }
 }
 
 // ── Firestore ───────────────────────────────────────────────────────────────
-const db = new Firestore();
+const db = require.main === module ? new Firestore() : null;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function fmtDollars(n) {
@@ -163,6 +167,18 @@ function snapshotSummaryLine(summary) {
   ].join('  ');
 }
 
+// ── Chunk loader (admin SDK) ──────────────────────────────────────────────────
+async function loadItems(docRef, data) {
+  if ((data.itemChunkCount ?? 0) > 0) {
+    const chunksSnap = await docRef.collection('itemChunks').get();
+    return chunksSnap.docs
+      .map(d => d.data())
+      .sort((a, b) => a.index - b.index)
+      .flatMap(c => c.items);
+  }
+  return data.items ?? [];
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   console.log(`\n── Snapshot repair ──────────────────────────────────────────────`);
@@ -203,9 +219,27 @@ async function main() {
     process.exit(0);
   }
 
-  // 3. Re-derive items
-  const originalItems = target.items || [];
-  const baselineItems = baseline.items || [];
+  // 3. Load full items (via chunks when present)
+  const originalItems = await loadItems(targetRef, target);
+  const baselineItems = await loadItems(baselineDoc.ref, baseline);
+
+  const targetClaimedCount  = target.itemCount  ?? target.summary?.totalItemsCounted  ?? null;
+  const baselineClaimedCount = baseline.itemCount ?? baseline.summary?.totalItemsCounted ?? null;
+
+  if (targetClaimedCount != null && targetClaimedCount > originalItems.length) {
+    console.error(
+      `\nAbort: target claims ${targetClaimedCount} items but only ${originalItems.length} loaded.` +
+      ` Partial item list would corrupt totalItemsCounted/stock value. Check itemChunks subcollection.`,
+    );
+    process.exit(1);
+  }
+  if (baselineClaimedCount != null && baselineClaimedCount > baselineItems.length) {
+    console.error(
+      `\nAbort: baseline claims ${baselineClaimedCount} items but only ${baselineItems.length} loaded.` +
+      ` Cannot repair from incomplete baseline. Check itemChunks subcollection.`,
+    );
+    process.exit(1);
+  }
 
   console.log(`\nBaseline items: ${baselineItems.length}  Target items: ${originalItems.length}`);
 
@@ -240,9 +274,15 @@ async function main() {
   }
 
   // 7. Write corrected snapshot
+  const CHUNK_SIZE = 200;
+  const newChunkCount = Math.ceil(repairedItems.length / CHUNK_SIZE);
+  const oldChunkCount = target.itemChunkCount ?? 0;
+
   const repairedSnapshot = {
     ...target,
-    items: repairedItems,
+    items: repairedItems.slice(0, CHUNK_SIZE),  // legacy field capped at 200
+    itemCount: repairedItems.length,
+    itemChunkCount: newChunkCount,
     summary: repairedSummary,
     baselineCycleNumber: baseCycleNumber,
     baselineGapNote: target.baselineGapNote ?? null,
@@ -251,11 +291,30 @@ async function main() {
     repairNote: `Baseline corrected from ${target.baselineCycleNumber ?? 'none'} to cycle-${baseCycleNumber} by repair script`,
   };
 
-  await targetRef.set(repairedSnapshot);
-  console.log(`\n✓ Snapshot cycle-${cycleNumber} written to Firestore with baseline from cycle-${baseCycleNumber}.`);
+  const batch = db.batch();
+  batch.set(targetRef, repairedSnapshot);
+
+  const chunksRef = targetRef.collection('itemChunks');
+  for (let i = 0; i < newChunkCount; i++) {
+    const chunkId = String(i).padStart(3, '0');
+    batch.set(chunksRef.doc(chunkId), {
+      index: i,
+      items: repairedItems.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
+    });
+  }
+  for (let i = newChunkCount; i < oldChunkCount; i++) {
+    batch.delete(chunksRef.doc(String(i).padStart(3, '0')));
+  }
+
+  await batch.commit();
+  console.log(`\n✓ Snapshot cycle-${cycleNumber} written (${newChunkCount} chunk(s)) with baseline from cycle-${baseCycleNumber}.`);
 }
 
-main().catch(err => {
-  console.error('\nFailed:', err.message || err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error('\nFailed:', err.message || err);
+    process.exit(1);
+  });
+}
+
+module.exports = { loadItems, repairItems, recomputeSummary };

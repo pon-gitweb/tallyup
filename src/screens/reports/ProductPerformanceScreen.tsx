@@ -12,6 +12,7 @@ import { collection, getDocs, orderBy, query, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { calculateVelocity, VelocityData } from '../../services/reports/velocityService';
+import { loadSnapshotItems } from '../../utils/snapshotItems';
 
 function fmtNum(n: number, dp = 1) { return n.toFixed(dp); }
 function fmtDollars(n: number) { return n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${n.toFixed(0)}`; }
@@ -80,7 +81,15 @@ export default function ProductPerformanceScreen() {
                 limit(6),
               ),
             );
-            snapSnap.docs.forEach(d => allSnapshots.push(d.data()));
+            for (const snapDoc of snapSnap.docs) {
+              const d = snapDoc.data() as any;
+              const items = await loadSnapshotItems(d, () =>
+                getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots', snapDoc.id, 'itemChunks')).then(s =>
+                  s.docs.map(dd => dd.data() as { index: number; items: any[] })
+                )
+              );
+              allSnapshots.push({ ...d, items });
+            }
           } catch {}
         }
         if (cancelled) return;
