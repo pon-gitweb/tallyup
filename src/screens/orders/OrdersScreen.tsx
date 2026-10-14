@@ -26,6 +26,7 @@ import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
+import { listSuppliers } from '../../services/suppliers/listSuppliers';
 
 function normalizeDisplayStatus(o:any){
   const s = (o?.status || "draft");
@@ -106,6 +107,7 @@ export default function OrdersScreen(){
   const [refreshing,setRefreshing]=useState(false);
   const [receiveFor,setReceiveFor] = useState<OrderRow|null>(null);
   const [isManager,setIsManager]=useState(false);
+  const [supplierMap,setSupplierMap]=useState<Record<string,string>>({});
 
   useEffect(()=>{
     const uid = getAuth().currentUser?.uid;
@@ -113,6 +115,15 @@ export default function OrdersScreen(){
     getDoc(doc(db, 'venues', venueId, 'members', uid)).then(snap => {
       const role = snap.exists() ? (snap.data() as any)?.role : null;
       setIsManager(role === 'manager' || role === 'owner');
+    }).catch(() => {});
+  }, [venueId]);
+
+  useEffect(()=>{
+    if (!venueId) return;
+    listSuppliers(venueId).then(list => {
+      const m: Record<string,string> = {};
+      list.forEach(s => { m[s.id] = s.name; });
+      setSupplierMap(m);
     }).catch(() => {});
   }, [venueId]);
 
@@ -174,11 +185,17 @@ export default function OrdersScreen(){
           }
         }
 
+        const rawStatus = String(d.status ?? '').trim() || null;
+        const resolvedName = (d.supplierId && supplierMap[d.supplierId])
+          ? supplierMap[d.supplierId]
+          : (d.supplierName ?? 'Supplier');
+
         out.push({
           id:docSnap.id,
           supplierId:d.supplierId??null,
-          supplierName:d.supplierName??'Supplier',
+          supplierName:resolvedName,
           status:canon,
+          rawStatus,
           displayStatus:d.displayStatus ?? null,
           poNumber: d.poNumber ?? null,
           createdAt:d.createdAt??null,
@@ -209,7 +226,7 @@ export default function OrdersScreen(){
       setRowsAll([]);
     });
     return ()=>unsub();
-  },[db,venueId]);
+  },[db,venueId,supplierMap]);
 
   const counts = useMemo(()=>{
     let d=0,p=0,s=0,r=0;
@@ -233,6 +250,7 @@ export default function OrdersScreen(){
     if(s==='draft' || s==='pending' || s==='pending_merge'){
       nav.navigate('OrderEditor',{orderId:row.id,mode:'edit'});
     }else{
+      // 'unknown' status and all other non-draft statuses open read-only detail
       nav.navigate('OrderDetail',{orderId:row.id});
     }
   },[nav]);
@@ -262,7 +280,9 @@ export default function OrdersScreen(){
     const subtitle=bits.join(' • ');
     const statusText = item.informal
       ? 'Received · via invoice scan'
-      : (item.status==='received') ? 'received' : (item.displayStatus || item.status || '—');
+      : item.status === 'unknown'
+        ? (item.rawStatus || item.displayStatus || 'unknown')
+        : (item.status==='received') ? 'received' : (item.displayStatus || item.status || '—');
     const isPendingApproval = (item.status || '').toLowerCase().includes('pending-approval');
 
     const isSubmitted=STATUS_GROUPS.submitted(item);
