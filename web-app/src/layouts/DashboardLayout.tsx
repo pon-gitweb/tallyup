@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { signOut, type User } from 'firebase/auth'
 import { auth } from '../firebase'
+import GetTheApp from '../components/GetTheApp'
 import styles from './DashboardLayout.module.css'
 
 export type Page =
@@ -122,6 +123,7 @@ export default function DashboardLayout({
       </nav>
 
       <div className={styles.sidebarBottom}>
+        <GetTheApp label="Get the Hosti app:" dark />
         <p className={styles.userEmail}>{user.email}</p>
         <button type="button" className={styles.signOut} onClick={() => signOut(auth)}>
           Sign out

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createVenue, seedDefaultDepartments } from '../services/venues'
 import type { VenueRow } from './ProjectsPage'
+import GetTheApp from '../components/GetTheApp'
 import styles from './CreateVenuePage.module.css'
 
 export default function CreateVenuePage({
@@ -11,6 +12,7 @@ export default function CreateVenuePage({
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [createdVenue, setCreatedVenue] = useState<VenueRow | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -30,8 +32,6 @@ export default function CreateVenuePage({
         console.warn('[CreateVenuePage] seedDefaultDepartments failed:', seedErr?.message)
       }
 
-      // 3) Route into the new venue dashboard (mirrors step 3 — VenueProvider picks up
-      //    the new venueId, here we pass the VenueRow directly via openVenue).
       const newVenue: VenueRow = {
         id: venueId,
         name: trimmed,
@@ -47,13 +47,38 @@ export default function CreateVenuePage({
         prevParetoTop10: [],
         snapshotLoaded: false,
       }
-      onOpenVenue(newVenue)
-      // onOpenVenue calls setActiveVenue + setPage('hostihealth') in App.tsx.
-      // Component unmounts naturally — no setBusy(false) needed on the success path.
+
+      // Show success screen before navigating
+      setCreatedVenue(newVenue)
+      setBusy(false)
     } catch (err: any) {
       setError(err?.message ?? 'Could not create venue. Please try again.')
       setBusy(false)
     }
+  }
+
+  if (createdVenue) {
+    return (
+      <div className={styles.page}>
+        <h1 className={styles.heading}>Your venue is ready.</h1>
+        <p className={styles.subhead}>
+          <strong>{createdVenue.name}</strong> has been created. Count stock on your phone
+          with the Hosti app:
+        </p>
+
+        <div className={styles.card}>
+          <GetTheApp />
+        </div>
+
+        <button
+          type="button"
+          className={styles.submit}
+          onClick={() => onOpenVenue(createdVenue)}
+        >
+          Continue to dashboard →
+        </button>
+      </div>
+    )
   }
 
   return (
