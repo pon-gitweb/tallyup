@@ -18,6 +18,7 @@ import IdentityBadge from '../../components/IdentityBadge';
 import { OrdersService } from '../../domain/orders';
 import { showToast } from './_toast';
 import { useToast } from '../../components/common/Toast';
+import { partitionReports, matchDocToMatchData } from '../../utils/weeklyLedger';
 
 const dlog = __DEV__ ? (...a:any[]) => console.log('[Suggested]', ...a) : (..._a:any[])=>{};
 const NO_SUPPLIER_KEYS = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
@@ -80,6 +81,7 @@ export default function SuggestedOrderScreen(){
   const [rows,setRows]=useState<BucketRow[]>([]);
   const [snapshot,setSnapshot]=useState<any>(null);
   const [intelligence,setIntelligence]=useState<any[]>([]);
+  const [salesInfo,setSalesInfo]=useState<{hasSalesReports:boolean;unitCoveragePct:number|null;weeksCovered:number}|null>(null);
 
   const [existingKeys,setExistingKeys]=useState<Set<string>>(new Set());
   const [supplierPreview,setSupplierPreview]=useState<any>(null);
@@ -259,6 +261,33 @@ export default function SuggestedOrderScreen(){
     setIntelligence(Array.isArray(snapCompat?.intelligence) ? snapCompat.intelligence : []);
   },[db,venueId,selectedDeptId]);
 
+  const loadSalesInfo = useCallback(async () => {
+    if (!venueId) { setSalesInfo(null); return; }
+    try {
+      const reportsSnap = await getDocs(collection(db, 'venues', venueId, 'salesReports'));
+      const { reports: activeReports } = partitionReports(reportsSnap.docs as any);
+      if (activeReports.length === 0) { setSalesInfo({ hasSalesReports: false, unitCoveragePct: null, weeksCovered: 0 }); return; }
+
+      // Load match docs for coverage
+      const matchesSnap = await getDocs(collection(db, 'venues', venueId, 'salesReportMatches'));
+      let totalQty = 0, matchedQty = 0;
+      const weeksSet = new Set<string>();
+      for (const r of activeReports) {
+        const matchDoc = matchesSnap.docs.find(d => d.id === r.id);
+        if (matchDoc) {
+          const md = matchDocToMatchData(matchDoc.data() as any);
+          matchedQty += md.matchedQty;
+        }
+        for (const line of r.rawLines) totalQty += line.qtySold ?? 0;
+        if (r.startStr) weeksSet.add(r.startStr.slice(0, 7));
+      }
+      const unitCoveragePct = totalQty > 0 ? Math.round((matchedQty / totalQty) * 100) : null;
+      setSalesInfo({ hasSalesReports: true, unitCoveragePct, weeksCovered: weeksSet.size });
+    } catch {
+      setSalesInfo(null);
+    }
+  }, [db, venueId]);
+
   const doRefreshRaw=useCallback(async()=>{
     setLoadError(false);
     if(!venueId){
@@ -272,12 +301,15 @@ export default function SuggestedOrderScreen(){
       const graduated=normalizeCompat(compat);
       await computeRowsFromSnapshot(graduated);
       const cycleKey = graduated?._meta?.stockCycleKey || null;
-      await loadExistingSuggestionKeys(cycleKey);
+      await Promise.all([
+        loadExistingSuggestionKeys(cycleKey),
+        loadSalesInfo(),
+      ]);
     } catch(e:any) {
       dlog('doRefreshRaw error', e?.message);
       setLoadError(true);
     }
-  },[venueId,computeRowsFromSnapshot,normalizeCompat,loadExistingSuggestionKeys]);
+  },[venueId,computeRowsFromSnapshot,normalizeCompat,loadExistingSuggestionKeys,loadSalesInfo]);
 
   const doRefresh=useCallback(async()=>{
     setRefreshing(true);
@@ -702,9 +734,20 @@ export default function SuggestedOrderScreen(){
             </Text>
             {intelligence.filter((i:any) => i.coverStatus === 'unknown').length > 0 && (
               <View style={{ backgroundColor: '#f9fafb', borderRadius: 12, padding: 12, marginBottom: 8 }}>
-                <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>
-                  No sales data this cycle — showing on hand vs PAR
-                </Text>
+                {salesInfo?.hasSalesReports && salesInfo.unitCoveragePct != null && salesInfo.unitCoveragePct < 100 ? (
+                  <>
+                    <Text style={{ fontSize: 13, color: '#1b4f72', fontWeight: '600', marginBottom: 4 }}>
+                      Sales reports cover {salesInfo.weeksCovered} week{salesInfo.weeksCovered !== 1 ? 's' : ''}, but only {salesInfo.unitCoveragePct}% of sold units are linked to products.
+                    </Text>
+                    <TouchableOpacity onPress={() => nav.navigate('POSMappingScreen' as never)} style={{ marginBottom: 8 }}>
+                      <Text style={{ fontSize: 12, color: '#1b4f72', textDecorationLine: 'underline' }}>Set up POS Mapping →</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>
+                    No sales data yet — import sales reports on the web app or connect a POS.
+                  </Text>
+                )}
                 {intelligence
                   .filter((i:any) => i.coverStatus === 'unknown')
                   .sort((a:any, b:any) => (a.onHandQty ?? 0) - (b.onHandQty ?? 0))
@@ -736,6 +779,7 @@ export default function SuggestedOrderScreen(){
     <View style={S.wrap}>
       {DeptChips}
       <FlatList
+        style={{ flex: 1 }}
         keyboardShouldPersistTaps="handled"
         data={rows}
         keyExtractor={keyExtractor}
@@ -759,7 +803,7 @@ export default function SuggestedOrderScreen(){
                 {intelligence.length > 0 && (
                   <View style={{ marginTop: 20, gap: 8, width: '100%' }}>
 
-                    {!snapshot?._meta?.hasSalesData && (
+                    {salesInfo != null && (
                       <View style={{
                         backgroundColor: '#f0f9ff',
                         borderRadius: 10,
@@ -768,12 +812,20 @@ export default function SuggestedOrderScreen(){
                         borderLeftColor: '#1b4f72',
                         marginBottom: 8,
                       }}>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#1b4f72' }}>
-                          No sales data this cycle
-                        </Text>
-                        <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 3 }}>
-                          Connect your POS or upload a sales report to see velocity and days-of-cover intelligence.
-                        </Text>
+                        {salesInfo.hasSalesReports && salesInfo.unitCoveragePct != null && salesInfo.unitCoveragePct < 100 ? (
+                          <>
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: '#1b4f72' }}>
+                              Sales reports cover {salesInfo.weeksCovered} week{salesInfo.weeksCovered !== 1 ? 's' : ''}, but only {salesInfo.unitCoveragePct}% of sold units are linked to products.
+                            </Text>
+                            <TouchableOpacity onPress={() => nav.navigate('POSMappingScreen' as never)} style={{ marginTop: 4 }}>
+                              <Text style={{ fontSize: 12, color: '#1b4f72', textDecorationLine: 'underline' }}>Set up POS Mapping →</Text>
+                            </TouchableOpacity>
+                          </>
+                        ) : (
+                          <Text style={{ fontSize: 13, color: '#6b7280' }}>
+                            No sales data yet — import sales reports on the web app or connect a POS.
+                          </Text>
+                        )}
                       </View>
                     )}
 
