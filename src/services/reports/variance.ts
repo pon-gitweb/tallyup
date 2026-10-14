@@ -81,6 +81,7 @@ export type VarianceSnapshotResult = {
   excesses: VarianceRow[];
   totalShortageValue: number;
   totalExcessValue: number;
+  noUsageData?: boolean;
 };
 
 // ---------- async snapshot: main entry for VarianceSnapshotScreen ----------
@@ -99,6 +100,7 @@ export async function computeVarianceSnapshot(
   const excesses: VarianceRow[] = [];
   let totalShortageValue = 0;
   let totalExcessValue = 0;
+  let anyUsageData = false;
 
   const deptId = opts.departmentId ?? undefined;
 
@@ -123,6 +125,10 @@ export async function computeVarianceSnapshot(
 
     const snapshotDoc = snapshotsSnap.docs[0];
     const snapshot = snapshotDoc.data() as any;
+
+    if (snapshot.dataCompleteness?.hasSales || snapshot.dataCompleteness?.hasInvoices) {
+      anyUsageData = true;
+    }
 
     // Skip snapshots with no baseline — cycle-0 always, legacy first cycles, and any with missing prev snapshot
     if (!snapshot.dataCompleteness?.hasBaseline) continue;
@@ -180,7 +186,8 @@ export async function computeVarianceSnapshot(
   shortages.sort((a, b) => b.value - a.value);
   excesses.sort((a, b) => b.value - a.value);
 
-  return { shortages, excesses, totalShortageValue, totalExcessValue };
+  const noUsageData = (shortages.length + excesses.length) > 0 && !anyUsageData;
+  return { shortages, excesses, totalShortageValue, totalExcessValue, noUsageData };
 }
 
 // ---------- async UI path (banded summary) ----------
@@ -188,6 +195,7 @@ type UIResult = {
   summary: { message: string; withinBand: boolean; bandPct: number };
   rowsMaterial: VarianceRow[];
   rowsMinor: VarianceRow[];
+  noUsageData?: boolean;
 };
 
 export async function buildVariance(venueId: string, opts: any = {}): Promise<UIResult> {
@@ -215,6 +223,7 @@ export async function buildVariance(venueId: string, opts: any = {}): Promise<UI
     summary: { message, withinBand, bandPct },
     rowsMaterial,
     rowsMinor,
+    noUsageData: snapshot.noUsageData,
   };
 }
 

@@ -44,7 +44,7 @@ export interface HostiHealthStage3 {
   estimatedImpact: number | null;  // dollars recovered this cycle, null if no cost prices
   kpis: {
     stockAccuracy: number | null;    // 0–100 or null if no data
-    stockAccuracyNullReason?: 'limited_baseline' | null;
+    stockAccuracyNullReason?: 'limited_baseline' | 'no_usage_data' | null;
     labourEfficiency: number | null; // 0–100 or null if no hourlyRate or no segments
     inventoryHealth: number | null;  // 0–100 or null if < 2 monthly snapshots
     orderingIntelligence: number | null; // 0–100 or null if < 3 cycles
@@ -198,6 +198,7 @@ async function calculateFullScore(
   let pricedItemPercentCount = 0;
   let totalBaselineItems = 0;
   let totalCountedItems = 0;
+  let anyUsageDataForAccuracy = false;
   try {
     let anyHasPrices = false;
     let sumVariance = 0;
@@ -210,6 +211,10 @@ async function calculateFullScore(
       ));
       if (snapsSnap.empty) continue;
       const snap = snapsSnap.docs[0].data() as any;
+
+      if (snap.dataCompleteness?.hasSales || snap.dataCompleteness?.hasInvoices) {
+        anyUsageDataForAccuracy = true;
+      }
 
       // Track baseline coverage across all departments
       const snapBaseline = typeof snap.summary?.itemsWithBaseline === 'number'
@@ -267,9 +272,11 @@ async function calculateFullScore(
   const limitedBaseline = totalCountedItems > 0 && totalBaselineItems / totalCountedItems < 0.5;
 
   let stockAccuracy: number | null = null;
-  let stockAccuracyNullReason: 'limited_baseline' | null = null;
+  let stockAccuracyNullReason: 'limited_baseline' | 'no_usage_data' | null = null;
   if (limitedBaseline) {
     stockAccuracyNullReason = 'limited_baseline';
+  } else if (totalCountedItems > 0 && !anyUsageDataForAccuracy) {
+    stockAccuracyNullReason = 'no_usage_data';
   } else if (totalStockValueAgg != null && totalStockValueAgg !== 0 && totalVarianceDollars != null) {
     // totalVarianceDollars is already a sum of absolute values — no Math.abs() needed here.
     const variancePct = totalVarianceDollars / totalStockValueAgg * 100;

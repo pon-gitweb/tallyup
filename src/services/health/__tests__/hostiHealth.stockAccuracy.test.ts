@@ -58,13 +58,18 @@ function makeDeptSnap(deptId: string) {
   return { id: deptId, data: () => ({ name: deptId }) };
 }
 
-function makeSnapshotDoc(summary: any) {
+function makeSnapshotDoc(summary: any, opts: { hasSales?: boolean; hasInvoices?: boolean } = {}) {
   return {
     id: 'cycle-5',
     data: () => ({
       cycleNumber: 5,
       summary,
-      dataCompleteness: { hasPrices: true, pricedItemPercent: 80 },
+      dataCompleteness: {
+        hasPrices: true,
+        pricedItemPercent: 80,
+        hasSales: opts.hasSales ?? false,
+        hasInvoices: opts.hasInvoices ?? false,
+      },
       items: [],
     }),
   };
@@ -119,7 +124,7 @@ describe('hostiHealth — Stock Accuracy limited_baseline', () => {
         return Promise.resolve(makeSnap([makeDeptSnap('bar')]));
       }
       if (path.includes('snapshots')) {
-        return Promise.resolve(makeSnap([makeSnapshotDoc(summary)]));
+        return Promise.resolve(makeSnap([makeSnapshotDoc(summary, { hasSales: true })]));
       }
       return Promise.resolve(makeEmptySnap());
     });
@@ -129,5 +134,58 @@ describe('hostiHealth — Stock Accuracy limited_baseline', () => {
     const stage3 = result as HostiHealthStage3;
     expect(stage3.kpis.stockAccuracy).not.toBeNull();
     expect(stage3.kpis.stockAccuracyNullReason).not.toBe('limited_baseline');
+  });
+});
+
+describe('hostiHealth — Stock Accuracy no_usage_data', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetDoc.mockResolvedValue({ exists: () => false, data: () => ({}) });
+  });
+
+  it('returns stockAccuracyNullReason no_usage_data when no dept snapshot has sales or invoices', async () => {
+    const summary = makeSnapshotSummary(6, 6);
+
+    mockGetDocs.mockImplementation((q: any) => {
+      const path = String(q);
+      if (path.includes('departments') && !path.includes('snapshots') && !path.includes('areas') &&
+          !path.includes('cycles') && !path.includes('orders') && !path.includes('invoices') &&
+          !path.includes('profitRecoverySnapshots') && !path.includes('settings')) {
+        return Promise.resolve(makeSnap([makeDeptSnap('bar')]));
+      }
+      if (path.includes('snapshots')) {
+        // hasSales: false, hasInvoices: false
+        return Promise.resolve(makeSnap([makeSnapshotDoc(summary)]));
+      }
+      return Promise.resolve(makeEmptySnap());
+    });
+
+    const result = await getHostiHealthStage('venue-1', 5, 20, 3, 5000);
+    expect(result.stage).toBe(3);
+    const stage3 = result as HostiHealthStage3;
+    expect(stage3.kpis.stockAccuracy).toBeNull();
+    expect(stage3.kpis.stockAccuracyNullReason).toBe('no_usage_data');
+  });
+
+  it('does not set no_usage_data when at least one snapshot has sales data', async () => {
+    const summary = makeSnapshotSummary(6, 6, 1000, 10);
+
+    mockGetDocs.mockImplementation((q: any) => {
+      const path = String(q);
+      if (path.includes('departments') && !path.includes('snapshots') && !path.includes('areas') &&
+          !path.includes('cycles') && !path.includes('orders') && !path.includes('invoices') &&
+          !path.includes('profitRecoverySnapshots') && !path.includes('settings')) {
+        return Promise.resolve(makeSnap([makeDeptSnap('bar')]));
+      }
+      if (path.includes('snapshots')) {
+        return Promise.resolve(makeSnap([makeSnapshotDoc(summary, { hasSales: true })]));
+      }
+      return Promise.resolve(makeEmptySnap());
+    });
+
+    const result = await getHostiHealthStage('venue-1', 5, 20, 3, 5000);
+    expect(result.stage).toBe(3);
+    const stage3 = result as HostiHealthStage3;
+    expect(stage3.kpis.stockAccuracyNullReason).not.toBe('no_usage_data');
   });
 });

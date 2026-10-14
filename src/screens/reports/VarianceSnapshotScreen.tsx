@@ -27,6 +27,7 @@ export default function VarianceSnapshotScreen() {
   const [q, setQ] = useState('');
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [noUsageData, setNoUsageData] = useState(false);
 
   async function load() {
     try {
@@ -37,6 +38,7 @@ export default function VarianceSnapshotScreen() {
       setRowsExcess(res.excesses || []);
       setShortageValue(res.totalShortageValue || 0);
       setExcessValue(res.totalExcessValue || 0);
+      setNoUsageData(res.noUsageData ?? false);
     } catch (e: any) {
       showError(e?.message ?? String(e));
     } finally {
@@ -90,6 +92,13 @@ export default function VarianceSnapshotScreen() {
 
         <Text style={S.h1}>Variance Snapshot</Text>
         <Text style={S.sub}>Compares current on-hand (from last counts) against guidance (“expected”).</Text>
+        {noUsageData && (
+          <View style={{ backgroundColor: '#FEF3C7', borderRadius: 8, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#F59E0B' }}>
+            <Text style={{ fontSize: 12, color: '#92400E', lineHeight: 17 }}>
+              Expected figures don&apos;t include sales or deliveries yet, so shortages include normal usage.
+            </Text>
+          </View>
+        )}
 
         {/* AI Summary */}
         {aiLoading && (
