@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useColours, useTheme } from '../../context/ThemeContext';
-import { canSelfRegister } from '../../utils/platformPolicy';
+import { canShowPurchasePaths } from '../../utils/platformPolicy';
 
 export default function FestivalPaywallScreen({ navigation, route }: any) {
   const c = useColours();
@@ -10,7 +10,7 @@ export default function FestivalPaywallScreen({ navigation, route }: any) {
 
   const venueName = route?.params?.venueName || 'this festival';
 
-  if (!canSelfRegister) {
+  if (!canShowPurchasePaths) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: c.oat || '#f5f3ee' }]} edges={['top', 'left', 'right']}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>

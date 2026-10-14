@@ -17,7 +17,7 @@ import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useIsActivated } from '../../hooks/useIsActivated';
 import PaywallBlurOverlay from '../../components/paywall/PaywallBlurOverlay';
-import { canSelfRegister } from '../../utils/platformPolicy';
+import { canShowPurchasePaths } from '../../utils/platformPolicy';
 
 // ─── Category mapping: setup screen IDs → prediction service categories ────────
 
@@ -1240,7 +1240,7 @@ export default function FestivalPurchasingPredictionScreen() {
             return (
               <PaywallBlurOverlay
                 key={supplierId}
-                onActivate={canSelfRegister ? () => nav.navigate('FestivalPaywall', { venueName: eventData?.eventName }) : undefined}
+                onActivate={canShowPurchasePaths ? () => nav.navigate('FestivalPaywall', { venueName: eventData?.eventName }) : undefined}
                 message="Activate to see full order"
               >
                 {supplierCard}
@@ -1364,7 +1364,7 @@ export default function FestivalPurchasingPredictionScreen() {
 
       </ScrollView>
 
-      {!activated && canSelfRegister && (
+      {!activated && canShowPurchasePaths && (
         <View style={[R.paywallCTA, {
           backgroundColor: c.surface || '#ffffff',
           borderTopWidth: 1,

@@ -20,34 +20,32 @@ jest.mock('../../../context/VenueProvider', () => ({
   useVenue: () => mockVenue,
 }));
 
-// Control canSelfRegister (Platform.OS) per test
-let mockCanSelfRegister = true;
+// Control canShowPurchasePaths per test
+let mockCanShowPurchasePaths = true;
 jest.mock('../../../utils/platformPolicy', () => ({
-  get canSelfRegister() { return mockCanSelfRegister; },
+  get canShowPurchasePaths() { return mockCanShowPurchasePaths; },
 }));
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('ReadOnlyInfoBanner', () => {
-  beforeEach(() => { mockCanSelfRegister = true; });
+  beforeEach(() => { mockCanShowPurchasePaths = false; });
 
-  it('renders no TouchableOpacity and no link text (non-iOS)', () => {
+  it('shows mobile-safe copy (no purchase path) when canShowPurchasePaths=false', () => {
     const { queryAllByRole, getByText } = render(<ReadOnlyInfoBanner />);
 
-    // No touchable element of any kind
     const buttons = queryAllByRole('button');
     expect(buttons).toHaveLength(0);
 
-    // Correct informational copy is shown on non-iOS
+    getByText("Your venue's access has ended. Contact your venue owner.");
+  });
+
+  it('shows full trial-ended copy when canShowPurchasePaths=true (web)', () => {
+    mockCanShowPurchasePaths = true;
+    const { getByText } = render(<ReadOnlyInfoBanner />);
     getByText(
       'Your free trial has ended. This venue is read-only: you can still view everything.',
     );
-  });
-
-  it('shows iOS-safe read-only copy with no link when on iOS', () => {
-    mockCanSelfRegister = false;
-    const { getByText } = render(<ReadOnlyInfoBanner />);
-    getByText("Your venue's access has ended. Contact your venue owner.");
   });
 
   it('renders nothing when enforce=false', () => {

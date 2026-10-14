@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { canSelfRegister } from '../../utils/platformPolicy';
+import { canShowPurchasePaths } from '../../utils/platformPolicy';
 
 type Props = {
   onPress?: () => void;
@@ -22,7 +22,7 @@ export function ReadOnlyBanner({ onPress, trialsLeftLabel }: Props) {
         marginBottom: 6,
       }}
     >
-      {canSelfRegister ? (
+      {canShowPurchasePaths ? (
         <>
           <Text style={{ fontWeight: '800', marginBottom: 4 }}>
             {trialsLeftLabel ? trialsLeftLabel : 'Your subscription is paused.'}

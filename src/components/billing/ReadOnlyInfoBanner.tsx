@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVenue } from '../../context/VenueProvider';
-import { canSelfRegister } from '../../utils/platformPolicy';
+import { canShowPurchasePaths } from '../../utils/platformPolicy';
 
 /**
  * Informational read-only banner — no button, no link, no price, no call to action.
@@ -33,7 +33,7 @@ export function ReadOnlyInfoBanner() {
       }}
     >
       <Text style={{ fontSize: 13, color: '#7A4F1C' }}>
-        {canSelfRegister
+        {canShowPurchasePaths
           ? 'Your free trial has ended. This venue is read-only: you can still view everything.'
           : 'Your venue\'s access has ended. Contact your venue owner.'}
       </Text>
