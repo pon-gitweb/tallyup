@@ -15,7 +15,7 @@
       "backgroundColor": "#0B132B"
     },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.hostistock.tallyup",
       "buildNumber": "1",
       "infoPlist": {
