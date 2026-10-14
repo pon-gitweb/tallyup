@@ -693,6 +693,11 @@ service cloud.firestore {
         match /snapshots/{snapshotId} {
           allow read: if isVenueMember(venueId);
           allow write: if isVenueMember(venueId);
+
+          match /itemChunks/{chunkId} {
+            allow read: if isVenueMember(venueId);
+            allow write: if isVenueMember(venueId);
+          }
         }
       }
 
