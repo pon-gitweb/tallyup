@@ -339,7 +339,7 @@ export default function ProductPerformanceScreen() {
     try {
       setExporting(true);
       const header = 'Product,Category,Area,Velocity/Week,Trend,Status,Current Stock,Days to Sell,PAR Level,Suggested PAR,Expiry Date,Expiry Risk,Cost Price,Dead Stock Cost/Month,Confidence,Cycles\n';
-      const rows = allItems.map(v => [
+      const rows = items.map(v => [
         `"${v.productName}"`,
         `"${v.categoryName ?? ''}"`,
         `"${v.areaName ?? ''}"`,
@@ -350,7 +350,6 @@ export default function ProductPerformanceScreen() {
         v.daysToSellThrough ?? '',
         v.parLevel ?? '',
         v.suggestedPAR ?? '',
-        v.expiryDate ? v.expiryDate.toISOString().slice(0, 10) : '',
         v.expiryRisk ? 'YES' : 'NO',
         v.deadStockCostPerMonth != null ? fmtNum(v.deadStockCostPerMonth, 2) : '',
         v.confidence,
@@ -367,7 +366,7 @@ export default function ProductPerformanceScreen() {
   async function handleExportPDF() {
     try {
       setExporting(true);
-      const rows = allItems.map(v => `
+      const rows = items.map(v => `
         <tr>
           <td>${v.productName}</td>
           <td>${v.categoryName ?? '–'}</td>
