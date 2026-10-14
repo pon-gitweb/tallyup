@@ -8,7 +8,6 @@ import { collection, getDocs, addDoc, query, where, serverTimestamp } from 'fire
 import { db } from '../../services/firebase';
 import { useVenueId, useVenue } from '../../context/VenueProvider';
 import { useWriteGuard } from '../../hooks/useWriteGuard';
-import { MockPOSAdapter } from '../../services/pos/adapters/MockPOSAdapter';
 import { getCurrentAdapter } from '../../services/pos/POSRegistry';
 import { suggestMatch } from '../../services/pos/posMatching';
 import { useToast } from '../../components/common/Toast';
@@ -44,7 +43,8 @@ export default function POSMappingScreen() {
   const [items, setItems] = useState<ItemState[]>([]);
   const [products, setProducts] = useState<Array<{ id: string; name: string; category?: string }>>([]);
   const [recipes, setRecipes] = useState<Array<{ id: string; name: string }>>([]);
-  const [adapterName, setAdapterName] = useState('Mock POS');
+  const [adapterName, setAdapterName] = useState('');
+  const [adapterSystem, setAdapterSystem] = useState<string>('sales_report');
 
   // Picker modal
   const [pickerIdx, setPickerIdx] = useState<number | null>(null);
@@ -76,9 +76,16 @@ export default function POSMappingScreen() {
       setProducts(prods);
       setRecipes(recs);
 
-      const adapter = (await getCurrentAdapter(venueId)) ?? new MockPOSAdapter();
-      setAdapterName(adapter.name);
-      const posItems = await adapter.getSaleItems();
+      let posItems: POSSaleItem[] = [];
+      const adapter = await getCurrentAdapter(venueId);
+      if (adapter) {
+        setAdapterName(adapter.name);
+        setAdapterSystem(adapter.name.toLowerCase().replace(/\s/g, '_'));
+        posItems = await adapter.getSaleItems();
+      } else {
+        setAdapterName('');
+        setAdapterSystem('sales_report');
+      }
 
       // Also load unmatched items from salesReportUnknowns
       const unknownsSnap = await getDocs(
@@ -169,7 +176,7 @@ export default function POSMappingScreen() {
           : 'manual';
 
       await addDoc(collection(db, 'venues', venueId, 'posProductMappings'), {
-        posSystem: 'mock',
+        posSystem: adapterSystem,
         posItemId: item.posItem.posItemId,
         posItemName: item.posItem.posItemName,
         posSku: item.posItem.posSku,
@@ -198,7 +205,7 @@ export default function POSMappingScreen() {
     const item = items[idx];
     try {
       await addDoc(collection(db, 'venues', venueId, 'posProductMappings'), {
-        posSystem: 'mock',
+        posSystem: adapterSystem,
         posItemId: item.posItem.posItemId,
         posItemName: item.posItem.posItemName,
         posSku: item.posItem.posSku,
@@ -264,7 +271,9 @@ export default function POSMappingScreen() {
         borderBottomWidth: 1, borderBottomColor: '#E5E7EB',
       }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text style={{ fontWeight: '700', fontSize: 15, color: '#111' }}>{adapterName} · {items.length} items</Text>
+          <Text style={{ fontWeight: '700', fontSize: 15, color: '#111' }}>
+            {adapterName ? `${adapterName} · ` : 'From your imported sales reports · '}{items.length} items
+          </Text>
           <Text style={{ fontWeight: '800', color: mapped === items.length && items.length > 0 ? '#059669' : '#6B7280' }}>
             {mapped} of {items.length} mapped
           </Text>
@@ -278,13 +287,14 @@ export default function POSMappingScreen() {
         </View>
       </View>
 
-      {items.some(i => i.posItem.posItemId.startsWith('unknown-')) && (
-        <View style={{ backgroundColor: '#fef9c3', padding: 12, marginBottom: 8, borderRadius: 8, marginHorizontal: 12, marginTop: 8 }}>
-          <Text style={{ fontSize: 13, color: '#92400e', fontWeight: '600' }}>
-            ⚠ Some items from your Square sales couldn't be auto-matched. Map them below to track their stock correctly.
-          </Text>
-        </View>
-      )}
+      <View style={{ padding: 12, marginBottom: 4, marginHorizontal: 12, marginTop: 8 }}>
+        <Text style={{ fontSize: 12, color: '#6B7280' }}>
+          {adapterName
+            ? `From ${adapterName}. `
+            : 'From your imported sales reports. '}
+          New mappings apply to future imports.
+        </Text>
+      </View>
 
       <ScrollView contentContainerStyle={{ padding: 12, gap: 10 }}>
         {items.map((item, idx) => (

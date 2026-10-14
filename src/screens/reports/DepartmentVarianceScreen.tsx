@@ -11,7 +11,6 @@ import {
 import { useVenueId } from '../../context/VenueProvider';
 import { useToast } from '../../components/common/Toast';
 import { buildVariance } from '../../services/reports/variance';
-import VarianceExplainButton from './components/VarianceExplainButton';
 import IdentityBadge from '../../components/IdentityBadge';
 import { exportPdf } from '../../utils/exporters';
 import { db } from '../../services/firebase';
@@ -139,7 +138,7 @@ export default function DepartmentVarianceScreen() {
         <Text style={S.rowTitle}>{r.name}</Text>
         <Text style={S.rowSub}>
           {r.supplierName ? `${r.supplierName} · ` : ''}
-          {Number.isFinite(r.par) ? `PAR ${r.par} · ` : ''}
+          {r.par != null && Number.isFinite(r.par) ? `PAR ${r.par} · ` : ''}
           {Number(r.variance) > 0
             ? `Excess ${r.variance}`
             : Number(r.variance) < 0
@@ -151,8 +150,31 @@ export default function DepartmentVarianceScreen() {
           {!r.material ? ' · minor' : ''}
         </Text>
       </View>
-      <VarianceExplainButton venueId={venueId} departmentId={null} row={r} />
     </View>
+  );
+
+  // Top 10 shortages and excesses for the summary header
+  const top10Shortages = React.useMemo(
+    () => [...rows, ...minor].filter(r => Number(r.variance) < 0).sort((a, b) => Number(a.value) - Number(b.value)).slice(0, 10),
+    [rows, minor],
+  );
+  const top10Excess = React.useMemo(
+    () => [...rows, ...minor].filter(r => Number(r.variance) > 0).sort((a, b) => Number(b.value) - Number(a.value)).slice(0, 10),
+    [rows, minor],
+  );
+
+  const Top10Section = ({ title, items, emptyText, valueColor }: { title: string; items: any[]; emptyText: string; valueColor: string }) => (
+    items.length > 0 ? (
+      <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+        <Text style={{ fontWeight: '800', fontSize: 13, color: '#374151', marginBottom: 4 }}>{title}</Text>
+        {items.map((r, i) => (
+          <View key={String(r.productId) + i} style={{ flexDirection: 'row', paddingVertical: 3, borderBottomWidth: i < items.length - 1 ? StyleSheet.hairlineWidth : 0, borderBottomColor: '#e5e7eb' }}>
+            <Text style={{ flex: 1, fontSize: 13, color: '#111827' }} numberOfLines={1}>{r.name}</Text>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: valueColor }}>${Math.abs(Number(r.value)).toFixed(0)}</Text>
+          </View>
+        ))}
+      </View>
+    ) : null
   );
 
   return (
@@ -163,6 +185,12 @@ export default function DepartmentVarianceScreen() {
       <TouchableOpacity onPress={onExportPdf} style={S.exportBtn}>
         <Text style={S.exportText}>Export Department Variance (PDF)</Text>
       </TouchableOpacity>
+      <Text style={{ fontSize: 11, color: '#6B7280', textAlign: 'center', marginBottom: 8, marginTop: 2 }}>
+        Full detail is in the PDF and on the web app.
+      </Text>
+
+      <Top10Section title="Top 10 Shortages" items={top10Shortages} emptyText="No shortages" valueColor="#DC2626" />
+      <Top10Section title="Top 10 Excess" items={top10Excess} emptyText="No excess" valueColor="#16A34A" />
 
       <FlatList
         keyboardShouldPersistTaps="handled"
@@ -176,7 +204,7 @@ export default function DepartmentVarianceScreen() {
               <Text style={S.emptyTitle}>No material variances</Text>
               <Text style={S.emptyText}>
                 Your latest stock take is within the accepted range. You can still view minor
-                variances by tapping “Show minor”.
+                variances by tapping "Show minor".
               </Text>
             </View>
           ) : null

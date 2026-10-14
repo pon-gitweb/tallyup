@@ -103,15 +103,22 @@ function AdjustmentInboxScreen() {
 
   const Empty = () => (
     <View style={{ padding: 24, alignItems: 'center' }}>
-      <Text style={{ color: colours.textSecondary }}>No pending adjustment requests.</Text>
+      <Text style={{ color: colours.textSecondary, textAlign: 'center', lineHeight: 20 }}>
+        No pending requests.{'\n'}When a staff member requests a count adjustment during a stocktake, it will appear here for your review.
+      </Text>
     </View>
   );
 
   const DeptChips = () => (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 6, gap: 8 }}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={{ paddingVertical: 6, gap: 8, alignItems: 'center' }}
+    >
       <TouchableOpacity
         onPress={() => setDeptFilter(null)}
-        style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, flexShrink: 0,
+        style={{ paddingHorizontal: 12, height: 32, borderRadius: 16, borderWidth: 1, flexShrink: 0,
+                 justifyContent: 'center',
                  borderColor: deptFilter == null ? colours.deepBlue : colours.border, backgroundColor: deptFilter == null ? colours.deepBlue + '22' : colours.surface }}
       >
         <Text style={{ fontWeight: '700', color: colours.deepBlue }}>All</Text>
@@ -120,7 +127,8 @@ function AdjustmentInboxScreen() {
         <TouchableOpacity
           key={d.id}
           onPress={() => setDeptFilter(d.id === deptFilter ? null : d.id)}
-          style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, flexShrink: 0,
+          style={{ paddingHorizontal: 12, height: 32, borderRadius: 16, borderWidth: 1, flexShrink: 0,
+                   justifyContent: 'center',
                    borderColor: d.id === deptFilter ? colours.deepBlue : colours.border, backgroundColor: d.id === deptFilter ? colours.deepBlue + '22' : colours.surface }}
         >
           <Text style={{ fontWeight: '700', color: colours.deepBlue }}>{d.name}</Text>
@@ -197,6 +205,12 @@ function AdjustmentInboxScreen() {
   return (
     <View style={{ flex: 1, padding: 16, backgroundColor: colours.surface }}>
       <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 8 }}>Adjustment Requests</Text>
+      {/* Intro card explaining what adjustment requests are */}
+      <View style={{ backgroundColor: colours.primaryLight ?? '#EFF6FF', borderRadius: 10, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: colours.border }}>
+        <Text style={{ fontSize: 13, color: colours.navy ?? colours.text, lineHeight: 19 }}>
+          A staff member taps &apos;Request adjustment&apos; during a stocktake when they believe a count is wrong. Managers review requests here. Approving applies the adjustment to the live count; denying closes the request with a reason.
+        </Text>
+      </View>
       <DeptChips />
       {loading ? (
         <View style={{ alignItems:'center', padding: 20 }}>

@@ -225,7 +225,7 @@ function Row({ row, divider, venueId, S, c }: { row: VarianceRow; divider?: bool
       ? row.realCostPerUnit
       : null;
 
-  async function onExplain() {
+  async function _onExplainUnused() {
     try {
       const counted = typeof onHand === 'number' ? onHand : 0;
       const expected = (typeof counted === 'number' && typeof variance === 'number') ? (counted - variance) : 0;
@@ -240,7 +240,6 @@ function Row({ row, divider, venueId, S, c }: { row: VarianceRow; divider?: bool
         lastDeliveryAt: row?.lastDeliveryAt || null,
         lastSalesLookbackDays: 3,
         auditTrail: Array.isArray(row?.auditTrail) ? row.auditTrail : [],
-        // NEW: cost + flow context so AI can talk about real COGS and shrinkage honestly
         costPerUnit: baseCost,
         realCostPerUnit: realCost,
         shrinkUnits: shrinkUnits || 0,
@@ -287,34 +286,23 @@ function Row({ row, divider, venueId, S, c }: { row: VarianceRow; divider?: bool
   }, [venueId, productId, variance]);
   return (
     <View style={[S.row, divider && S.rowDivider]}>
-      <View style={{ flex: 1 }}>
-        <Text style={S.name} numberOfLines={1}>{name || '—'}</Text>
-        <Text style={S.subtle} numberOfLines={1}>
-          {(unit ? unit : '') + (supplierName ? (unit ? ' • ' : '') + supplierName : '')}
+      <Text style={S.name} numberOfLines={2}>{name || '—'}</Text>
+      <Text style={S.subtle} numberOfLines={1}>
+        {(unit ? unit : '') + (supplierName ? (unit ? ' • ' : '') + supplierName : '')}
+        {costLine ? ' • ' + costLine : ''}
+        {isEnriched ? ` • Total: ${totalVarianceQty > 0 ? '+' : ''}${totalVarianceQty}` : ''}
+      </Text>
+      {attribution ? (
+        <Text style={[S.subtle, { color: c.stellarAmber, marginTop: 2 }]} numberOfLines={2}>
+          {'⚠️ '}{attribution.recipeName} ({attribution.qtySold} sold · {attribution.attributedPct}% of variance)
         </Text>
-        {costLine ? (
-          <Text style={S.subtle} numberOfLines={1}>
-            {costLine}
-          </Text>
-        ) : null}
-        {isEnriched ? (
-          <Text style={S.subtle} numberOfLines={1}>
-            {`Total: ${totalVarianceQty > 0 ? '+' : ''}${totalVarianceQty}`}
-          </Text>
-        ) : null}
-        {attribution ? (
-          <Text style={[S.subtle, { color: c.stellarAmber, marginTop: 2 }]} numberOfLines={2}>
-            {'⚠️ '}{attribution.recipeName} ({attribution.qtySold} sold · {attribution.attributedPct}% of variance)
-          </Text>
-        ) : null}
+      ) : null}
+      <View style={{ flexDirection: 'row', marginTop: 4 }}>
+        <Cell S={S} label="Par" value={par} />
+        <Cell S={S} label="On-hand" value={onHand} />
+        <Cell S={S} c={c} label={isEnriched ? 'Unexp.' : 'Variance'} value={variance} emph />
+        <Cell S={S} label="Val." value={typeof value === 'number' ? formatMoney(value) : '—'} />
       </View>
-      <Cell S={S} label="Par" value={par} />
-      <Cell S={S} label="On-hand" value={onHand} />
-      <Cell S={S} c={c} label={isEnriched ? 'Unexp.' : 'Variance'} value={variance} emph />
-      <Cell S={S} label="Val." value={typeof value === 'number' ? formatMoney(value) : '—'} />
-      <TouchableOpacity onPress={onExplain} style={S.aiBtn} accessibilityLabel="Explain this variance">
-        <Text style={S.aiText}>🤖 Explain</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -359,9 +347,9 @@ function makeStyles(c: any) {
     pillValue: { fontWeight: '900', fontSize: 16 },
     sectionTitle: { fontWeight: '800', marginBottom: 6, marginTop: 10 },
     card: { backgroundColor: c.oat, borderRadius: 12, overflow: 'hidden' },
-    row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 10, backgroundColor: c.surface },
+    row: { flexDirection: 'column', paddingHorizontal: 10, paddingVertical: 10, backgroundColor: c.surface },
     rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border },
-    name: { fontWeight: '700', marginBottom: 2, maxWidth: 160 },
+    name: { fontWeight: '700', marginBottom: 2 },
     subtle: { fontSize: 12, color: c.slateMid },
     cell: { alignItems: 'flex-end', minWidth: 70, paddingLeft: 8 },
     cellLabel: { opacity: 0.6, fontSize: 12 },
@@ -370,8 +358,6 @@ function makeStyles(c: any) {
     reloadText: { color: c.deepBlue, fontWeight: '800' },
     exportBtn: { alignSelf: 'center', marginTop: 12, backgroundColor: c.deepBlue, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
     exportText: { color: c.surface, fontWeight: '800' },
-    aiBtn: { marginLeft: 8, backgroundColor: c.primaryLight, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10 },
-    aiText: { color: c.deepBlue, fontWeight: '800' },
   });
 }
 

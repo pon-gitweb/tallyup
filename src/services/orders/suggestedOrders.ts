@@ -2,6 +2,7 @@ import { getFirestore, collection, getDocs } from 'firebase/firestore';
 import { listSuppliers } from '../suppliers/listSuppliers';
 import { getApp } from 'firebase/app';
 import { getVenueSession } from '../completion';
+import { getParLevel } from '../../utils/productFields';
 
 const dlog = (...a: any[]) => console.log('[SuggestedOrders]', ...a);
 
@@ -347,11 +348,7 @@ export async function buildSuggestedOrdersInMemory(
     const deptPar = v?.deptPar && typeof v.deptPar === 'object' ? v.deptPar : undefined;
     prodMeta[d.id] = {
       name: s(v?.name, String(d.id)),
-      par: Number.isFinite(v?.par)
-        ? Number(v.par)
-        : Number.isFinite(v?.parLevel)
-        ? Number(v.parLevel)
-        : undefined,
+      par: getParLevel(v) ?? undefined,
       deptPar,
       supplierId: sid,
       supplierName: sname,

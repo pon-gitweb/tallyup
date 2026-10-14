@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
+import * as Application from 'expo-application';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColours } from '../../context/ThemeContext';
 import { FEATURES } from '../../config/features';
@@ -197,6 +198,7 @@ export default function SettingsScreen() {
 
   // OTA update log — loaded once on mount for diagnostics
   const [otaLog, setOtaLog] = useState<Updates.UpdatesLogEntry[] | null>(null);
+  const [otaExpanded, setOtaExpanded] = useState(false);
   useEffect(() => {
     Updates.readLogEntriesAsync()
       .then(entries => setOtaLog(entries))
@@ -1180,14 +1182,17 @@ export default function SettingsScreen() {
               </View>
             )}
 
-            <View style={styles.row}>
-              <TouchableOpacity
-                style={styles.btn}
-                onPress={() => nav.navigate('ReportPreferences')}
-              >
-                <Text style={styles.btnText}>Report Preferences</Text>
-              </TouchableOpacity>
-            </View>
+            {/* hidden until reports consume prefs */}
+            {false && (
+              <View style={styles.row}>
+                <TouchableOpacity
+                  style={styles.btn}
+                  onPress={() => nav.navigate('ReportPreferences')}
+                >
+                  <Text style={styles.btnText}>Report Preferences</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {isManager && (
               <View style={styles.row}>
@@ -1353,60 +1358,61 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Advanced Settings (dev) */}
-        <View style={styles.row}>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() => nav.navigate('AdvancedSettings')}
-          >
-            <Text style={styles.btnText}>Advanced Settings (dev)</Text>
-          </TouchableOpacity>
-        </View>
 
         {/* App version */}
         <Text style={styles.versionText}>
-          Hosti-Stock v{Constants.expoConfig?.version ?? '—'}
+          Hosti {Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? '—'} ({Application.nativeBuildVersion ?? '—'})
         </Text>
 
-        {/* ─── OTA UPDATE STATE ─── */}
+        {/* ─── OTA UPDATE STATE (collapsible) ─── */}
         {/* Shows what expo-updates' own API reports — definitive device-side proof of whether
             OTA updates are actually applying. isEmbeddedLaunch=true on a device that should
             have received OTAs means updates are not landing despite EAS publishing correctly. */}
-        <View style={{ marginHorizontal: 4, marginTop: 8, marginBottom: 4, borderRadius: 10, borderWidth: 1, borderColor: themeColours.border, padding: 12, backgroundColor: themeColours.surface }}>
-          <Text style={{ fontSize: 10, fontWeight: '800', color: themeColours.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>OTA Update State</Text>
-          {[
-            { label: 'isEmbeddedLaunch', value: String(Updates.isEmbeddedLaunch) },
-            { label: 'channel', value: Updates.channel ?? '—' },
-            { label: 'runtimeVersion', value: Updates.runtimeVersion ?? '—' },
-            { label: 'updateId', value: Updates.updateId ?? 'none (embedded build)' },
-          ].map(({ label, value }) => (
-            <View key={label} style={{ flexDirection: 'row', marginBottom: 4, flexWrap: 'wrap', gap: 4 }}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, fontFamily: 'monospace', minWidth: 130 }}>{label}</Text>
-              <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace', flexShrink: 1 }}>{value}</Text>
-            </View>
-          ))}
+        <TouchableOpacity
+          onPress={() => setOtaExpanded(v => !v)}
+          style={{ marginHorizontal: 4, marginTop: 8, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: themeColours.border, backgroundColor: themeColours.surface }}
+        >
+          <Text style={{ fontSize: 11, color: themeColours.textSecondary }}>
+            Update details {otaExpanded ? '▴' : '▾'}
+          </Text>
+        </TouchableOpacity>
+        {otaExpanded && (
+          <View style={{ marginHorizontal: 4, marginBottom: 4, borderRadius: 10, borderWidth: 1, borderColor: themeColours.border, padding: 12, backgroundColor: themeColours.surface, borderTopWidth: 0, borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
+            <Text style={{ fontSize: 10, fontWeight: '800', color: themeColours.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>OTA Update State</Text>
+            {[
+              { label: 'isEmbeddedLaunch', value: String(Updates.isEmbeddedLaunch) },
+              { label: 'channel', value: Updates.channel ?? '—' },
+              { label: 'runtimeVersion', value: Updates.runtimeVersion ?? '—' },
+              { label: 'updateId', value: Updates.updateId ?? 'none (embedded build)' },
+            ].map(({ label, value }) => (
+              <View key={label} style={{ flexDirection: 'row', marginBottom: 4, flexWrap: 'wrap', gap: 4 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, fontFamily: 'monospace', minWidth: 130 }}>{label}</Text>
+                <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace', flexShrink: 1 }}>{value}</Text>
+              </View>
+            ))}
 
-          {/* OTA update log — expo-updates internal event log */}
-          <View style={{ borderTopWidth: 1, borderTopColor: themeColours.border, marginTop: 8, paddingTop: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '800', color: themeColours.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>Update Log</Text>
-            {otaLog === null ? (
-              <Text style={{ fontSize: 11, color: themeColours.textSecondary, fontFamily: 'monospace' }}>Loading…</Text>
-            ) : otaLog.length === 0 ? (
-              <Text style={{ fontSize: 11, color: themeColours.textSecondary, fontFamily: 'monospace' }}>No log entries</Text>
-            ) : (
-              <ScrollView style={{ maxHeight: 240 }} nestedScrollEnabled>
-                {otaLog.map((entry, i) => (
-                  <View key={i} style={{ marginBottom: 6 }}>
-                    <Text style={{ fontSize: 10, color: themeColours.textSecondary, fontFamily: 'monospace' }}>
-                      {new Date(entry.timestamp).toISOString()}{entry.code ? `  [${entry.code}]` : ''}{entry.level != null ? `  lvl:${entry.level}` : ''}
-                    </Text>
-                    <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace' }}>{entry.message}</Text>
-                  </View>
-                ))}
-              </ScrollView>
-            )}
+            {/* OTA update log — expo-updates internal event log */}
+            <View style={{ borderTopWidth: 1, borderTopColor: themeColours.border, marginTop: 8, paddingTop: 8 }}>
+              <Text style={{ fontSize: 10, fontWeight: '800', color: themeColours.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>Update Log</Text>
+              {otaLog === null ? (
+                <Text style={{ fontSize: 11, color: themeColours.textSecondary, fontFamily: 'monospace' }}>Loading…</Text>
+              ) : otaLog.length === 0 ? (
+                <Text style={{ fontSize: 11, color: themeColours.textSecondary, fontFamily: 'monospace' }}>No log entries</Text>
+              ) : (
+                <ScrollView style={{ maxHeight: 240 }} nestedScrollEnabled>
+                  {otaLog.map((entry, i) => (
+                    <View key={i} style={{ marginBottom: 6 }}>
+                      <Text style={{ fontSize: 10, color: themeColours.textSecondary, fontFamily: 'monospace' }}>
+                        {new Date(entry.timestamp).toISOString()}{entry.code ? `  [${entry.code}]` : ''}{entry.level != null ? `  lvl:${entry.level}` : ''}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace' }}>{entry.message}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
           </View>
-        </View>
+        )}
 
         {/* ─── DANGER ZONE ─── */}
         <View style={{ marginHorizontal: 4, marginTop: 16, marginBottom: 8, borderRadius: 12, borderWidth: 1.5, borderColor: '#dc2626', padding: 14 }}>

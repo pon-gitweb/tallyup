@@ -1,5 +1,6 @@
 // src/screens/stock/StockControlScreen.tsx
 import React, { useMemo, useEffect, useState, useCallback } from 'react';
+import { getParLevel } from '../../utils/productFields';
 import {
   View,
   Text,
@@ -50,9 +51,11 @@ type ResolverProduct = {
   name: string;
   supplierId: string | null;
   supplierName: string | null;
-  // completeness flags
+  // completeness flags (matches web-app rule: name, category, unit, packSize, supplier)
   missingSupplier: boolean;
-  missingPar: boolean;
+  missingName: boolean;
+  missingCategory: boolean;
+  missingUnit: boolean;
   missingCost: boolean;
   missingPackSize: boolean;
   // raw values for editor
@@ -90,6 +93,7 @@ export default function StockControlScreen() {
   const [resolverLoading, setResolverLoading] = useState(false);
   const [resolverProducts, setResolverProducts] = useState<ResolverProduct[]>([]);
   const [resolverCount, setResolverCount] = useState<number | null>(null);
+  const [noParCount, setNoParCount] = useState<number | null>(null);
   const [resolverSuppliers, setResolverSuppliers] = useState<ResolverSupplier[]>([]);
   const [resolverSuppliersLoading, setResolverSuppliersLoading] = useState(false);
   const [resolverAssigningId, setResolverAssigningId] = useState<string | null>(null);
@@ -145,25 +149,29 @@ export default function StockControlScreen() {
     }
   }, [venueId, user?.uid, user?.email]);
 
-  // Load products that need setup (supplier / par / price / pack)
+  // Load products that need setup (web-app completeness rule: name, category, unit, packSize, supplier)
+  // PAR is NOT part of completeness — it is tracked separately as noParCount.
   const loadResolverProducts = useCallback(async () => {
     if (!venueId) {
       setResolverProducts([]);
       setResolverLoading(false);
       setResolverCount(0);
+      setNoParCount(0);
       return;
     }
     setResolverLoading(true);
     try {
       const snap = await getDocs(collection(db, 'venues', venueId, 'products'));
       const rows: ResolverProduct[] = [];
+      let noPar = 0;
+
       snap.forEach((d) => {
         const v: any = d.data() || {};
         const sid = v?.supplierId || v?.supplier?.id || null;
         const sname = v?.supplierName || v?.supplier?.name || null;
 
-        const rawPar = Number(v?.par);
-        const par = Number.isFinite(rawPar) ? rawPar : null;
+        const par = getParLevel(v);
+        if (par == null) noPar++;
 
         const rawPack = Number(v?.packSize);
         const packSize = Number.isFinite(rawPack) ? rawPack : null;
@@ -180,23 +188,26 @@ export default function StockControlScreen() {
           ? rawPrice
           : null;
 
-        const missingSupplier = !sid;
-        const missingPar = !Number.isFinite(rawPar) || rawPar <= 0;
-        const missingCost = !Number.isFinite(costPrice) || costPrice <= 0;
+        // Web-app completeness rule: name, category, unit, packSize, supplier (not 'Unassigned')
+        const rawName = typeof v?.name === 'string' ? v.name.trim() : '';
+        const missingName = !rawName;
+        const missingCategory = !v?.category;
+        const missingUnit = !v?.unit;
         const missingPackSize = !Number.isFinite(rawPack) || rawPack <= 0;
+        const missingSupplier = !sid || sname === 'Unassigned';
+        const missingCost = !Number.isFinite(costPrice) || costPrice <= 0;
 
-        // Core completeness: supplier, PAR, price.
-        if (missingSupplier || missingPar || missingCost) {
+        // Incomplete by web-app rule
+        if (missingName || missingCategory || missingUnit || missingPackSize || missingSupplier) {
           rows.push({
             id: d.id,
-            name:
-              typeof v?.name === 'string' && v.name.trim().length
-                ? v.name
-                : String(d.id),
+            name: rawName || String(d.id),
             supplierId: sid,
             supplierName: sname ?? null,
+            missingName,
             missingSupplier,
-            missingPar,
+            missingCategory,
+            missingUnit,
             missingCost,
             missingPackSize,
             par,
@@ -208,10 +219,12 @@ export default function StockControlScreen() {
       rows.sort((a, b) => a.name.localeCompare(b.name));
       setResolverProducts(rows);
       setResolverCount(rows.length);
+      setNoParCount(noPar);
     } catch (e: any) {
       showError(e?.message || 'Could not load products needing setup.');
       setResolverProducts([]);
       setResolverCount(0);
+      setNoParCount(null);
     } finally {
       setResolverLoading(false);
     }
@@ -354,8 +367,10 @@ export default function StockControlScreen() {
 
       if (parNum != null && Number.isFinite(parNum) && parNum > 0) {
         update.par = parNum;
+        update.parLevel = parNum;
       } else {
         update.par = null;
+        update.parLevel = null;
       }
 
       if (costNum != null && Number.isFinite(costNum) && costNum >= 0) {
@@ -386,15 +401,16 @@ export default function StockControlScreen() {
     const assigning = resolverAssigningId === item.id;
 
     const missingLabels: string[] = [];
-    if (item.missingSupplier) missingLabels.push('Supplier');
-    if (item.missingPar) missingLabels.push('PAR');
-    if (item.missingCost) missingLabels.push('Price');
+    if (item.missingName) missingLabels.push('Name');
+    if (item.missingCategory) missingLabels.push('Category');
+    if (item.missingUnit) missingLabels.push('Unit');
     if (item.missingPackSize) missingLabels.push('Pack size');
+    if (item.missingSupplier) missingLabels.push('Supplier');
 
     const subtitle =
       missingLabels.length > 0
         ? `Missing: ${missingLabels.join(', ')}`
-        : 'Ready for suggestions';
+        : 'Ready';
 
     return (
       <View style={styles.resRow}>
@@ -652,6 +668,19 @@ export default function StockControlScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+          {/* Header info with noParCount */}
+          {!resolverLoading && (
+            <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 }}>
+              <Text style={{ fontSize: 14, color: '#111827', fontWeight: '700' }}>
+                Products needing setup ({resolverCount ?? 0})
+              </Text>
+              {noParCount != null && noParCount > 0 && (
+                <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
+                  No PAR set: {noParCount} (only needed for Suggested Orders)
+                </Text>
+              )}
+            </View>
+          )}
           {resolverLoading ? (
             <View style={{ padding: 20, alignItems: 'center' }}>
               <ActivityIndicator />
@@ -660,7 +689,7 @@ export default function StockControlScreen() {
           ) : resolverProducts.length === 0 ? (
             <View style={{ padding: 20 }}>
               <Text style={{ color: '#6B7280' }}>
-                All products meet the minimum setup (supplier, PAR and price). Any
+                All products have name, category, unit, pack size and supplier set. Any
                 newly added items with missing details will appear here until fixed.
               </Text>
             </View>

@@ -447,6 +447,8 @@ export default function ProfitInsightsScreen() {
                     targetDaysOfCover={key === 'inventoryHealth' ? health.targetDaysOfCover : undefined}
                     orderingWeight={key === 'orderingIntelligence' ? health.orderingIntelligenceWeight : undefined}
                     stockAccuracyNullReason={key === 'stockAccuracy' ? (health.kpis as any).stockAccuracyNullReason : undefined}
+                    orderingReason={key === 'orderingIntelligence' ? (health as any).orderingIntelligenceReason : undefined}
+                    invoiceSummary={key === 'orderingIntelligence' ? (health as any).invoicePurchasingSummary : undefined}
                     externalExpanded={expandedKpi === key}
                   />
                 </View>
@@ -627,11 +629,12 @@ function InsightCard({
 
 function KpiCard({
   c, theme, kpiKey, score, daysOfCover, usedInvoiceData, targetDaysOfCover, orderingWeight,
-  stockAccuracyNullReason, externalExpanded,
+  stockAccuracyNullReason, externalExpanded, orderingReason, invoiceSummary,
 }: {
   c: any; theme: any; kpiKey: string; score: number | null; daysOfCover?: number | null; usedInvoiceData?: boolean;
   targetDaysOfCover?: number; orderingWeight?: number;
   stockAccuracyNullReason?: 'limited_baseline' | null; externalExpanded?: boolean;
+  orderingReason?: string | null; invoiceSummary?: { invoiceCount: number; supplierCount: number; total: number } | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { if (externalExpanded) setExpanded(true); }, [externalExpanded]);
@@ -640,7 +643,9 @@ function KpiCard({
 
   const nullStatusLabel = kpiKey === 'stockAccuracy' && stockAccuracyNullReason === 'limited_baseline'
     ? 'Limited data'
-    : meta.nullStatus;
+    : kpiKey === 'orderingIntelligence' && orderingReason === 'no_hosti_orders'
+      ? 'Not scored yet'
+      : meta.nullStatus;
 
   return (
     <TouchableOpacity
@@ -673,20 +678,37 @@ function KpiCard({
         {expanded ? 'Hide calculation ▲' : 'How is this calculated? ▼'}
       </Text>
       {expanded && (
-        <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17, marginTop: 6 }}>
-          {meta.calc}
-          {kpiKey === 'stockAccuracy' && stockAccuracyNullReason === 'limited_baseline'
-            ? ' Limited data — several items had no previous count.'
-            : ''}
-          {kpiKey === 'inventoryHealth' && usedInvoiceData != null
-            ? usedInvoiceData
-              ? ' Calculated using your actual invoice data for this cycle.'
-              : ' Estimated — scan your invoices to improve this calculation.'
-            : ''}
-          {kpiKey === 'orderingIntelligence' && orderingWeight != null
-            ? ` Weight increases as suggestion confidence improves — currently weighted at ${Math.round(orderingWeight * 100)}% (increases to 15% at 6+ stocktakes as velocity data becomes reliable).`
-            : ''}
-        </Text>
+        <View style={{ marginTop: 6 }}>
+          <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17 }}>
+            {meta.calc}
+            {kpiKey === 'stockAccuracy' && stockAccuracyNullReason === 'limited_baseline'
+              ? ' Limited data — several items had no previous count.'
+              : ''}
+            {kpiKey === 'inventoryHealth' && usedInvoiceData != null
+              ? usedInvoiceData
+                ? ' Calculated using your actual invoice data for this cycle.'
+                : ' Estimated — scan your invoices to improve this calculation.'
+              : ''}
+            {kpiKey === 'orderingIntelligence' && orderingWeight != null
+              ? ` Weight increases as suggestion confidence improves — currently weighted at ${Math.round(orderingWeight * 100)}% (increases to 15% at 6+ stocktakes as velocity data becomes reliable).`
+              : ''}
+          </Text>
+          {kpiKey === 'orderingIntelligence' && orderingReason === 'no_hosti_orders' && (
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17, marginBottom: 6 }}>
+                Your orders are placed outside Hosti, so there&apos;s nothing to compare against our suggestions yet.
+              </Text>
+              {invoiceSummary && invoiceSummary.invoiceCount > 0 && (
+                <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17, marginBottom: 6 }}>
+                  In the meantime, here&apos;s what your scanned invoices show: ${Math.round(invoiceSummary.total).toLocaleString()} across {invoiceSummary.supplierCount} supplier{invoiceSummary.supplierCount !== 1 ? 's' : ''} in the last 90 days (from {invoiceSummary.invoiceCount} scanned invoice{invoiceSummary.invoiceCount !== 1 ? 's' : ''}).
+                </Text>
+              )}
+              <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17 }}>
+                Placing orders through Suggested Orders lets Hosti check them against what you actually needed.
+              </Text>
+            </View>
+          )}
+        </View>
       )}
     </TouchableOpacity>
   );
