@@ -1,5 +1,4 @@
-// @ts-nocheck
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator, ScrollView, StyleSheet, Text,
   TextInput, TouchableOpacity, View,
@@ -13,6 +12,14 @@ import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { calculateVelocity, VelocityData } from '../../services/reports/velocityService';
 import { loadSnapshotItems } from '../../utils/snapshotItems';
+import {
+  buildVelocityRowsFromReports,
+  matchDocToMatchData,
+  partitionReports,
+  toNZDate,
+  VelocityRow,
+  type MatchData,
+} from '../../utils/weeklyLedger';
 
 function fmtNum(n: number, dp = 1) { return n.toFixed(dp); }
 function fmtDollars(n: number) { return n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${n.toFixed(0)}`; }
@@ -22,12 +29,14 @@ const STATUS_COLOURS: Record<string, string> = {
   healthy: '#60A5FA',
   slow: '#F59E0B',
   stagnant: '#F87171',
+  sold_out: '#94A3B8',
 };
 const STATUS_LABELS: Record<string, string> = {
   fast: 'FAST',
   healthy: 'HEALTHY',
   slow: 'SLOW',
   stagnant: 'STAGNANT',
+  sold_out: 'SOLD OUT',
 };
 
 const FILTER_PILLS = [
@@ -51,12 +60,76 @@ const SORT_OPTIONS = [
   { id: 'par', label: 'PAR gap' },
 ];
 
+type DisplayItem = {
+  productId: string;
+  productName: string;
+  status: string;
+  unitsPerWeek: number | null;
+  last4Units: number | null;
+  categoryName?: string | null;
+  areaName?: string | null;
+  currentStock?: number | null;
+  parLevel?: number | null;
+  suggestedPAR?: number | null;
+  parAdequacy?: string | null;
+  daysToSellThrough?: number | null;
+  deadStockCostPerMonth?: number | null;
+  expiryRisk?: boolean;
+  daysToExpiry?: number | null;
+  expiryRiskDays?: number | null;
+  trend?: string | null;
+  trendPercent?: number | null;
+  confidence?: string;
+  cyclesAnalysed?: number;
+  needsMoreData?: boolean;
+  salesLed: boolean;
+};
+
+function velocityDataToDisplay(v: VelocityData): DisplayItem {
+  return {
+    productId: v.productId,
+    productName: v.productName,
+    status: v.status,
+    unitsPerWeek: v.unitsPerWeek,
+    last4Units: null,
+    categoryName: v.categoryName,
+    areaName: v.areaName,
+    currentStock: v.currentStock,
+    parLevel: v.parLevel,
+    suggestedPAR: v.suggestedPAR,
+    parAdequacy: v.parAdequacy,
+    daysToSellThrough: v.daysToSellThrough,
+    deadStockCostPerMonth: v.deadStockCostPerMonth,
+    expiryRisk: v.expiryRisk,
+    daysToExpiry: v.daysToExpiry,
+    expiryRiskDays: v.expiryRiskDays,
+    trend: v.trend,
+    trendPercent: v.trendPercent,
+    confidence: v.confidence,
+    cyclesAnalysed: v.cyclesAnalysed,
+    needsMoreData: v.needsMoreData,
+    salesLed: false,
+  };
+}
+
+function velocityRowToDisplay(row: VelocityRow, mappedStatus: string): DisplayItem {
+  return {
+    productId: row.productId,
+    productName: row.name,
+    status: mappedStatus,
+    unitsPerWeek: row.last4Units > 0 ? row.last4Units / 4 : 0,
+    last4Units: row.last4Units,
+    currentStock: row.latestStock,
+    salesLed: true,
+  };
+}
+
 export default function ProductPerformanceScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
 
   const [loading, setLoading] = useState(true);
-  const [velocityMap, setVelocityMap] = useState<Map<string, VelocityData>>(new Map());
+  const [items, setItems] = useState<DisplayItem[]>([]);
   const [cyclesAnalysed, setCyclesAnalysed] = useState(0);
   const [dateRange, setDateRange] = useState<{ first: string; last: string } | null>(null);
   const [filter, setFilter] = useState('all');
@@ -64,49 +137,122 @@ export default function ProductPerformanceScreen() {
   const [search, setSearch] = useState('');
   const [recsOpen, setRecsOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [salesBanner, setSalesBanner] = useState<{ weeksCovered: number; unitCoveragePct: number } | null>(null);
 
   useEffect(() => {
     if (!venueId) { setLoading(false); return; }
     let cancelled = false;
     (async () => {
       try {
-        const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-        const allSnapshots: any[] = [];
-        for (const deptDoc of deptsSnap.docs) {
-          try {
-            const snapSnap = await getDocs(
-              query(
-                collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
-                orderBy('completedAt', 'desc'),
-                limit(6),
-              ),
-            );
-            for (const snapDoc of snapSnap.docs) {
-              const d = snapDoc.data() as any;
-              const items = await loadSnapshotItems(d, () =>
-                getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots', snapDoc.id, 'itemChunks')).then(s =>
-                  s.docs.map(dd => dd.data() as { index: number; items: any[] })
-                )
+        // ── Try sales-led path first ───────────────────────────────────────────
+        let usedSalesPath = false;
+        try {
+          const reportsSnap = await getDocs(collection(db, 'venues', venueId, 'salesReports'));
+          const { reports: activeReports } = partitionReports(reportsSnap.docs as any);
+
+          if (activeReports.length > 0) {
+            // Load match docs for active reports
+            const matchesByReport: Record<string, MatchData | null> = {};
+            await Promise.all(activeReports.map(async r => {
+              try {
+                const matchSnap = await getDocs(collection(db, 'venues', venueId, 'salesReportMatches'));
+                const doc = matchSnap.docs.find(d => d.id === r.id);
+                matchesByReport[r.id] = doc ? matchDocToMatchData(doc.data() as Record<string, any>) : null;
+              } catch {
+                matchesByReport[r.id] = null;
+              }
+            }));
+
+            const hasAnyMatch = activeReports.some(r => matchesByReport[r.id] != null);
+            if (hasAnyMatch) {
+              const todayNZ = toNZDate(new Date()) ?? new Date().toISOString().slice(0, 10);
+              const { rows, windowInfo } = buildVelocityRowsFromReports(
+                activeReports, matchesByReport, {}, todayNZ,
               );
-              allSnapshots.push({ ...d, items });
+
+              if (rows.length > 0) {
+                // Remap status: Fast=top 20% by last4Units (Selling), Healthy=other Selling,
+                // Slow=Slowing, Stagnant=Stagnant, sold_out=Sold out
+                const sellingRows = rows.filter(r => r.status === 'Selling').sort((a, b) => b.last4Units - a.last4Units);
+                const top20Cutoff = Math.max(1, Math.ceil(sellingRows.length * 0.2));
+                const fastIds = new Set(sellingRows.slice(0, top20Cutoff).map(r => r.productId));
+
+                const displayItems = rows.map(row => {
+                  let mapped: string;
+                  if (row.status === 'Sold out') mapped = 'sold_out';
+                  else if (row.status === 'Stagnant') mapped = 'stagnant';
+                  else if (row.status === 'Slowing') mapped = 'slow';
+                  else if (row.status === 'Selling') mapped = fastIds.has(row.productId) ? 'fast' : 'healthy';
+                  else mapped = 'healthy';
+                  return velocityRowToDisplay(row, mapped);
+                });
+
+                // Banner: weeks covered + unit match coverage
+                const weeksSet = new Set<string>();
+                let totalQty = 0, matchedQty = 0;
+                for (const r of activeReports) {
+                  const md = matchesByReport[r.id];
+                  if (!md || !r.startStr || !r.endStr) continue;
+                  // Count weeks
+                  let cur = new Date(r.startStr + 'T00:00:00Z');
+                  const end = new Date(r.endStr + 'T00:00:00Z');
+                  while (cur <= end) {
+                    weeksSet.add(cur.toISOString().slice(0, 10).slice(0, 7));
+                    cur = new Date(cur.getTime() + 86400000 * 7);
+                  }
+                  // Count units
+                  for (const line of r.rawLines) totalQty += line.qtySold ?? 0;
+                  matchedQty += md.matchedQty;
+                }
+                const unitCoveragePct = totalQty > 0 ? Math.round((matchedQty / totalQty) * 100) : 0;
+                setSalesBanner({ weeksCovered: weeksSet.size, unitCoveragePct });
+
+                if (!cancelled) {
+                  setItems(displayItems);
+                  usedSalesPath = true;
+                }
+              }
             }
-          } catch {}
-        }
+          }
+        } catch {}
+
         if (cancelled) return;
-        const vMap = calculateVelocity(allSnapshots);
-        setVelocityMap(vMap);
-        // Determine cycle count and date range
-        const maxCycles = allSnapshots.length > 0
-          ? Math.max(...Array.from(vMap.values()).map(v => v.cyclesAnalysed), 0)
-          : 0;
-        setCyclesAnalysed(maxCycles);
-        if (allSnapshots.length > 0) {
-          const dates = allSnapshots
-            .map(s => s.completedAt?.toDate?.()?.toISOString?.()?.slice(0, 10))
-            .filter(Boolean)
-            .sort();
-          if (dates.length > 0) {
-            setDateRange({ first: dates[0], last: dates[dates.length - 1] });
+
+        // ── Count-based fallback ───────────────────────────────────────────────
+        if (!usedSalesPath) {
+          const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+          const allSnapshots: any[] = [];
+          for (const deptDoc of deptsSnap.docs) {
+            try {
+              const snapSnap = await getDocs(
+                query(
+                  collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+                  orderBy('completedAt', 'desc'),
+                  limit(6),
+                ),
+              );
+              for (const snapDoc of snapSnap.docs) {
+                const d = snapDoc.data() as any;
+                const snapItems = await loadSnapshotItems(d, () =>
+                  getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots', snapDoc.id, 'itemChunks')).then(s =>
+                    s.docs.map(dd => dd.data() as { index: number; items: any[] })
+                  )
+                );
+                allSnapshots.push({ ...d, items: snapItems });
+              }
+            } catch {}
+          }
+          if (cancelled) return;
+          const vMap = calculateVelocity(allSnapshots);
+          setItems(Array.from(vMap.values()).map(velocityDataToDisplay));
+          const maxCycles = allSnapshots.length > 0
+            ? Math.max(...Array.from(vMap.values()).map(v => v.cyclesAnalysed), 0) : 0;
+          setCyclesAnalysed(maxCycles);
+          if (allSnapshots.length > 0) {
+            const dates = allSnapshots
+              .map(s => s.completedAt?.toDate?.()?.toISOString?.()?.slice(0, 10))
+              .filter(Boolean).sort();
+            if (dates.length > 0) setDateRange({ first: dates[0], last: dates[dates.length - 1] });
           }
         }
       } catch {}
@@ -115,87 +261,85 @@ export default function ProductPerformanceScreen() {
     return () => { cancelled = true; };
   }, [venueId]);
 
-  const allItems = useMemo(() => Array.from(velocityMap.values()), [velocityMap]);
-
   const filtered = useMemo(() => {
-    let items = allItems;
+    let list = items;
     const needle = search.trim().toLowerCase();
-    if (needle) items = items.filter(v => v.productName.toLowerCase().includes(needle));
+    if (needle) list = list.filter(v => v.productName.toLowerCase().includes(needle));
     switch (filter) {
-      case 'fast':      items = items.filter(v => v.status === 'fast'); break;
-      case 'healthy':   items = items.filter(v => v.status === 'healthy'); break;
-      case 'slow':      items = items.filter(v => v.status === 'slow'); break;
-      case 'stagnant':  items = items.filter(v => v.status === 'stagnant'); break;
-      case 'expiry':    items = items.filter(v => v.expiryRisk); break;
-      case 'below_par': items = items.filter(v => v.parLevel != null && v.currentStock < v.parLevel); break;
-      case 'par_high':  items = items.filter(v => v.parAdequacy === 'too_high'); break;
-      case 'rising':    items = items.filter(v => v.trend === 'rising'); break;
-      case 'falling':   items = items.filter(v => v.trend === 'falling'); break;
+      case 'fast':      list = list.filter(v => v.status === 'fast'); break;
+      case 'healthy':   list = list.filter(v => v.status === 'healthy'); break;
+      case 'slow':      list = list.filter(v => v.status === 'slow'); break;
+      case 'stagnant':  list = list.filter(v => v.status === 'stagnant'); break;
+      case 'expiry':    list = list.filter(v => v.expiryRisk); break;
+      case 'below_par': list = list.filter(v => v.parLevel != null && (v.currentStock ?? 0) < (v.parLevel ?? 0)); break;
+      case 'par_high':  list = list.filter(v => v.parAdequacy === 'too_high'); break;
+      case 'rising':    list = list.filter(v => v.trend === 'rising'); break;
+      case 'falling':   list = list.filter(v => v.trend === 'falling'); break;
     }
     switch (sort) {
-      case 'velocity': items = [...items].sort((a, b) => b.unitsPerWeek - a.unitsPerWeek); break;
-      case 'az':       items = [...items].sort((a, b) => a.productName.localeCompare(b.productName)); break;
-      case 'shelf':    items = [...items].sort((a, b) => (b.daysToSellThrough ?? 0) - (a.daysToSellThrough ?? 0)); break;
-      case 'cost':     items = [...items].sort((a, b) => (b.deadStockCostPerMonth ?? 0) - (a.deadStockCostPerMonth ?? 0)); break;
-      case 'par':      items = [...items].sort((a, b) => {
+      case 'velocity': list = [...list].sort((a, b) => (b.unitsPerWeek ?? 0) - (a.unitsPerWeek ?? 0)); break;
+      case 'az':       list = [...list].sort((a, b) => a.productName.localeCompare(b.productName)); break;
+      case 'shelf':    list = [...list].sort((a, b) => (b.daysToSellThrough ?? 0) - (a.daysToSellThrough ?? 0)); break;
+      case 'cost':     list = [...list].sort((a, b) => (b.deadStockCostPerMonth ?? 0) - (a.deadStockCostPerMonth ?? 0)); break;
+      case 'par':      list = [...list].sort((a, b) => {
         const ag = Math.abs((a.parLevel ?? 0) - (a.suggestedPAR ?? a.parLevel ?? 0));
         const bg = Math.abs((b.parLevel ?? 0) - (b.suggestedPAR ?? b.parLevel ?? 0));
         return bg - ag;
       }); break;
     }
-    return items;
-  }, [allItems, filter, sort, search]);
+    return list;
+  }, [items, filter, sort, search]);
 
   // Summary counts
   const counts = useMemo(() => ({
-    fast: allItems.filter(v => v.status === 'fast').length,
-    healthy: allItems.filter(v => v.status === 'healthy').length,
-    slow: allItems.filter(v => v.status === 'slow').length,
-    stagnant: allItems.filter(v => v.status === 'stagnant').length,
-    expiry: allItems.filter(v => v.expiryRisk).length,
-    belowPar: allItems.filter(v => v.parLevel != null && v.currentStock < v.parLevel).length,
-  }), [allItems]);
+    fast: items.filter(v => v.status === 'fast').length,
+    healthy: items.filter(v => v.status === 'healthy').length,
+    slow: items.filter(v => v.status === 'slow').length,
+    stagnant: items.filter(v => v.status === 'stagnant').length,
+    expiry: items.filter(v => v.expiryRisk).length,
+    belowPar: items.filter(v => v.parLevel != null && (v.currentStock ?? 0) < (v.parLevel ?? 0)).length,
+  }), [items]);
 
-  // Recommendations
+  // Recommendations (count-based path only — sales-led has no PAR/expiry data yet)
   const recommendations = useMemo(() => {
     const recs: string[] = [];
-    const parIncrease = allItems.filter(v => v.parAdequacy === 'too_low' && v.suggestedPAR != null)
-      .sort((a, b) => b.unitsPerWeek - a.unitsPerWeek).slice(0, 3);
-    const parDecrease = allItems.filter(v => v.parAdequacy === 'too_high' && v.suggestedPAR != null)
-      .sort((a, b) => a.unitsPerWeek - b.unitsPerWeek).slice(0, 3);
-    const delist = allItems.filter(v => v.status === 'stagnant' && v.deadStockCostPerMonth != null && v.deadStockCostPerMonth > 10)
+    const parIncrease = items.filter(v => !v.salesLed && v.parAdequacy === 'too_low' && v.suggestedPAR != null)
+      .sort((a, b) => (b.unitsPerWeek ?? 0) - (a.unitsPerWeek ?? 0)).slice(0, 3);
+    const parDecrease = items.filter(v => !v.salesLed && v.parAdequacy === 'too_high' && v.suggestedPAR != null)
+      .sort((a, b) => (a.unitsPerWeek ?? 0) - (b.unitsPerWeek ?? 0)).slice(0, 3);
+    const delist = items.filter(v => !v.salesLed && v.status === 'stagnant' && v.deadStockCostPerMonth != null && v.deadStockCostPerMonth > 10)
       .sort((a, b) => (b.deadStockCostPerMonth ?? 0) - (a.deadStockCostPerMonth ?? 0)).slice(0, 3);
-    const expiryRisk = allItems.filter(v => v.expiryRisk);
+    const expiryRisk = items.filter(v => v.expiryRisk);
 
     if (parIncrease.length > 0) {
       recs.push('INCREASE PAR:');
-      parIncrease.forEach(v => recs.push(`  • ${v.productName} — ${fmtNum(v.unitsPerWeek)}/week, PAR ${v.parLevel}. Consider increasing to ${v.suggestedPAR}`));
+      parIncrease.forEach(v => recs.push(`  • ${v.productName} — ${fmtNum(v.unitsPerWeek ?? 0)}/week, PAR ${v.parLevel}. Consider increasing to ${v.suggestedPAR}`));
     }
     if (parDecrease.length > 0) {
       recs.push('REDUCE PAR:');
-      parDecrease.forEach(v => recs.push(`  • ${v.productName} — ${fmtNum(v.unitsPerWeek)}/week, PAR ${v.parLevel}. Consider reducing to ${v.suggestedPAR}`));
+      parDecrease.forEach(v => recs.push(`  • ${v.productName} — ${fmtNum(v.unitsPerWeek ?? 0)}/week, PAR ${v.parLevel}. Consider reducing to ${v.suggestedPAR}`));
     }
     if (delist.length > 0) {
       recs.push('CONSIDER DELISTING:');
-      delist.forEach(v => recs.push(`  • ${v.productName} — ${fmtNum(v.unitsPerWeek)}/week, ${fmtDollars(v.deadStockCostPerMonth!)}/month dead stock cost`));
+      delist.forEach(v => recs.push(`  • ${v.productName} — ${fmtNum(v.unitsPerWeek ?? 0)}/week, ${fmtDollars(v.deadStockCostPerMonth!)}/month dead stock cost`));
     }
     if (expiryRisk.length > 0) {
       recs.push('EXPIRY RISK:');
       expiryRisk.forEach(v => recs.push(`  • ${v.productName} — expires in ${v.daysToExpiry} days, ${v.daysToSellThrough} days to sell through`));
     }
-    const rising = allItems.filter(v => v.trend === 'rising').slice(0, 2);
+    const rising = items.filter(v => v.trend === 'rising').slice(0, 2);
     if (rising.length > 0) {
       recs.push('REVIEW ORDERING (rising demand):');
       rising.forEach(v => recs.push(`  • ${v.productName} — velocity rising ${v.trendPercent}% over last cycles`));
     }
     return recs;
-  }, [allItems]);
+  }, [items]);
 
   async function handleExportCSV() {
     try {
       setExporting(true);
       const header = 'Product,Category,Area,Velocity/Week,Trend,Status,Current Stock,Days to Sell,PAR Level,Suggested PAR,Expiry Date,Expiry Risk,Cost Price,Dead Stock Cost/Month,Confidence,Cycles\n';
-      const rows = allItems.map(v => [
+      const rows = items.map(v => [
         `"${v.productName}"`,
         `"${v.categoryName ?? ''}"`,
         `"${v.areaName ?? ''}"`,
@@ -206,7 +350,6 @@ export default function ProductPerformanceScreen() {
         v.daysToSellThrough ?? '',
         v.parLevel ?? '',
         v.suggestedPAR ?? '',
-        v.expiryDate ? v.expiryDate.toISOString().slice(0, 10) : '',
         v.expiryRisk ? 'YES' : 'NO',
         v.deadStockCostPerMonth != null ? fmtNum(v.deadStockCostPerMonth, 2) : '',
         v.confidence,
@@ -223,7 +366,7 @@ export default function ProductPerformanceScreen() {
   async function handleExportPDF() {
     try {
       setExporting(true);
-      const rows = allItems.map(v => `
+      const rows = items.map(v => `
         <tr>
           <td>${v.productName}</td>
           <td>${v.categoryName ?? '–'}</td>
@@ -271,7 +414,7 @@ export default function ProductPerformanceScreen() {
     );
   }
 
-  if (velocityMap.size === 0) {
+  if (items.length === 0) {
     return (
       <View style={S.centred}>
         <Text style={S.emptyTitle}>No data yet</Text>
@@ -286,10 +429,19 @@ export default function ProductPerformanceScreen() {
         {/* Header */}
         <View style={S.header}>
           <Text style={S.title}>Product Performance</Text>
-          <Text style={S.subtitle}>
-            Based on {cyclesAnalysed} stocktake cycle{cyclesAnalysed !== 1 ? 's' : ''}
-            {dateRange ? ` · ${dateRange.first} → ${dateRange.last}` : ''}
-          </Text>
+          {salesBanner ? (
+            <View style={S.salesBanner}>
+              <Text style={S.salesBannerText}>
+                From imported sales reports · {salesBanner.weeksCovered} week{salesBanner.weeksCovered !== 1 ? 's' : ''} covered · {salesBanner.unitCoveragePct}% of sold units linked to products
+              </Text>
+            </View>
+          ) : (
+            <Text style={S.subtitle}>
+              Based on stocktake counts only
+              {cyclesAnalysed > 0 ? ` · ${cyclesAnalysed} cycle${cyclesAnalysed !== 1 ? 's' : ''}` : ''}
+              {dateRange ? ` · ${dateRange.first} → ${dateRange.last}` : ''}
+            </Text>
+          )}
         </View>
 
         {/* Summary cards */}
@@ -404,9 +556,9 @@ export default function ProductPerformanceScreen() {
   );
 }
 
-function ProductRow({ v }: { v: VelocityData }) {
+function ProductRow({ v }: { v: DisplayItem }) {
   const statusColor = STATUS_COLOURS[v.status] ?? '#94A3B8';
-  const belowPar = v.parLevel != null && v.currentStock < v.parLevel;
+  const belowPar = v.parLevel != null && (v.currentStock ?? 0) < v.parLevel;
 
   return (
     <View style={S.productCard}>
@@ -421,23 +573,28 @@ function ProductRow({ v }: { v: VelocityData }) {
           )}
         </View>
         <View style={[S.statusBadge, { backgroundColor: statusColor + '22', borderColor: statusColor }]}>
-          <Text style={[S.statusText, { color: statusColor }]}>{STATUS_LABELS[v.status]}</Text>
+          <Text style={[S.statusText, { color: statusColor }]}>{STATUS_LABELS[v.status] ?? v.status.toUpperCase()}</Text>
         </View>
       </View>
 
       {/* Velocity row */}
       <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
         <Text style={S.metricText}>
-          {v.needsMoreData ? 'Need more data' : v.unitsPerWeek > 0 ? `${fmtNum(v.unitsPerWeek)}/week` : 'No movement'}
-          {!v.needsMoreData && v.trend !== 'stable' ? ` ${v.trend === 'rising' ? '↑' : '↓'} ${Math.abs(v.trendPercent)}%` : ''}
+          {v.needsMoreData ? 'Need more data'
+            : (v.unitsPerWeek ?? 0) > 0 ? `${fmtNum(v.unitsPerWeek ?? 0)}/week`
+            : 'No movement'}
+          {!v.salesLed && !v.needsMoreData && v.trend && v.trend !== 'stable'
+            ? ` ${v.trend === 'rising' ? '↑' : '↓'} ${Math.abs(v.trendPercent ?? 0)}%` : ''}
         </Text>
-        <Text style={S.metricText}>Stock: {v.currentStock}</Text>
+        {v.currentStock != null && <Text style={S.metricText}>Stock: {v.currentStock}</Text>}
         {v.daysToSellThrough != null && (
           <Text style={S.metricText}>{v.daysToSellThrough}d to sell</Text>
         )}
-        <Text style={[S.metricText, { color: '#475569' }]}>
-          {v.confidence.charAt(0).toUpperCase() + v.confidence.slice(1)} ({v.cyclesAnalysed} cycles)
-        </Text>
+        {!v.salesLed && v.confidence && (
+          <Text style={[S.metricText, { color: '#475569' }]}>
+            {v.confidence.charAt(0).toUpperCase() + v.confidence.slice(1)} ({v.cyclesAnalysed} cycles)
+          </Text>
+        )}
       </View>
 
       {/* PAR */}
@@ -480,6 +637,15 @@ const S = StyleSheet.create({
   header: { padding: 16, paddingBottom: 8 },
   title: { color: '#F9FAFB', fontSize: 20, fontWeight: '800' },
   subtitle: { color: '#64748B', fontSize: 12, marginTop: 2 },
+  salesBanner: {
+    marginTop: 6,
+    backgroundColor: '#0F2A1E',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#166534',
+  },
+  salesBannerText: { color: '#4ADE80', fontSize: 12 },
 
   summaryCard: {
     backgroundColor: '#161B2A',

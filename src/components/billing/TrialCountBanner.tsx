@@ -8,7 +8,7 @@ export function TrialCountBanner() {
   const { trialState, billingState, enforceReadOnly, ready } = useVenue();
   const insets = useSafeAreaInsets();
 
-  // Hidden on iOS — trial/pricing info must not appear (Apple guideline 3.1.1)
+  // Hidden on iOS — trial info must not appear (Apple guideline 3.1.1)
   if (!canSelfRegister) return null;
   if (!enforceReadOnly || !ready) return null;
   if (!trialState || trialState.status !== 'active') return null;

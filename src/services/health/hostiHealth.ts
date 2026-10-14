@@ -44,13 +44,15 @@ export interface HostiHealthStage3 {
   estimatedImpact: number | null;  // dollars recovered this cycle, null if no cost prices
   kpis: {
     stockAccuracy: number | null;    // 0–100 or null if no data
-    stockAccuracyNullReason?: 'limited_baseline' | null;
+    stockAccuracyNullReason?: 'limited_baseline' | 'no_usage_data' | null;
     labourEfficiency: number | null; // 0–100 or null if no hourlyRate or no segments
     inventoryHealth: number | null;  // 0–100 or null if < 2 monthly snapshots
     orderingIntelligence: number | null; // 0–100 or null if < 3 cycles
     wasteControl: number | null;     // Stock Integrity (no POS) or Waste Control (POS connected)
     wasteControlMode: 'stock_integrity' | 'waste_control' | null;
     wasteControlLabel: string | null; // human-readable mode description
+    wasteControlNullReason?: 'limited_sales_match' | null;
+    wasteControlMatchCoveragePct?: number | null;
   };
   orderingIntelligenceReason?: 'needs_stocktakes' | 'no_hosti_orders' | null;
   invoicePurchasingSummary?: {
@@ -196,6 +198,7 @@ async function calculateFullScore(
   let pricedItemPercentCount = 0;
   let totalBaselineItems = 0;
   let totalCountedItems = 0;
+  let anyUsageDataForAccuracy = false;
   try {
     let anyHasPrices = false;
     let sumVariance = 0;
@@ -208,6 +211,10 @@ async function calculateFullScore(
       ));
       if (snapsSnap.empty) continue;
       const snap = snapsSnap.docs[0].data() as any;
+
+      if (snap.dataCompleteness?.hasSales || snap.dataCompleteness?.hasInvoices) {
+        anyUsageDataForAccuracy = true;
+      }
 
       // Track baseline coverage across all departments
       const snapBaseline = typeof snap.summary?.itemsWithBaseline === 'number'
@@ -265,9 +272,11 @@ async function calculateFullScore(
   const limitedBaseline = totalCountedItems > 0 && totalBaselineItems / totalCountedItems < 0.5;
 
   let stockAccuracy: number | null = null;
-  let stockAccuracyNullReason: 'limited_baseline' | null = null;
+  let stockAccuracyNullReason: 'limited_baseline' | 'no_usage_data' | null = null;
   if (limitedBaseline) {
     stockAccuracyNullReason = 'limited_baseline';
+  } else if (totalCountedItems > 0 && !anyUsageDataForAccuracy) {
+    stockAccuracyNullReason = 'no_usage_data';
   } else if (totalStockValueAgg != null && totalStockValueAgg !== 0 && totalVarianceDollars != null) {
     // totalVarianceDollars is already a sum of absolute values — no Math.abs() needed here.
     const variancePct = totalVarianceDollars / totalStockValueAgg * 100;
@@ -631,114 +640,104 @@ async function calculateFullScore(
   let wasteControl: number | null = null;
   let wasteControlMode: 'stock_integrity' | 'waste_control' | null = null;
   let wasteControlLabel: string | null = null;
+  let wasteControlNullReason: 'limited_sales_match' | null = null;
+  let wasteControlMatchCoveragePct: number | null = null;
 
   try {
-    // Gate: hasSalesData — true only when at least one ACTIVE (non-superseded,
-    // non-voided) report exists.  Fetch the full collection once and reuse it for
-    // Mode A computation so we do not make a separate limit(1) query.
     let hasSalesData = false;
     let salesReportsSnap: Awaited<ReturnType<typeof getDocs>> | null = null;
 
     if (totalStocktakesCompleted > 0) {
-      salesReportsSnap = await getDocs(
-        collection(db, 'venues', venueId, 'salesReports')
-      );
+      salesReportsSnap = await getDocs(collection(db, 'venues', venueId, 'salesReports'));
       hasSalesData = salesReportsSnap.docs.some(d => isReportActive(d.data() as any));
     }
 
     if (hasSalesData && salesReportsSnap) {
-      // ── Mode A: Waste Control — use overlappingCycles to match each sales
-      //    report to the SPECIFIC historical snapshot(s) it covers, then compare
-      //    variance against weighted sales quantities for those cycles.
-      //
-      //    Untagged reports (missing overlappingCycles) are silently skipped;
-      //    venues with only untagged reports fall through to Stock Integrity (Mode B).
+      // ── Mode A: Waste Control — attribute sold units via salesReportMatches
+      //    (productId + qtySold) rather than raw-name matching.
+      //    If matched unit coverage < 60% skip Mode A (null + reason).
 
-      // Build: (deptId, cycleNumber) → weighted salesByName accumulator
-      type SalesMap = Record<string, number>;
-      const cyclesSalesMap = new Map<string, Map<number, SalesMap>>();
-      let hasTaggedReport = false;
+      // Build per-productId sold units map from salesReportMatches
+      const matchesSnap = await getDocs(collection(db, 'venues', venueId, 'salesReportMatches'));
+      const soldByProductId: Record<string, number> = {};
+      let totalQty = 0;
+      let matchedQty = 0;
 
       for (const reportDoc of salesReportsSnap.docs) {
-        const data = reportDoc.data() as any;
+        if (!isReportActive(reportDoc.data() as any)) continue;
+        const reportId = reportDoc.id;
+        const matchDoc = matchesSnap.docs.find(d => d.id === reportId);
+        if (!matchDoc) continue;
 
-        // Skip inactive reports (superseded, voided, or any future inactive state).
-        if (!isReportActive(data)) continue;
+        const matchData = matchDoc.data() as any;
+        const matches: Array<{ productId?: string | null; qtySold?: number | null }> =
+          Array.isArray(matchData.matches) ? matchData.matches : [];
 
-        const overlappingCycles: Array<{ departmentId: string; cycleNumber: number; weight?: number }> =
-          data.overlappingCycles || [];
+        // Total qty from raw lines (for coverage calc)
+        const lines = (reportDoc.data() as any).lines || (reportDoc.data() as any).report?.lines || [];
+        for (const line of lines) totalQty += Number(line.qtySold ?? 0);
 
-        // Skip untagged reports (missing field) and zero-overlap reports
-        if (!data.hasOwnProperty?.('overlappingCycles') && !('overlappingCycles' in data)) continue;
-        if (overlappingCycles.length === 0) continue;
-
-        hasTaggedReport = true;
-        const lines = data.lines || data.report?.lines || [];
-
-        for (const oc of overlappingCycles) {
-          const weight = typeof oc.weight === 'number' ? oc.weight : 1;
-          if (!cyclesSalesMap.has(oc.departmentId)) {
-            cyclesSalesMap.set(oc.departmentId, new Map());
-          }
-          const deptMap = cyclesSalesMap.get(oc.departmentId)!;
-          if (!deptMap.has(oc.cycleNumber)) {
-            deptMap.set(oc.cycleNumber, {});
-          }
-          const salesByName = deptMap.get(oc.cycleNumber)!;
-
-          lines.forEach((line: any) => {
-            const name = (line.name || '').toLowerCase().trim();
-            const qty = Number(line.qtySold || 0) * weight;
-            if (name && qty > 0) salesByName[name] = (salesByName[name] || 0) + qty;
-          });
+        for (const m of matches) {
+          const pid = m.productId;
+          const qty = typeof m.qtySold === 'number' ? m.qtySold : 0;
+          if (!pid || qty <= 0) continue;
+          soldByProductId[pid] = (soldByProductId[pid] ?? 0) + qty;
+          matchedQty += qty;
         }
       }
 
-      if (hasTaggedReport && cyclesSalesMap.size > 0) {
+      // Coverage check: < 60% → null with reason
+      if (totalQty > 0) {
+        wasteControlMatchCoveragePct = Math.round((matchedQty / totalQty) * 100);
+        if (wasteControlMatchCoveragePct < 60) {
+          wasteControlNullReason = 'limited_sales_match';
+          // Fall through to Mode B (no hasSalesData gate below)
+        }
+      }
+
+      if (wasteControlNullReason !== 'limited_sales_match' && Object.keys(soldByProductId).length > 0) {
+        // ── Compute waste using productId attribution ─────────────────────────
         let totalWasteDollars = 0;
         let totalStockVal = 0;
 
-        for (const [deptId, cycleMap] of cyclesSalesMap.entries()) {
-          for (const [cycleNumber, salesByName] of cycleMap.entries()) {
-            // Read the specific historical snapshot by its known document ID.
-            // This is a targeted getDoc (one read per unique cycle), not a scan.
-            const snapRef = doc(db, 'venues', venueId, 'departments', deptId, 'snapshots', `cycle-${cycleNumber}`);
-            const snapDoc = await getDoc(snapRef);
-            if (!snapDoc.exists()) continue;
+        for (const deptDoc of deptsSnap.docs) {
+          const recentSnaps = await getDocs(query(
+            collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+            orderBy('cycleNumber', 'desc'),
+            limit(1),
+          ));
+          for (const snapDoc of recentSnaps.docs) {
             const snapData = snapDoc.data() as any;
-
             const snapItems = await loadSnapshotItems(snapData, () =>
-              getDocs(collection(db, 'venues', venueId, 'departments', deptId, 'snapshots', `cycle-${cycleNumber}`, 'itemChunks'))
+              getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots', snapDoc.id, 'itemChunks'))
                 .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
             );
-            snapItems.forEach((item: any) => {
-              const name = (item.name || '').toLowerCase().trim();
+            for (const item of snapItems as any[]) {
+              const pid = item.productId;
+              if (!pid) continue;
               const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
               const costPrice = (item.displayCostPrice ?? item.costPrice) ?? 0;
-              const soldUnits = salesByName[name] || 0;
+              const soldUnits = soldByProductId[pid] ?? 0;
               const stockVal = Math.abs(varianceUnits) * costPrice;
               totalStockVal += stockVal;
-
               if (varianceUnits < 0) {
                 const consumed = Math.abs(varianceUnits);
                 const actualWaste = Math.max(0, consumed - soldUnits);
                 totalWasteDollars += actualWaste * costPrice;
               }
-            });
+            }
           }
         }
 
         if (totalStockVal > 0) {
           const wasteRate = totalWasteDollars / totalStockVal;
-          // Score: 100 at 0% waste, 0 at 20%+ waste rate
           wasteControl = Math.max(0, Math.round(100 - (wasteRate * 500)));
           wasteControlMode = 'waste_control';
           wasteControlLabel = 'Waste Control — calculated from sales data';
         }
       }
 
-      // If hasSalesData is true but no tagged reports drove a wasteControl value,
-      // fall through to Stock Integrity (Mode B) below.
+      // If Mode A produced a score — skip Mode B entirely.
       if (wasteControl !== null) {
         // Mode A produced a score — skip Mode B entirely.
       } else {
@@ -1085,6 +1084,8 @@ async function calculateFullScore(
       wasteControl,
       wasteControlMode,
       wasteControlLabel,
+      wasteControlNullReason,
+      wasteControlMatchCoveragePct,
     },
     orderingIntelligenceReason,
     invoicePurchasingSummary,

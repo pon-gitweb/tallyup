@@ -14,6 +14,7 @@ import { apiBase } from '../../services/apiBase';
 import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
 import { refreshAIContext } from '../../services/aiContext';
 import { salesFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
+import { salesFileHash } from '../../utils/salesFileHash';
 import SalesPeriodConfirmStep from '../../components/sales/SalesPeriodConfirmStep';
 import SalesConflictStep from '../../components/sales/SalesConflictStep';
 
@@ -132,10 +133,17 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       }
 
       // Deduplication check before showing the picker
+      // Primary: content hash (salesFileHash); legacy: salesFingerprint for backwards compat
       const salesLines = parsed?.lines || [];
       const salesPeriod = parsed?.period;
-      const salesHash = salesFingerprint(salesLines, salesPeriod);
-      const { exists: salesExists, processedAt: salesProcessedAt } = await checkProcessed(venueId, 'processedSalesReports', salesHash);
+      const newSalesHash = salesFileHash(salesLines);
+      const legacySalesHash = salesFingerprint(salesLines, salesPeriod);
+      const [newCheck, legacyCheck] = await Promise.all([
+        checkProcessed(venueId, 'processedSalesReports', newSalesHash),
+        checkProcessed(venueId, 'processedSalesReports', legacySalesHash),
+      ]);
+      const salesExists = newCheck.exists || legacyCheck.exists;
+      const salesProcessedAt = newCheck.processedAt || legacyCheck.processedAt;
       if (salesExists) {
         const dateStr = salesProcessedAt ? salesProcessedAt.toLocaleDateString('en-NZ') : 'previously';
         const proceed = await confirmDuplicateImport(
@@ -144,6 +152,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
         );
         if (!proceed) { setBusy(false); return; }
       }
+      const salesHash = newSalesHash;
 
       // Hand off to the period-confirm step
       setPending({

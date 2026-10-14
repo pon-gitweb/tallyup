@@ -32,3 +32,23 @@ describe('canSelfRegister', () => {
     expect(canSelfRegister).toBe(true);
   });
 });
+
+describe('canShowPurchasePaths', () => {
+  afterEach(() => jest.resetModules());
+
+  it('is false on iOS (purchase paths are web-only)', () => {
+    jest.mock('react-native', () => ({
+      Platform: { OS: 'ios' },
+    }));
+    const { canShowPurchasePaths } = require('../utils/platformPolicy');
+    expect(canShowPurchasePaths).toBe(false);
+  });
+
+  it('is false on android (purchase paths are web-only)', () => {
+    jest.mock('react-native', () => ({
+      Platform: { OS: 'android' },
+    }));
+    const { canShowPurchasePaths } = require('../utils/platformPolicy');
+    expect(canShowPurchasePaths).toBe(false);
+  });
+});

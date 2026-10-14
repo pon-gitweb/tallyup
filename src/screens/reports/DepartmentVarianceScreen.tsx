@@ -25,6 +25,7 @@ export default function DepartmentVarianceScreen() {
   const [minor, setMinor] = React.useState<any[]>([]);
   const [showMinor, setShowMinor] = React.useState(false);
   const [summary, setSummary] = React.useState<any>(null);
+  const [noUsageData, setNoUsageData] = React.useState(false);
 
   const [sortBy, setSortBy] = React.useState<'value' | 'qty' | 'name' | 'supplier'>('value');
   const [dir, setDir] = React.useState<'asc' | 'desc'>('desc');
@@ -42,6 +43,7 @@ export default function DepartmentVarianceScreen() {
       setRows(res.rowsMaterial || []);
       setMinor(res.rowsMinor || []);
       setSummary(res.summary || null);
+      setNoUsageData(res.noUsageData ?? false);
     } catch (e) {
       setRows([]);
       setMinor([]);
@@ -180,6 +182,13 @@ export default function DepartmentVarianceScreen() {
   return (
     <View style={S.wrap}>
       {header}
+      {noUsageData && (
+        <View style={{ backgroundColor: '#FEF3C7', marginHorizontal: 16, marginBottom: 6, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#F59E0B' }}>
+          <Text style={{ fontSize: 12, color: '#92400E', lineHeight: 17 }}>
+            Expected figures don&apos;t include sales or deliveries yet, so shortages include normal usage.
+          </Text>
+        </View>
+      )}
       {tools}
 
       <TouchableOpacity onPress={onExportPdf} style={S.exportBtn}>
