@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { NormalizedSalesReport } from './types';
 import { parseCsvText, parseSalesExport } from './parseSalesExport';
+import { salesFileHash } from '../../utils/salesFileHash';
 
 // Derive the Cloud Functions base from EXPO_PUBLIC_AI_URL.
 function aiBase() {
@@ -66,7 +67,7 @@ function toNormalized(text: string): NormalizedSalesReport {
       kind:            parsed.kind,
       reportTotals:    parsed.reportTotals,
       categoryTotals:  parsed.categoryTotals,
-      fileHash:        null,
+      fileHash:        salesFileHash(parsed.lines),
     },
   };
 }

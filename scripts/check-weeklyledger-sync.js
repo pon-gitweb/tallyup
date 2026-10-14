@@ -41,5 +41,23 @@ if (stripImports(web) !== stripImports(mobile)) {
   failed = true;
 }
 
+// ── salesFileHash sync (web-app → mobile, identical content) ──────────────
+const webHashSrc    = path.join(root, 'web-app/src/utils/salesFileHash.ts');
+const mobileHashSrc = path.join(root, 'src/utils/salesFileHash.ts');
+
+const webHash    = fs.readFileSync(webHashSrc, 'utf8');
+const mobileHash = fs.readFileSync(mobileHashSrc, 'utf8');
+
+if (webHash !== mobileHash) {
+  console.error(
+    'check:weeklyledger-sync FAILED: content of\n' +
+    '  web-app/src/utils/salesFileHash.ts\n' +
+    'and\n' +
+    '  src/utils/salesFileHash.ts\n' +
+    'differs. Run: cp web-app/src/utils/salesFileHash.ts src/utils/salesFileHash.ts'
+  );
+  failed = true;
+}
+
 if (failed) process.exit(1);
-console.log('check:weeklyledger-sync passed: all three weeklyLedger.ts copies are in sync (import lines excluded).');
+console.log('check:weeklyledger-sync passed: all three weeklyLedger.ts copies and both salesFileHash.ts copies are in sync.');
