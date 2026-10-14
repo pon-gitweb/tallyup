@@ -26,6 +26,8 @@ function buildHonestFlags(s: WeeklyPerformanceSummary): string[] {
   const flags: string[] = [];
   if (s.sales.totalNetSales == null) {
     flags.push('Sales data not available — connect a POS to see GP calculations.');
+  } else {
+    flags.push('Sales come from imported sales reports or a connected POS.');
   }
   if (s.spend.totalSpend == null) {
     flags.push('No invoices this week — upload supplier invoices to track spend.');
@@ -36,7 +38,7 @@ function buildHonestFlags(s: WeeklyPerformanceSummary): string[] {
   if (s.stock.totalStocktakesCompleted < 2) {
     flags.push('Variance requires two completed stocktakes to compare.');
   }
-  if (!flags.length) {
+  if (flags.every(f => f.startsWith('Sales come') || f.startsWith('Data looks'))) {
     flags.push('Data looks good — this report is based on complete, recent information.');
   }
   return flags;
@@ -161,13 +163,14 @@ export default function LastCycleSummaryScreen() {
                   tone={s.gp.actual != null ? 'good' : 'muted'}
                 />
                 <KpiCard
-                  label="Net sales (week)"
+                  label={`Net sales${s.sales.gstLabel ? ` (${s.sales.gstLabel})` : ''}`}
                   value={
                     s.sales.totalNetSales != null
                       ? formatMoney(s.sales.totalNetSales)
                       : 'Missing sales'
                   }
                   tone={s.sales.totalNetSales != null ? 'neutral' : 'warn'}
+                  sub={s.sales.source === 'sales_reports' ? `From imported sales reports${s.sales.weeksCovered > 0 ? ` · ${s.sales.weeksCovered}w` : ''}` : undefined}
                 />
               </View>
 
@@ -326,10 +329,12 @@ function KpiCard({
   label,
   value,
   tone,
+  sub,
 }: {
   label: string;
   value: string;
   tone: 'good' | 'neutral' | 'warn' | 'alert' | 'muted';
+  sub?: string;
 }) {
   const base = '#0F172A';
   const bg =
@@ -377,6 +382,9 @@ function KpiCard({
         }}>
         {value}
       </Text>
+      {sub && (
+        <Text style={{ color: '#64748B', fontSize: 10, marginTop: 3 }}>{sub}</Text>
+      )}
     </View>
   );
 }

@@ -6,11 +6,18 @@ import {
   limit,
   orderBy,
   query,
+  Timestamp,
   where,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { computeVarianceSnapshot } from './variance';
 import { assessDataQuality } from './dataQuality';
+import {
+  partitionReports,
+  toNZDate,
+  weekMonday,
+  type ActiveReport,
+} from '../../utils/weeklyLedger';
 
 export type WeeklyPerformanceSummary = {
   venueName: string | null;
@@ -28,6 +35,9 @@ export type WeeklyPerformanceSummary = {
   sales: {
     docs: number;
     totalNetSales: number | null;
+    source: 'sales_reports' | 'legacy' | null;
+    gstLabel: string | null;
+    weeksCovered: number;
   };
   // Spend from invoices
   spend: {
@@ -81,6 +91,9 @@ export async function loadWeeklyPerformance(
     sales: {
       docs: 0,
       totalNetSales: null,
+      source: null,
+      gstLabel: null,
+      weeksCovered: 0,
     },
     spend: {
       docs: 0,
@@ -161,60 +174,109 @@ export async function loadWeeklyPerformance(
     // If this fails, stock coverage stays zero; dataQuality will call that out.
   }
 
-  // 3) Sales (venue-level)
-  try {
-    const salesCol = collection(db, 'venues', venueId, 'sales');
-    const qSales = query(
-      salesCol,
-      where('createdAt', '>=', from),
-      // loose where: any status is fine; we only care about totals here
-    );
-    const salesSnap = await getDocs(qSales);
-    result.sales.docs = salesSnap.size;
+  // 3) Sales — try active salesReports for last complete week first
+  const todayNZ = toNZDate(new Date()) ?? now.toISOString().slice(0, 10);
+  const currentWkMon = weekMonday(todayNZ);
+  const lastWkMonMs = new Date(currentWkMon + 'T00:00:00Z').getTime() - 7 * 86_400_000;
+  const lastWkMonStr = new Date(lastWkMonMs).toISOString().slice(0, 10);
+  const lastWkSunStr = new Date(lastWkMonMs + 6 * 86_400_000).toISOString().slice(0, 10);
 
-    let totalNet = 0;
-    for (const s of salesSnap.docs) {
-      const sd: any = s.data() || {};
-      // Try several common fields for net sales
-      const val =
-        typeof sd.netSales === 'number'
-          ? sd.netSales
-          : typeof sd.total === 'number'
-          ? sd.total
-          : typeof sd.revenue === 'number'
-          ? sd.revenue
-          : null;
-      if (typeof val === 'number') totalNet += val;
+  let salesLoaded = false;
+  try {
+    const reportsSnap = await getDocs(collection(db, 'venues', venueId, 'salesReports'));
+    const { reports: activeReports } = partitionReports(reportsSnap.docs as any);
+
+    // Find reports that overlap the last complete week
+    const overlapping = activeReports.filter(r =>
+      r.startStr && r.endStr && r.startStr <= lastWkSunStr && r.endStr >= lastWkMonStr
+    );
+
+    if (overlapping.length > 0) {
+      let totalRevenue = 0;
+      let hasExGst = false;
+      let hasInclGst = false;
+      const weeksSet = new Set<string>();
+
+      for (const r of overlapping) {
+        const reportDays = r.days ?? 1;
+        const overlapStart = r.startStr! > lastWkMonStr ? r.startStr! : lastWkMonStr;
+        const overlapEnd = r.endStr! < lastWkSunStr ? r.endStr! : lastWkSunStr;
+        const overlapDays = Math.round(
+          (new Date(overlapEnd + 'T00:00:00Z').getTime() - new Date(overlapStart + 'T00:00:00Z').getTime()) / 86_400_000
+        ) + 1;
+        const frac = overlapDays / reportDays;
+
+        // Revenue: prefer netExcl (ex GST), fall back to grossIncl / gross
+        let reportRevenue = 0;
+        let reportExGst = false;
+        for (const line of r.rawLines) {
+          if (typeof line.netExcl === 'number') {
+            reportRevenue += line.netExcl;
+            reportExGst = true;
+          } else {
+            reportRevenue += line.grossIncl ?? line.gross ?? 0;
+          }
+        }
+        totalRevenue += reportRevenue * frac;
+        if (reportExGst) hasExGst = true; else hasInclGst = true;
+        if (r.startStr) weeksSet.add(r.startStr.slice(0, 7));
+      }
+
+      result.sales.totalNetSales = totalRevenue;
+      result.sales.source = 'sales_reports';
+      result.sales.gstLabel = hasExGst && !hasInclGst ? 'excl GST' : 'incl GST';
+      result.sales.weeksCovered = weeksSet.size;
+      result.sales.docs = overlapping.length;
+      salesLoaded = true;
     }
-    result.sales.totalNetSales = salesSnap.size > 0 ? totalNet : null;
-  } catch (e: any) {
-    // Sales docs will remain 0; dataQuality will flag GP as limited.
+  } catch { /* fall through to legacy */ }
+
+  // Legacy sales collection fallback
+  if (!salesLoaded) {
+    try {
+      const qSales = query(
+        collection(db, 'venues', venueId, 'sales'),
+        where('createdAt', '>=', from),
+      );
+      const salesSnap = await getDocs(qSales);
+      result.sales.docs = salesSnap.size;
+      let totalNet = 0;
+      for (const s of salesSnap.docs) {
+        const sd: any = s.data() || {};
+        const val =
+          typeof sd.netSales === 'number' ? sd.netSales :
+          typeof sd.total === 'number' ? sd.total :
+          typeof sd.revenue === 'number' ? sd.revenue : null;
+        if (typeof val === 'number') totalNet += val;
+      }
+      if (salesSnap.size > 0) {
+        result.sales.totalNetSales = totalNet;
+        result.sales.source = 'legacy';
+      }
+    } catch { /* sales stays null */ }
   }
 
-  // 4) Spend from invoices
+  // 4) Spend from invoices — invoiceDateTimestamp range (single-field, no composite index)
   try {
-    const invCol = collection(db, 'venues', venueId, 'invoices');
-    const qInv = query(invCol, where('createdAt', '>=', from));
-    const invSnap = await getDocs(qInv);
+    const startTs = Timestamp.fromDate(from);
+    const endTs = Timestamp.fromDate(now);
+    const invSnap = await getDocs(query(
+      collection(db, 'venues', venueId, 'invoices'),
+      where('invoiceDateTimestamp', '>=', startTs),
+      where('invoiceDateTimestamp', '<=', endTs),
+    ));
     result.spend.docs = invSnap.size;
-
     let totalSpend = 0;
     for (const inv of invSnap.docs) {
       const id: any = inv.data() || {};
       const val =
-        typeof id.total === 'number'
-          ? id.total
-          : typeof id.grandTotal === 'number'
-          ? id.grandTotal
-          : typeof id.netTotal === 'number'
-          ? id.netTotal
-          : null;
+        typeof id.totalAmount === 'number' ? id.totalAmount :
+        typeof id.total === 'number' ? id.total :
+        typeof id.grandTotal === 'number' ? id.grandTotal : null;
       if (typeof val === 'number') totalSpend += val;
     }
     result.spend.totalSpend = invSnap.size > 0 ? totalSpend : null;
-  } catch (e: any) {
-    // Spend docs will stay 0; dataQuality will call this out.
-  }
+  } catch { /* spend stays null */ }
 
   // 5) Variance / shrinkage (reuse computeVarianceSnapshot)
   try {
