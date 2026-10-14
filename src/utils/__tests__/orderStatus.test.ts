@@ -1,3 +1,5 @@
+jest.mock('../../services/crashReporting', () => ({ captureError: jest.fn() }));
+
 import { CANON, canonicalizeStatus, STATUS_GROUPS } from '../orderStatus';
 import type { OrderRow } from '../orderStatus';
 
@@ -15,6 +17,7 @@ describe('CANON map — read-tolerance aliases → submitted', () => {
   }
 
   it('"received" → "received"', () => expect(CANON['received']).toBe('received'));
+  it('"invoiced" → "received"', () => expect(CANON['invoiced']).toBe('received'));
   it('"draft" → "draft"', () => expect(CANON['draft']).toBe('draft'));
   it('"cancelled" → "cancelled"', () => expect(CANON['cancelled']).toBe('cancelled'));
   it('"canceled" (US spelling) → "cancelled"', () => expect(CANON['canceled']).toBe('cancelled'));
@@ -34,13 +37,22 @@ describe('canonicalizeStatus', () => {
     expect(canonicalizeStatus('unknown_legacy_status', 'sent')).toBe('submitted');
   });
 
-  it('defaults to "draft" when both fields are unknown', () => {
-    expect(canonicalizeStatus('completely_unknown', 'also_unknown')).toBe('draft');
+  it('returns "unknown" when both fields are unrecognised non-empty', () => {
+    expect(canonicalizeStatus('completely_unknown', 'also_unknown')).toBe('unknown');
   });
 
-  it('handles null/undefined inputs without throwing', () => {
+  it('"invoiced" → "received"', () => {
+    expect(canonicalizeStatus('invoiced', null)).toBe('received');
+  });
+
+  it('handles null/undefined inputs → "draft"', () => {
     expect(canonicalizeStatus(null, null)).toBe('draft');
     expect(canonicalizeStatus(undefined, undefined)).toBe('draft');
+  });
+
+  it('empty string status → "draft"', () => {
+    expect(canonicalizeStatus('', null)).toBe('draft');
+    expect(canonicalizeStatus('', '')).toBe('draft');
   });
 
   it('is case-insensitive', () => {
@@ -107,5 +119,26 @@ describe('STATUS_GROUPS.received', () => {
   it('false for anything else', () => {
     expect(STATUS_GROUPS.received(row('submitted'))).toBe(false);
     expect(STATUS_GROUPS.received(row('draft'))).toBe(false);
+  });
+
+  it('"invoiced" canonicalises to "received" and lands in received tab', () => {
+    // After canonicalizeStatus, invoiced becomes 'received' — STATUS_GROUPS.received is true
+    expect(STATUS_GROUPS.received(row('received'))).toBe(true);
+    // Verify CANON directly
+    expect(CANON['invoiced']).toBe('received');
+  });
+});
+
+describe('STATUS_GROUPS — unknown status', () => {
+  it('"unknown" is not in drafts', () => {
+    expect(STATUS_GROUPS.drafts(row('unknown'))).toBe(false);
+  });
+
+  it('"unknown" appears in submitted tab (read-only)', () => {
+    expect(STATUS_GROUPS.submitted(row('unknown'))).toBe(true);
+  });
+
+  it('"unknown" is not in received', () => {
+    expect(STATUS_GROUPS.received(row('unknown'))).toBe(false);
   });
 });
