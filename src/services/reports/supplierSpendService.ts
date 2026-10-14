@@ -1,8 +1,102 @@
-// Pure math — reads invoices + snapshot velocity to produce supplier spend data.
+// Supplier spend — reads invoices by date range and groups by supplier.
 
 import { db } from '../firebase';
 import { collection, getDocs, query, where, Timestamp } from 'firebase/firestore';
 import { calculateVelocity } from './velocityService';
+
+// ── New simplified interface (item 4) ──────────────────────────────────────────
+export interface SupplierSpendRow {
+  supplierId: string | null;
+  supplierName: string;
+  totalSpend: number;
+  invoiceCount: number;
+  gstNote: string;
+  budgetAmount: number | null;
+  budgetVariance: number | null;
+  budgetVariancePercent: number | null;
+  overBudget: boolean;
+}
+
+function normalizeSupplierName(name: string | null | undefined): string {
+  return (name ?? '').toLowerCase().trim();
+}
+
+/**
+ * Query all invoices in date range by invoiceDateTimestamp only (single-field
+ * index — no composite query). Group by supplierId if present, else by
+ * normalized supplierName. Total comes from the invoice-level totalAmount field.
+ */
+export async function loadSupplierSpendRows(
+  venueId: string,
+  periodStart: Date,
+  periodEnd: Date,
+  budgets: Array<{ supplierId?: string; amount?: number }> = [],
+): Promise<SupplierSpendRow[]> {
+  const startTs = Timestamp.fromDate(periodStart);
+  const endTs = Timestamp.fromDate(periodEnd);
+
+  let invoiceDocs: any[] = [];
+  try {
+    const snap = await getDocs(query(
+      collection(db, 'venues', venueId, 'invoices'),
+      where('invoiceDateTimestamp', '>=', startTs),
+      where('invoiceDateTimestamp', '<=', endTs),
+    ));
+    invoiceDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch {}
+
+  // Group by supplierId else normalised supplierName
+  const groups = new Map<string, {
+    supplierId: string | null;
+    supplierName: string;
+    totalSpend: number;
+    invoiceCount: number;
+    exGst: boolean;
+  }>();
+
+  for (const inv of invoiceDocs) {
+    const sid: string | null = inv.supplierId || null;
+    const sname: string = inv.supplierName || inv.supplier || 'Unknown';
+    const key: string = sid ?? normalizeSupplierName(sname);
+    const amount: number =
+      typeof inv.totalAmount === 'number' ? inv.totalAmount :
+      typeof inv.total === 'number' ? inv.total :
+      typeof inv.grandTotal === 'number' ? inv.grandTotal : 0;
+    const exGst: boolean = inv.pricesExGST === true;
+
+    if (groups.has(key)) {
+      const g = groups.get(key)!;
+      g.totalSpend += amount;
+      g.invoiceCount += 1;
+      if (!exGst) g.exGst = false; // if any invoice is incl GST, note as incl
+    } else {
+      groups.set(key, { supplierId: sid, supplierName: sname, totalSpend: amount, invoiceCount: 1, exGst: exGst });
+    }
+  }
+
+  const budgetMap = new Map(budgets.map(b => [b.supplierId ?? '', b.amount ?? 0]));
+
+  const rows: SupplierSpendRow[] = Array.from(groups.values()).map(g => {
+    const budgetAmount = g.supplierId ? (budgetMap.get(g.supplierId) ?? null) : null;
+    const budgetVariance = budgetAmount != null ? g.totalSpend - budgetAmount : null;
+    const budgetVariancePercent = budgetAmount && budgetAmount > 0
+      ? Math.round((g.totalSpend - budgetAmount) / budgetAmount * 100)
+      : null;
+    return {
+      supplierId: g.supplierId,
+      supplierName: g.supplierName,
+      totalSpend: g.totalSpend,
+      invoiceCount: g.invoiceCount,
+      gstNote: g.exGst ? 'excl GST' : 'incl GST',
+      budgetAmount: budgetAmount ?? null,
+      budgetVariance,
+      budgetVariancePercent,
+      overBudget: budgetVariance != null ? budgetVariance > 0 : false,
+    };
+  });
+
+  return rows.sort((a, b) => b.totalSpend - a.totalSpend);
+}
 
 export interface ProductBreakdownItem {
   productId: string;
