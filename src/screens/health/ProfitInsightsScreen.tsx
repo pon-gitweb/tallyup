@@ -449,6 +449,8 @@ export default function ProfitInsightsScreen() {
                     stockAccuracyNullReason={key === 'stockAccuracy' ? (health.kpis as any).stockAccuracyNullReason : undefined}
                     orderingReason={key === 'orderingIntelligence' ? (health as any).orderingIntelligenceReason : undefined}
                     invoiceSummary={key === 'orderingIntelligence' ? (health as any).invoicePurchasingSummary : undefined}
+                    wasteControlNullReason={key === 'wasteControl' ? (health.kpis as any).wasteControlNullReason : undefined}
+                    wasteControlMatchCoveragePct={key === 'wasteControl' ? (health.kpis as any).wasteControlMatchCoveragePct : undefined}
                     externalExpanded={expandedKpi === key}
                   />
                 </View>
@@ -630,11 +632,13 @@ function InsightCard({
 function KpiCard({
   c, theme, kpiKey, score, daysOfCover, usedInvoiceData, targetDaysOfCover, orderingWeight,
   stockAccuracyNullReason, externalExpanded, orderingReason, invoiceSummary,
+  wasteControlNullReason, wasteControlMatchCoveragePct,
 }: {
   c: any; theme: any; kpiKey: string; score: number | null; daysOfCover?: number | null; usedInvoiceData?: boolean;
   targetDaysOfCover?: number; orderingWeight?: number;
   stockAccuracyNullReason?: 'limited_baseline' | null; externalExpanded?: boolean;
   orderingReason?: string | null; invoiceSummary?: { invoiceCount: number; supplierCount: number; total: number } | null;
+  wasteControlNullReason?: 'limited_sales_match' | null; wasteControlMatchCoveragePct?: number | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { if (externalExpanded) setExpanded(true); }, [externalExpanded]);
@@ -645,7 +649,9 @@ function KpiCard({
     ? 'Limited data'
     : kpiKey === 'orderingIntelligence' && orderingReason === 'no_hosti_orders'
       ? 'Not scored yet'
-      : meta.nullStatus;
+      : kpiKey === 'wasteControl' && wasteControlNullReason === 'limited_sales_match'
+        ? 'Limited data'
+        : meta.nullStatus;
 
   return (
     <TouchableOpacity
@@ -672,6 +678,11 @@ function KpiCard({
       {kpiKey === 'stockAccuracy' && stockAccuracyNullReason === 'limited_baseline' && (
         <Text style={{ fontSize: 11, color: c.textSecondary, marginTop: 3 }}>
           Several items had no previous count
+        </Text>
+      )}
+      {kpiKey === 'wasteControl' && wasteControlNullReason === 'limited_sales_match' && (
+        <Text style={{ fontSize: 11, color: c.textSecondary, marginTop: 3 }}>
+          Limited data — {wasteControlMatchCoveragePct != null ? Math.round(wasteControlMatchCoveragePct) : 0}% of sales are linked to products
         </Text>
       )}
       <Text style={{ fontSize: 11, color: c.deepBlue, marginTop: 4 }}>
