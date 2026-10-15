@@ -248,11 +248,12 @@ async function loadAreaItems(dbInst, venueId, deptId) {
 
 // ── Build raw items from stored snapshot (for --from-stored) ─────────────────
 // Pure helper: counts come from stored snapshot rows, productId from liveItemsById.
-// itemsGranularity: 'product' (default) → iterate item.areas[];
-//                   anything else        → legacy: each stored item IS one area row,
-//                                          item.productId holds the area row doc id.
+// itemsGranularity: exactly 'product' → iterate item.areas[];
+//                   anything else (incl. undefined/null) → legacy: each stored
+//                   item IS one area row; item.productId holds the area row doc id.
+// Mirrors toProductItems in productSnapshotItems.ts: only === 'product' is product.
 // liveItemsById: Map<areaItemId, productId | null>
-function buildRawItemsFromStoredSync(storedProductItems, liveItemsById, itemsGranularity = 'product') {
+function buildRawItemsFromStoredSync(storedProductItems, liveItemsById, itemsGranularity) {
   let noLiveItemCount = 0;
   const rawItems = [];
   const isLegacy = itemsGranularity !== 'product';

@@ -233,7 +233,7 @@ describe('buildRawItemsFromStoredSync', () => {
       areas: [{ areaId: 'a1', areaItemId: 'item-1', areaName: 'Bar', actualClosing: 10 }],
     }];
     const liveItemsById = new Map([['item-1', 'prod-beer']]);
-    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById);
+    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById, 'product');
     expect(rawItems).toHaveLength(1);
     expect(rawItems[0].lastCount).toBe(10);    // stored count, not live
     expect(rawItems[0].productId).toBe('prod-beer'); // live productId
@@ -246,7 +246,7 @@ describe('buildRawItemsFromStoredSync', () => {
       areas: [{ areaId: 'a1', areaItemId: 'missing-item', areaName: 'Bar', actualClosing: 5 }],
     }];
     const liveItemsById = new Map(); // no live items
-    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById);
+    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById, 'product');
     expect(rawItems[0].productId).toBeNull();
     expect(noLiveItemCount).toBe(1);
   });
@@ -257,9 +257,30 @@ describe('buildRawItemsFromStoredSync', () => {
       areas: [{ areaId: 'a1', areaItemId: 'item-x', areaName: 'Bar', actualClosing: 3 }],
     }];
     const liveItemsById = new Map([['item-x', null]]); // live item exists but has no productId
-    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById);
+    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById, 'product');
     expect(rawItems[0].productId).toBeNull();
     expect(noLiveItemCount).toBe(0); // live item found, even if productId is null
+  });
+
+  it('undefined granularity (legacy snapshot, no itemsGranularity field): treats rows as area rows', () => {
+    // Regression: snapshot data without itemsGranularity set → undefined must mean legacy,
+    // NOT product (which was the bug caused by the = 'product' default).
+    // Real call: buildRawItemsFromStoredSync(storedItems, liveItemsById, target.itemsGranularity)
+    // where target.itemsGranularity is absent from the Firestore doc → undefined.
+    const storedItems = [
+      { name: 'Heineken', productId: 'area-row-1', areaId: 'area-bar', areaName: 'Bar', actualClosing: 5 },
+      { name: 'Corona',   productId: 'area-row-2', areaId: 'area-bar', areaName: 'Bar', actualClosing: 3 },
+    ];
+    const liveItemsById = new Map([
+      ['area-row-1', 'catalog-prod-hein'],
+      ['area-row-2', 'catalog-prod-cor'],
+    ]);
+    // Pass undefined explicitly — simulates target.itemsGranularity missing from Firestore doc
+    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById, undefined);
+    expect(rawItems).toHaveLength(2);
+    expect(rawItems[0].productId).toBe('catalog-prod-hein');
+    expect(rawItems[1].productId).toBe('catalog-prod-cor');
+    expect(noLiveItemCount).toBe(0);
   });
 });
 
