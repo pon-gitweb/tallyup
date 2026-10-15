@@ -384,9 +384,16 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
   const afterN = recalculateItem(itemN, { actualClosing: newActualClosing })
 
   const updatedItemsN = [...snapN.items]
+  // For single-area product items, mirror the corrected actualClosing into areas[0]
+  // so the breakdown stays consistent.  Multi-area products keep their historical
+  // per-area counts as read-only audit info.
+  const updatedAreas = Array.isArray(itemN.areas) && itemN.areas.length === 1
+    ? [{ ...itemN.areas[0], actualClosing: newActualClosing }]
+    : itemN.areas ?? null
   updatedItemsN[idxN] = {
     ...itemN,
     actualClosing: newActualClosing,
+    areas: updatedAreas,
     totalVarianceQty: afterN.totalVarianceQty,
     totalVarianceDollars: afterN.totalVarianceDollars,
     expectedClosing: afterN.expectedClosing,

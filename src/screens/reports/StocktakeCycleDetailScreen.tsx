@@ -66,7 +66,10 @@ export default function StocktakeCycleDetailScreen() {
         );
         setItems(loadedItems);
         // Load area edits to show audit trail per item
-        const areaIds = [...new Set(loadedItems.map((it: any) => it.areaId).filter(Boolean))];
+        // Product-level items carry areas[]; legacy items carry areaId directly.
+        const areaIds = [...new Set(loadedItems.flatMap((it: any) =>
+          it.areas ? it.areas.map((a: any) => a.areaId).filter(Boolean) : [it.areaId].filter(Boolean)
+        ))];
         const editsMap: Record<string, any[]> = {};
         await Promise.all(areaIds.map(async (areaId: string) => {
           try {
