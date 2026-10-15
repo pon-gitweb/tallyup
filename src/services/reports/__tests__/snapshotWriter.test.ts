@@ -781,11 +781,11 @@ describe('computeSnapshotItemFigures — productId-keyed prevItemMap + areas out
     expect(snapshotItems[0].belowPAR).toBe(true); // actualClosing 10 < parLevel 12
   });
 
-  it('no _areas on item: areas null, varianceReliable undefined (backward compat)', () => {
+  it('no _areas on item: areas null, varianceReliable true (always a boolean — never undefined)', () => {
     const plain = makeItem({ name: 'Vodka' });
     const { snapshotItems } = computeSnapshotItemFigures([plain], new Map(), 2, [], []);
     expect(snapshotItems[0].areas).toBeNull();
-    expect(snapshotItems[0].varianceReliable).toBeUndefined();
+    expect(snapshotItems[0].varianceReliable).toBe(true);
   });
 });
 
@@ -1075,5 +1075,96 @@ describe('writeDepartmentSnapshot — PAR from product doc', () => {
 
     const [, snapshotData] = mockBatch.set.mock.calls[0];
     expect(snapshotData.items[0].parLevel).toBe(8); // fallback to area row
+  });
+});
+
+// ── No undefined in Firestore write payloads ──────────────────────────────────
+
+function hasUndefinedDeep(obj: unknown): boolean {
+  if (Array.isArray(obj)) return (obj as unknown[]).some(hasUndefinedDeep);
+  if (obj !== null && typeof obj === 'object') {
+    return Object.values(obj as object).some(v => v === undefined || hasUndefinedDeep(v));
+  }
+  return false;
+}
+
+describe('computeSnapshotItemFigures — no undefined in output items', () => {
+  it('ambiguous item (_ambiguous: true): varianceReliable is false, ambiguousName is true, no undefined', () => {
+    const item = makeItem({
+      _ambiguous: true,
+      _areas: [{ areaId: 'a1', areaName: 'Bar', areaItemId: 'i1', actualClosing: 5, lastCountAt: null, lastCountBy: null }],
+    });
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 2, [], []);
+    const si = snapshotItems[0];
+    expect(si.varianceReliable).toBe(false);
+    expect(si.ambiguousName).toBe(true);
+    expect(hasUndefinedDeep(si)).toBe(false);
+  });
+
+  it('non-ambiguous item with _areas: varianceReliable is true, ambiguousName absent, no undefined', () => {
+    const item = makeItem({
+      _areas: [{ areaId: 'a1', areaName: 'Bar', areaItemId: 'i1', actualClosing: 10, lastCountAt: null, lastCountBy: null }],
+    });
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 2, [], []);
+    const si = snapshotItems[0];
+    expect(si.varianceReliable).toBe(true);
+    expect('ambiguousName' in si).toBe(false);
+    expect(hasUndefinedDeep(si)).toBe(false);
+  });
+
+  it('item with no _areas: varianceReliable is true (default), no undefined', () => {
+    const item = makeItem(); // no _areas — simulates legacy path
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 2, [], []);
+    const si = snapshotItems[0];
+    expect(si.varianceReliable).toBe(true);
+    expect(hasUndefinedDeep(si)).toBe(false);
+  });
+});
+
+describe('writeDepartmentSnapshot — no undefined in batch.set payloads', () => {
+  const ff = require('firebase/firestore') as any;
+
+  function fakeQSnap(docs: Array<{ id: string; dataObj: Record<string, any> }>) {
+    return {
+      docs: docs.map(d => ({ id: d.id, data: () => d.dataObj, ref: { id: d.id } })),
+      forEach: (fn: any) => docs.forEach(d => fn({ id: d.id, data: () => d.dataObj })),
+    };
+  }
+
+  beforeEach(() => {
+    ff.writeBatch.mockReturnValue(mockBatch);
+    ff.collection.mockImplementation((...args: any[]) => args.join('/'));
+    ff.doc.mockImplementation((...args: any[]) => args.join('/'));
+    ff.getDocs.mockReset();
+    ff.getDoc.mockReset();
+    mockBatch.set.mockReset();
+    mockBatch.delete.mockReset();
+    mockBatch.commit.mockResolvedValue(undefined);
+  });
+
+  it('snapshot doc and all chunks have no undefined values when item is ambiguous', async () => {
+    // Two products with same name (ambiguous), one with areas[] set on the area item doc
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'prod-a', dataObj: { name: 'Champagne', active: true, mergedInto: null } },
+        { id: 'prod-b', dataObj: { name: 'Champagne', active: true, mergedInto: null } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'area-1', dataObj: { name: 'Bar' } }]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'i1', dataObj: { name: 'Champagne', productId: 'prod-a', lastCount: 3 } },
+        { id: 'i2', dataObj: { name: 'Champagne', productId: 'prod-b', lastCount: 2 } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'd1', dataObj: { name: 'Bar Dept' } }]));
+    ff.getDoc
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ name: 'Bar Dept' }) })
+      .mockResolvedValueOnce({ exists: () => false })
+      .mockResolvedValueOnce({ exists: () => false });
+
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    for (const call of mockBatch.set.mock.calls) {
+      const payload = call[1];
+      expect(hasUndefinedDeep(payload)).toBe(false);
+    }
   });
 });

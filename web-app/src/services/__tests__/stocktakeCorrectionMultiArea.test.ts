@@ -211,6 +211,48 @@ describe('commitCorrection — per-area update path', () => {
   });
 });
 
+// ── No undefined in batch write payloads ─────────────────────────────────────
+
+function hasUndefinedDeep(obj: unknown): boolean {
+  if (Array.isArray(obj)) return (obj as unknown[]).some(hasUndefinedDeep);
+  if (obj !== null && typeof obj === 'object') {
+    return Object.values(obj as object).some(v => v === undefined || hasUndefinedDeep(v));
+  }
+  return false;
+}
+
+describe('commitCorrection — no undefined in batch.update payloads', () => {
+  beforeEach(() => {
+    resetMocks();
+    // Item that previously had ambiguousName: undefined (the bug) — simulates
+    // a snapshot written by the buggy writer where ...item spread propagates undefined.
+    const item = {
+      name: 'Beer',
+      actualClosing: 5,
+      openingCount: 4,
+      costPrice: 3,
+      varianceReliable: true,
+      ambiguousName: undefined,  // would have been emitted by buggy writer
+      areas: [{ areaId: 'a1', areaName: 'Bar', actualClosing: 5, areaItemId: undefined }],
+    };
+    mockGetDoc
+      .mockResolvedValueOnce(makeSnapshotDoc([item]))
+      .mockResolvedValueOnce({ exists: () => false });
+    mockGetDocs.mockResolvedValue({ docs: [] });
+  });
+
+  it('batch.update payloads contain no undefined values', async () => {
+    await commitCorrection({ ...BASE_ARGS, rawItemName: 'Beer', newActualClosing: 7 });
+
+    for (const call of mockBatchUpdate.mock.calls) {
+      const payload = call[1];
+      if (payload?.items != null) {
+        expect(hasUndefinedDeep(payload)).toBe(false);
+      }
+    }
+  });
+});
+
 // ── commitCorrection — single-area path (existing behaviour unchanged) ────────
 
 describe('commitCorrection — single-area path (unchanged)', () => {

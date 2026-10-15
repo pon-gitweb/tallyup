@@ -3,6 +3,7 @@ import {
   collection, getDocs, doc, getDoc, setDoc, writeBatch, deleteDoc,
   query, where, orderBy, limit, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
+import { stripUndefinedDeep } from '../../utils/stripUndefinedDeep';
 import { getAuth } from 'firebase/auth';
 import { resolveProductChain, type ProdEntry } from '../products/resolveProduct';
 import { isReportActive } from '../sales/isReportActive';
@@ -178,8 +179,8 @@ export function computeSnapshotItemFigures(
       lastCountAt: item.lastCountAt || null,
 
       areas: item._areas ?? null,
-      varianceReliable: item._ambiguous === true ? false : (item._areas != null ? true : undefined),
-      ambiguousName: item._ambiguous === true || undefined,
+      varianceReliable: item._ambiguous === true ? false : true,
+      ...(item._ambiguous === true ? { ambiguousName: true as const } : {}),
 
       _rawProductId: item.productId || null,
       _resolvedProductId,
@@ -864,9 +865,9 @@ export async function writeDepartmentSnapshot(
     // Write snapshot doc + all chunks atomically; delete any stale chunk docs
     const chunksColRef = collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', snapshotId, 'itemChunks');
     const batch = writeBatch(db);
-    batch.set(snapshotDocRef, snapshot);
+    batch.set(snapshotDocRef, stripUndefinedDeep(snapshot));
     for (let i = 0; i < itemChunks.length; i++) {
-      batch.set(doc(chunksColRef, String(i).padStart(3, '0')), { index: i, items: itemChunks[i] });
+      batch.set(doc(chunksColRef, String(i).padStart(3, '0')), stripUndefinedDeep({ index: i, items: itemChunks[i] }));
     }
     for (let i = newChunkCount; i < oldChunkCount; i++) {
       batch.delete(doc(chunksColRef, String(i).padStart(3, '0')));

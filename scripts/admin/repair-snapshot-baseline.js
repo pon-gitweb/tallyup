@@ -52,6 +52,18 @@ function fmtDollars(n) {
   return `$${n < 0 ? '-' : ''}${Math.abs(n).toFixed(2)}`;
 }
 
+function stripUndefinedDeep(obj) {
+  if (Array.isArray(obj)) return obj.map(stripUndefinedDeep);
+  if (obj !== null && typeof obj === 'object') {
+    const result = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v !== undefined) result[k] = stripUndefinedDeep(v);
+    }
+    return result;
+  }
+  return obj;
+}
+
 // Re-derive all per-item fields that depend on openingCount, matching
 // snapshotWriter.ts computeSnapshotItemFigures exactly.
 function repairItems(targetItems, baselineItems, baseCycleNumber) {
@@ -412,7 +424,7 @@ function aggregateAreaItemsToProducts(rawItems, liveProductIds, resolvedIdById) 
       parLevel: typeof base.parLevel === 'number' ? base.parLevel : null,
       areas,
       varianceReliable: ambiguous ? false : true,
-      ambiguousName: ambiguous || undefined,
+      ...(ambiguous ? { ambiguousName: true } : {}),
     });
   }
 
@@ -656,11 +668,11 @@ async function mainFromStored() {
   };
 
   const batch = db.batch();
-  batch.set(targetRef, repairedSnapshot);
+  batch.set(targetRef, stripUndefinedDeep(repairedSnapshot));
   const chunksRef = targetRef.collection('itemChunks');
   for (let i = 0; i < newChunkCount; i++) {
     const chunkId = String(i).padStart(3, '0');
-    batch.set(chunksRef.doc(chunkId), { index: i, items: repairedItems.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE) });
+    batch.set(chunksRef.doc(chunkId), stripUndefinedDeep({ index: i, items: repairedItems.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE) }));
   }
   for (let i = newChunkCount; i < oldChunkCount; i++) {
     batch.delete(chunksRef.doc(String(i).padStart(3, '0')));
@@ -787,15 +799,15 @@ async function main() {
   };
 
   const batch = db.batch();
-  batch.set(targetRef, repairedSnapshot);
+  batch.set(targetRef, stripUndefinedDeep(repairedSnapshot));
 
   const chunksRef = targetRef.collection('itemChunks');
   for (let i = 0; i < newChunkCount; i++) {
     const chunkId = String(i).padStart(3, '0');
-    batch.set(chunksRef.doc(chunkId), {
+    batch.set(chunksRef.doc(chunkId), stripUndefinedDeep({
       index: i,
       items: repairedItems.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
-    });
+    }));
   }
   for (let i = newChunkCount; i < oldChunkCount; i++) {
     batch.delete(chunksRef.doc(String(i).padStart(3, '0')));

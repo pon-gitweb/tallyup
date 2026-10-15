@@ -18,6 +18,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore'
 import { loadSnapshotItems } from '../utils/snapshotItems'
+import { stripUndefinedDeep } from '../utils/stripUndefinedDeep'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -443,12 +444,12 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
   const summaryN = computeSummary(updatedItemsN, snapN.summary)
   const batch = writeBatch(db)
 
-  batch.update(snapN.snapshotRef, { items: updatedItemsN.slice(0, 200), summary: summaryN })
+  batch.update(snapN.snapshotRef, stripUndefinedDeep({ items: updatedItemsN.slice(0, 200), summary: summaryN }))
   if (updatedItemsN.length > 200) {
     const chunkIdxN = Math.floor(idxN / 200)
-    batch.update(doc(collection(snapN.snapshotRef, 'itemChunks'), String(chunkIdxN).padStart(3, '0')), {
+    batch.update(doc(collection(snapN.snapshotRef, 'itemChunks'), String(chunkIdxN).padStart(3, '0')), stripUndefinedDeep({
       items: updatedItemsN.slice(chunkIdxN * 200, (chunkIdxN + 1) * 200),
-    })
+    }))
   }
 
   // Check for downstream cycle and update its openingCount
@@ -476,12 +477,12 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
       }
 
       const summaryN1 = computeSummary(updatedItemsN1, snapN1.summary)
-      batch.update(snapN1.snapshotRef, { items: updatedItemsN1.slice(0, 200), summary: summaryN1 })
+      batch.update(snapN1.snapshotRef, stripUndefinedDeep({ items: updatedItemsN1.slice(0, 200), summary: summaryN1 }))
       if (updatedItemsN1.length > 200) {
         const chunkIdxN1 = Math.floor(idxN1 / 200)
-        batch.update(doc(collection(snapN1.snapshotRef, 'itemChunks'), String(chunkIdxN1).padStart(3, '0')), {
+        batch.update(doc(collection(snapN1.snapshotRef, 'itemChunks'), String(chunkIdxN1).padStart(3, '0')), stripUndefinedDeep({
           items: updatedItemsN1.slice(chunkIdxN1 * 200, (chunkIdxN1 + 1) * 200),
-        })
+        }))
       }
       downstreamUpdated = true
     }

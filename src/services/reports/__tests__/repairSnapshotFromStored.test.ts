@@ -341,6 +341,42 @@ describe('buildRawItemsFromStoredSync — legacy granularity', () => {
   });
 });
 
+// ── No undefined in aggregation output ───────────────────────────────────────
+
+function hasUndefinedDeep(obj: unknown): boolean {
+  if (Array.isArray(obj)) return (obj as unknown[]).some(hasUndefinedDeep);
+  if (obj !== null && typeof obj === 'object') {
+    return Object.values(obj as object).some(v => v === undefined || hasUndefinedDeep(v));
+  }
+  return false;
+}
+
+describe('aggregateAreaItemsToProducts — no undefined in output', () => {
+  it('ambiguous item: no undefined in any product or area entry', () => {
+    const liveIds = new Set(['prod-a', 'prod-b']);
+    const rawItems = [
+      { _id: 'prod-a', _areaId: 'a1', _areaName: 'Bar',    productId: 'prod-a', name: 'Champagne', lastCount: 3 },
+      { _id: 'prod-b', _areaId: 'a2', _areaName: 'Cellar', productId: 'prod-b', name: 'Champagne', lastCount: 5 },
+      { _id: null,     _areaId: 'a3', _areaName: 'Fridge', productId: null,     name: 'Champagne', lastCount: 2 },
+    ];
+    const { products } = aggregateAreaItemsToProducts(rawItems, liveIds);
+    expect(hasUndefinedDeep(products)).toBe(false);
+    const ambiguous = products.find((p: any) => p.ambiguousName === true);
+    expect(ambiguous).toBeDefined();
+    expect(ambiguous?.varianceReliable).toBe(false);
+  });
+
+  it('non-ambiguous item: no undefined in output, ambiguousName absent', () => {
+    const liveIds = new Set(['prod-x']);
+    const rawItems = [
+      { _id: 'prod-x', _areaId: 'a1', _areaName: 'Bar', productId: 'prod-x', name: 'Beer', lastCount: 6 },
+    ];
+    const { products } = aggregateAreaItemsToProducts(rawItems, liveIds);
+    expect(hasUndefinedDeep(products)).toBe(false);
+    expect('ambiguousName' in products[0]).toBe(false);
+  });
+});
+
 // ── repairItems: uses baseline to compute openingCount and variance ────────────
 
 describe('repairItems', () => {
