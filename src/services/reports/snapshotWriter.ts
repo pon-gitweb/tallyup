@@ -7,6 +7,7 @@ import { getAuth } from 'firebase/auth';
 import { resolveProduct, type ProdEntry } from '../products/resolveProduct';
 import { isReportActive } from '../sales/isReportActive';
 import { loadSnapshotItems } from '../../utils/snapshotItems';
+import { productKey, toProductItems } from '../../utils/productSnapshotItems';
 
 function toMs(val: any): number | null {
   if (!val) return null;
@@ -105,7 +106,9 @@ export function computeSnapshotItemFigures(
       : null;
 
     const openingCount: number | null = cycleNumber > 0
-      ? (prevItemMap.has(rawName) ? prevItemMap.get(rawName)! : null)
+      ? ((_resolvedProductId != null && prevItemMap.has(_resolvedProductId))
+          ? prevItemMap.get(_resolvedProductId)!
+          : prevItemMap.has(rawName) ? prevItemMap.get(rawName)! : null)
       : null;
 
     const actualClosing = typeof item.lastCount === 'number' ? item.lastCount : 0;
@@ -172,6 +175,9 @@ export function computeSnapshotItemFigures(
       lastCountBy: item.lastCountBy || null,
       lastCountByName: item.lastCountByName || null,
       lastCountAt: item.lastCountAt || null,
+
+      areas: item._areas ?? null,
+      varianceReliable: item._areas != null ? true : undefined,
 
       _rawProductId: item.productId || null,
       _resolvedProductId,
@@ -355,7 +361,7 @@ export async function writeDepartmentSnapshot(
     const departmentName: string = deptData.name || departmentId;
 
     // ── Load previous cycle snapshot for openingCount — with gap fallback ────
-    const prevItemMap = new Map<string, number>(); // name.toLowerCase() → actualClosing
+    const prevItemMap = new Map<string, number>(); // productId or name.toLowerCase() → actualClosing
     let baselineCycleNumber: number | undefined;
     let baselineGapNote: string | null = null;
     if (cycleNumber > 0) {
@@ -370,10 +376,13 @@ export async function writeDepartmentSnapshot(
             getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', prevSnapshotId, 'itemChunks'))
               .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
           );
-          for (const item of prevItems) {
-            const key = (item.name || '').toLowerCase().trim();
-            if (key && typeof item.actualClosing === 'number') {
-              prevItemMap.set(key, item.actualClosing);
+          for (const item of toProductItems(prevItems, prevData.itemsGranularity)) {
+            if (item.varianceReliable === false) continue;
+            const pKey = productKey(item);
+            if (typeof item.actualClosing === 'number') {
+              if (pKey) prevItemMap.set(pKey, item.actualClosing);
+              const nameKey = (item.name || '').toLowerCase().trim();
+              if (nameKey && nameKey !== pKey) prevItemMap.set(nameKey, item.actualClosing);
             }
           }
           baselineCycleNumber = cycleNumber - 1;
@@ -400,10 +409,13 @@ export async function writeDepartmentSnapshot(
                 getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', fallbackDoc.id, 'itemChunks'))
                   .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
               );
-              for (const item of fallbackItems) {
-                const key = (item.name || '').toLowerCase().trim();
-                if (key && typeof item.actualClosing === 'number') {
-                  prevItemMap.set(key, item.actualClosing);
+              for (const item of toProductItems(fallbackItems, fallbackData.itemsGranularity)) {
+                if (item.varianceReliable === false) continue;
+                const pKey = productKey(item);
+                if (typeof item.actualClosing === 'number') {
+                  if (pKey) prevItemMap.set(pKey, item.actualClosing);
+                  const nameKey = (item.name || '').toLowerCase().trim();
+                  if (nameKey && nameKey !== pKey) prevItemMap.set(nameKey, item.actualClosing);
                 }
               }
               console.warn('[snapshotWriter] baseline fallback used:', baselineGapNote);
@@ -531,9 +543,46 @@ export async function writeDepartmentSnapshot(
       }
     } catch (e: any) { console.warn('[snapshotWriter] sales enrichment failed:', e?.message); }
 
+    // ── Aggregate per-area rawItems to product-level ─────────────────────────
+    // Each product may appear in multiple areas; sum lastCount across all areas
+    // so variance is computed once per product against a single baseline figure.
+    type AggEntry = { base: any; areas: any[]; sumLastCount: number; areaNames: Set<string> };
+    const aggMap = new Map<string, AggEntry>();
+    for (const item of rawItems) {
+      const key = productKey({ productId: item.productId || item._id, name: item.name });
+      const lastCnt = typeof item.lastCount === 'number' ? item.lastCount : 0;
+      const areaEntry = {
+        areaId: item._areaId ?? null,
+        areaName: item._areaName ?? null,
+        actualClosing: lastCnt,
+        lastCountAt: item.lastCountAt ?? null,
+        lastCountBy: item.lastCountBy ?? null,
+        lastCountByName: item.lastCountByName ?? null,
+      };
+      if (!aggMap.has(key)) {
+        aggMap.set(key, { base: item, areas: [areaEntry], sumLastCount: lastCnt, areaNames: new Set([item._areaName ?? '']) });
+      } else {
+        const e = aggMap.get(key)!;
+        e.areas.push(areaEntry);
+        e.sumLastCount += lastCnt;
+        if (item._areaName) e.areaNames.add(item._areaName);
+      }
+    }
+    const areaRowsCounted = rawItems.length;
+    const aggregatedRawItems = Array.from(aggMap.values()).map(({ base, areas, sumLastCount, areaNames }) => {
+      const distinctNames = [...areaNames].filter(Boolean);
+      return {
+        ...base,
+        lastCount: sumLastCount,
+        _areaId: areas.length === 1 ? areas[0].areaId : null,
+        _areaName: distinctNames.join(', ') || base._areaName,
+        _areas: areas,
+      };
+    });
+
     // ── Pure computation ──────────────────────────────────────────────────────
     const { snapshotItems, hasBaseline, hasPrices, totalPricedItems, hasInvoices, hasSales, likelyMissingInvoices } =
-      computeSnapshotItemFigures(rawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines, productResolution, supplierResolution, baselineCycleNumber);
+      computeSnapshotItemFigures(aggregatedRawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines, productResolution, supplierResolution, baselineCycleNumber);
 
     // STEP C — PO reconciliation
     const poDiscrepancies: any[] = [];
@@ -627,8 +676,8 @@ export async function writeDepartmentSnapshot(
     const unexplainedVarianceDollars = hasPrices
       ? snapshotItems.reduce((s, si) => s + (si.unexplainedVarianceDollars ?? 0), 0)
       : null;
-    const pricedItemPercent = rawItems.length > 0
-      ? Math.round((totalPricedItems / rawItems.length) * 100)
+    const pricedItemPercent = aggregatedRawItems.length > 0
+      ? Math.round((totalPricedItems / aggregatedRawItems.length) * 100)
       : 0;
 
     // FIX 8 — Data quality validation
@@ -664,6 +713,7 @@ export async function writeDepartmentSnapshot(
 
     const summary = {
       totalItemsCounted: snapshotItems.length,
+      areaRowsCounted,
       totalItemsWithVariance: snapshotItems.filter(si => si.totalVarianceQty !== 0).length,
       totalStockValue,
       totalVarianceQty: snapshotItems.reduce((s, si) => s + si.totalVarianceQty, 0),
@@ -731,6 +781,7 @@ export async function writeDepartmentSnapshot(
       durationMinutes,
       baselineCycleNumber: baselineCycleNumber ?? null,
       baselineGapNote,
+      itemsGranularity: 'product' as const,
       dataCompleteness,
       summary,
       items: cleanItems,
@@ -804,7 +855,8 @@ export async function writeDepartmentSnapshot(
     });
 
     console.log(`[snapshotWriter] cycle-${cycleNumber} written for dept ${departmentId}`, {
-      items: allCleanItems.length,
+      products: allCleanItems.length,
+      areaRows: areaRowsCounted,
       chunks: newChunkCount,
       hasBaseline,
       hasInvoices,
