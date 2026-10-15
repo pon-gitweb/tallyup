@@ -19,6 +19,15 @@ describe('repair script productKey', () => {
   it('falls back to normalised name when no productId', () => {
     expect(productKey({ name: 'Pinot Noir' })).toBe('pinot noir');
   });
+
+  it('collapses multiple spaces in name', () => {
+    expect(productKey({ name: 'Gin  1L' })).toBe('gin 1l');
+  });
+
+  it('does NOT use _id as productId fallback', () => {
+    // _id must never become the grouping key — items without productId fall back to name
+    expect(productKey({ _id: 'some-id', name: 'Vodka' })).toBe('vodka');
+  });
 });
 
 // ── toProductItemsForRepair ───────────────────────────────────────────────────

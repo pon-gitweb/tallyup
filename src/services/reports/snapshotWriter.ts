@@ -7,7 +7,8 @@ import { getAuth } from 'firebase/auth';
 import { resolveProduct, type ProdEntry } from '../products/resolveProduct';
 import { isReportActive } from '../sales/isReportActive';
 import { loadSnapshotItems } from '../../utils/snapshotItems';
-import { productKey, toProductItems } from '../../utils/productSnapshotItems';
+import { normaliseName, productKey, toProductItems } from '../../utils/productSnapshotItems';
+import { getParLevel } from '../../utils/productFields';
 
 function toMs(val: any): number | null {
   if (!val) return null;
@@ -321,11 +322,13 @@ export async function writeDepartmentSnapshot(
     // Declared before the try block so both productResolution and supplierResolution
     // are built in the same pass — productsSnap stays in scope for both.
     const supplierResolution: SupplierResolution = { supplierInfoByProductId: {} };
+    const parByProductId: Record<string, number | null> = {}; // resolved product id → parLevel
     try {
       const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
       // ProdEntry shape matches resolveProduct()'s expectations — same type used by
       // src/services/products/resolveProduct.ts (shared, no duplicate logic here).
       const prodById: Record<string, ProdEntry> = {};
+      const rawParByDocId: Record<string, number | null> = {};
       productsSnap.forEach(d => {
         const p = d.data() as any;
         prodById[d.id] = {
@@ -335,6 +338,7 @@ export async function writeDepartmentSnapshot(
           active: typeof p.active === 'boolean' ? p.active : undefined,
           mergedInto: p.mergedInto ?? null,
         };
+        rawParByDocId[d.id] = getParLevel(p);
         // Supplier info stamped in the same pass — no extra Firestore read required.
         // Firestore product schema fields: primarySupplierId / primarySupplierName.
         supplierResolution.supplierInfoByProductId[d.id] = {
@@ -348,6 +352,10 @@ export async function writeDepartmentSnapshot(
           productResolution.resolvedIdById[d.id] = resolved.id;
           const name = prodById[d.id].name;
           if (name) productResolution.resolvedIdByName[name] = resolved.id;
+          // parLevel from survivor doc — rawParByDocId[resolved.id] is the survivor's value
+          if (parByProductId[resolved.id] === undefined) {
+            parByProductId[resolved.id] = rawParByDocId[resolved.id] ?? null;
+          }
         }
       });
     } catch (e: any) {
@@ -381,7 +389,7 @@ export async function writeDepartmentSnapshot(
             const pKey = productKey(item);
             if (typeof item.actualClosing === 'number') {
               if (pKey) prevItemMap.set(pKey, item.actualClosing);
-              const nameKey = (item.name || '').toLowerCase().trim();
+              const nameKey = normaliseName(item.name);
               if (nameKey && nameKey !== pKey) prevItemMap.set(nameKey, item.actualClosing);
             }
           }
@@ -414,7 +422,7 @@ export async function writeDepartmentSnapshot(
                 const pKey = productKey(item);
                 if (typeof item.actualClosing === 'number') {
                   if (pKey) prevItemMap.set(pKey, item.actualClosing);
-                  const nameKey = (item.name || '').toLowerCase().trim();
+                  const nameKey = normaliseName(item.name);
                   if (nameKey && nameKey !== pKey) prevItemMap.set(nameKey, item.actualClosing);
                 }
               }
@@ -546,10 +554,13 @@ export async function writeDepartmentSnapshot(
     // ── Aggregate per-area rawItems to product-level ─────────────────────────
     // Each product may appear in multiple areas; sum lastCount across all areas
     // so variance is computed once per product against a single baseline figure.
-    type AggEntry = { base: any; areas: any[]; sumLastCount: number; areaNames: Set<string> };
+    type AggEntry = { base: any; areas: any[]; sumLastCount: number; areaNames: Set<string>; resolvedPid: string | null };
     const aggMap = new Map<string, AggEntry>();
     for (const item of rawItems) {
-      const key = productKey({ productId: item.productId || item._id, name: item.name });
+      const resolvedPid = item.productId
+        ? (productResolution.resolvedIdById[item.productId] ?? item.productId)
+        : null;
+      const key = resolvedPid || normaliseName(item.name);
       const lastCnt = typeof item.lastCount === 'number' ? item.lastCount : 0;
       const areaEntry = {
         areaId: item._areaId ?? null,
@@ -560,7 +571,7 @@ export async function writeDepartmentSnapshot(
         lastCountByName: item.lastCountByName ?? null,
       };
       if (!aggMap.has(key)) {
-        aggMap.set(key, { base: item, areas: [areaEntry], sumLastCount: lastCnt, areaNames: new Set([item._areaName ?? '']) });
+        aggMap.set(key, { base: item, areas: [areaEntry], sumLastCount: lastCnt, areaNames: new Set([item._areaName ?? '']), resolvedPid });
       } else {
         const e = aggMap.get(key)!;
         e.areas.push(areaEntry);
@@ -569,14 +580,18 @@ export async function writeDepartmentSnapshot(
       }
     }
     const areaRowsCounted = rawItems.length;
-    const aggregatedRawItems = Array.from(aggMap.values()).map(({ base, areas, sumLastCount, areaNames }) => {
+    const aggregatedRawItems = Array.from(aggMap.values()).map(({ base, areas, sumLastCount, areaNames, resolvedPid }) => {
       const distinctNames = [...areaNames].filter(Boolean);
+      const productParLevel = resolvedPid != null && parByProductId[resolvedPid] != null
+        ? parByProductId[resolvedPid]
+        : (typeof base.parLevel === 'number' ? base.parLevel : null);
       return {
         ...base,
         lastCount: sumLastCount,
         _areaId: areas.length === 1 ? areas[0].areaId : null,
         _areaName: distinctNames.join(', ') || base._areaName,
         _areas: areas,
+        parLevel: productParLevel,
       };
     });
 

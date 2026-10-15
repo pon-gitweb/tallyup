@@ -58,14 +58,14 @@ function repairItems(targetItems, baselineItems, baseCycleNumber) {
   // Build name → actualClosing map from baseline snapshot
   const prevMap = new Map();
   for (const bi of baselineItems) {
-    const key = (bi.name || '').toLowerCase().trim();
+    const key = normaliseName(bi.name);
     if (key && typeof bi.actualClosing === 'number') {
       prevMap.set(key, bi.actualClosing);
     }
   }
 
   return targetItems.map(item => {
-    const rawName = (item.name || '').toLowerCase().trim();
+    const rawName = normaliseName(item.name);
     const openingCount = prevMap.has(rawName) ? prevMap.get(rawName) : null;
     const actualClosing = typeof item.actualClosing === 'number' ? item.actualClosing : 0;
     const costPrice = typeof item.costPrice === 'number' ? item.costPrice : null;
@@ -171,10 +171,14 @@ function snapshotSummaryLine(summary) {
 }
 
 // ── productKey: mirrors src/utils/productSnapshotItems.ts ────────────────────
+function normaliseName(name) {
+  return (name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
 function productKey(item) {
   const pid = typeof item.productId === 'string' && item.productId ? item.productId : null;
   if (pid) return pid;
-  return (item.name || '').toLowerCase().trim();
+  return normaliseName(item.name);
 }
 
 // ── toProductItems: aggregate legacy per-area rows to product-level ───────────
@@ -230,7 +234,7 @@ async function loadAreaItems(dbInst, venueId, deptId) {
 function aggregateAreaItemsToProducts(rawItems) {
   const aggMap = new Map();
   for (const item of rawItems) {
-    const key = productKey({ productId: item.productId || item._id, name: item.name });
+    const key = productKey({ productId: item.productId, name: item.name });
     const lastCnt = typeof item.lastCount === 'number' ? item.lastCount : 0;
     const areaEntry = {
       areaId: item._areaId ?? null,

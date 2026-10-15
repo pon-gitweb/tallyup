@@ -788,3 +788,203 @@ describe('computeSnapshotItemFigures — productId-keyed prevItemMap + areas out
     expect(snapshotItems[0].varianceReliable).toBeUndefined();
   });
 });
+
+// ── Suite: writeDepartmentSnapshot — resolved productId grouping (Item 1) ─────
+
+describe('writeDepartmentSnapshot — resolved productId grouping', () => {
+  const ff = jest.requireMock('firebase/firestore') as {
+    getDocs: jest.Mock;
+    getDoc: jest.Mock;
+    setDoc: jest.Mock;
+    writeBatch: jest.Mock;
+    collection: jest.Mock;
+    doc: jest.Mock;
+    query: jest.Mock;
+    where: jest.Mock;
+    orderBy: jest.Mock;
+    limit: jest.Mock;
+  };
+
+  function fakeQSnap(docs: Array<{ id: string; dataObj: Record<string, any> }>) {
+    const fakeDocs = docs.map(({ id, dataObj }) => ({ id, data: () => dataObj }));
+    return {
+      docs: fakeDocs,
+      empty: fakeDocs.length === 0,
+      size: fakeDocs.length,
+      forEach: (fn: (d: any) => void) => fakeDocs.forEach(fn),
+    };
+  }
+
+  function setupCommonMocks() {
+    ff.collection.mockReturnValue({ _ref: 'coll' });
+    ff.doc.mockReturnValue({ _ref: 'doc' });
+    ff.query.mockReturnValue({ _ref: 'query' });
+    ff.where.mockReturnValue({ _ref: 'where' });
+    ff.orderBy.mockReturnValue({ _ref: 'orderBy' });
+    ff.limit.mockReturnValue({ _ref: 'limit' });
+    ff.setDoc.mockResolvedValue(undefined);
+    mockBatch.set.mockReset();
+    mockBatch.delete.mockReset();
+    mockBatch.commit.mockReset().mockResolvedValue(undefined);
+    ff.writeBatch.mockReturnValue(mockBatch);
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setupCommonMocks();
+  });
+
+  it('two area rows with different raw productIds that resolve to same product → one snapshot item', async () => {
+    // prod-old mergedInto prod-new; the writer should group them under prod-new
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'prod-new', dataObj: { name: 'Wine', active: true, mergedInto: null, parLevel: 6 } },
+        { id: 'prod-old', dataObj: { name: 'Wine Old', active: false, mergedInto: 'prod-new' } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'area-1', dataObj: { name: 'Bar' } },
+        { id: 'area-2', dataObj: { name: 'Cellar' } },
+      ]))
+      // items in area-1 (prod-new)
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'i1', dataObj: { name: 'Wine', productId: 'prod-new', lastCount: 4 } },
+      ]))
+      // items in area-2 (prod-old — same product, different raw id)
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'i2', dataObj: { name: 'Wine Old', productId: 'prod-old', lastCount: 6 } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'd1', dataObj: { name: 'Bar Dept' } }]));
+
+    ff.getDoc
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ name: 'Bar Dept' }) })
+      .mockResolvedValueOnce({ exists: () => false })
+      .mockResolvedValueOnce({ exists: () => false });
+
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    const [, snapshotData] = mockBatch.set.mock.calls[0];
+    expect(snapshotData.items).toHaveLength(1);
+    expect(snapshotData.items[0].actualClosing).toBe(10); // 4 + 6
+  });
+
+  it('row without productId groups with a same-named row (name normalisation)', async () => {
+    // Two area rows: one has a productId, one does not but has the same name (normalised)
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'prod-beer', dataObj: { name: 'Beer', active: true, mergedInto: null } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'area-1', dataObj: { name: 'Bar' } },
+        { id: 'area-2', dataObj: { name: 'Fridge' } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'i1', dataObj: { name: 'Beer', productId: 'prod-beer', lastCount: 3 } },
+      ]))
+      // area-2 row has no productId but same name
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'i2', dataObj: { name: 'Beer', lastCount: 5 } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'd1', dataObj: { name: 'Bar Dept' } }]));
+
+    ff.getDoc
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ name: 'Bar Dept' }) })
+      .mockResolvedValueOnce({ exists: () => false })
+      .mockResolvedValueOnce({ exists: () => false });
+
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    const [, snapshotData] = mockBatch.set.mock.calls[0];
+    // prod-beer row has productId → key = 'prod-beer'; no-productId row falls back to normaliseName('Beer') = 'beer'
+    // They have different keys — only mergedInto chain collapses ids; name alone cannot auto-merge a productId row
+    expect(snapshotData.items).toHaveLength(2);
+    expect(snapshotData.items.map((i: any) => i.actualClosing).sort((a: number, b: number) => a - b)).toEqual([3, 5]);
+  });
+});
+
+// ── Suite: writeDepartmentSnapshot — PAR from product doc (Item 2) ────────────
+
+describe('writeDepartmentSnapshot — PAR from product doc', () => {
+  const ff = jest.requireMock('firebase/firestore') as {
+    getDocs: jest.Mock;
+    getDoc: jest.Mock;
+    setDoc: jest.Mock;
+    writeBatch: jest.Mock;
+    collection: jest.Mock;
+    doc: jest.Mock;
+    query: jest.Mock;
+    where: jest.Mock;
+    orderBy: jest.Mock;
+    limit: jest.Mock;
+  };
+
+  function fakeQSnap(docs: Array<{ id: string; dataObj: Record<string, any> }>) {
+    const fakeDocs = docs.map(({ id, dataObj }) => ({ id, data: () => dataObj }));
+    return {
+      docs: fakeDocs,
+      empty: fakeDocs.length === 0,
+      size: fakeDocs.length,
+      forEach: (fn: (d: any) => void) => fakeDocs.forEach(fn),
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    ff.collection.mockReturnValue({ _ref: 'coll' });
+    ff.doc.mockReturnValue({ _ref: 'doc' });
+    ff.query.mockReturnValue({ _ref: 'query' });
+    ff.where.mockReturnValue({ _ref: 'where' });
+    ff.orderBy.mockReturnValue({ _ref: 'orderBy' });
+    ff.limit.mockReturnValue({ _ref: 'limit' });
+    ff.setDoc.mockResolvedValue(undefined);
+    mockBatch.set.mockReset();
+    mockBatch.delete.mockReset();
+    mockBatch.commit.mockReset().mockResolvedValue(undefined);
+    ff.writeBatch.mockReturnValue(mockBatch);
+  });
+
+  it('parLevel from product doc overrides area-row parLevel', async () => {
+    // Product doc has parLevel: 15; area row has parLevel: 5 (stale)
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'prod-gin', dataObj: { name: 'Gin', active: true, mergedInto: null, parLevel: 15 } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'area-1', dataObj: { name: 'Bar' } }]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'i1', dataObj: { name: 'Gin', productId: 'prod-gin', lastCount: 8, parLevel: 5 } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'd1', dataObj: { name: 'Bar Dept' } }]));
+
+    ff.getDoc
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ name: 'Bar Dept' }) })
+      .mockResolvedValueOnce({ exists: () => false })
+      .mockResolvedValueOnce({ exists: () => false });
+
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    const [, snapshotData] = mockBatch.set.mock.calls[0];
+    expect(snapshotData.items[0].parLevel).toBe(15); // product doc wins
+    expect(snapshotData.items[0].belowPAR).toBe(true); // 8 < 15
+  });
+
+  it('falls back to area-row parLevel when product doc has none', async () => {
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'prod-wine', dataObj: { name: 'Wine', active: true, mergedInto: null } }, // no parLevel
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'area-1', dataObj: { name: 'Bar' } }]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'i1', dataObj: { name: 'Wine', productId: 'prod-wine', lastCount: 10, parLevel: 8 } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'd1', dataObj: { name: 'Bar Dept' } }]));
+
+    ff.getDoc
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ name: 'Bar Dept' }) })
+      .mockResolvedValueOnce({ exists: () => false })
+      .mockResolvedValueOnce({ exists: () => false });
+
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    const [, snapshotData] = mockBatch.set.mock.calls[0];
+    expect(snapshotData.items[0].parLevel).toBe(8); // fallback to area row
+  });
+});

@@ -15,6 +15,10 @@ describe('productKey', () => {
     expect(productKey({ name: '  BEER  ' })).toBe('beer');
   });
 
+  it('collapses multiple spaces in name', () => {
+    expect(productKey({ name: 'Gin  1L' })).toBe('gin 1l');
+  });
+
   it('returns empty string for item with no productId or name', () => {
     expect(productKey({})).toBe('');
   });

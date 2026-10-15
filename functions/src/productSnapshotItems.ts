@@ -1,9 +1,16 @@
+// Normalise a product name for grouping: lowercase, trim, collapse runs of
+// whitespace to a single space.  Applied consistently in productKey and the
+// writer's aggregation step so "Gin  1L" and "Gin 1L" map to the same key.
+export function normaliseName(name: string): string {
+  return (name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
 // Stable grouping key for a snapshot item.
 // Uses productId when present; falls back to normalised name.
 export function productKey(item: any): string {
   const pid = typeof item.productId === 'string' && item.productId ? item.productId : null;
   if (pid) return pid;
-  return (item.name || '').toLowerCase().trim();
+  return normaliseName(item.name);
 }
 
 // Aggregate per-area snapshot items to product-level.
