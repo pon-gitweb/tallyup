@@ -60,6 +60,33 @@ export function buildProductMaps(prodSnap: QuerySnapshot<DocumentData>): ProdMap
 }
 
 /**
+ * Walk the mergedInto chain to the final survivor — the doc whose mergedInto is
+ * absent or null. Cycle-safe (visited Set), capped at 10 hops.
+ *
+ * Returns the survivor's document id, or null when the chain is unresolvable
+ * (cycle detected, missing doc in chain, or depth cap reached).
+ *
+ * "Live" in the snapshot writer means the survivor doc exists — this function
+ * is the canonical implementation for that resolution.
+ */
+export function resolveProductChain(
+  startId: string,
+  prodById: Record<string, ProdEntry>,
+): string | null {
+  let id = startId;
+  const visited = new Set<string>();
+  for (let hop = 0; hop < 10; hop++) {
+    if (visited.has(id)) return null; // cycle detected
+    visited.add(id);
+    const entry = prodById[id];
+    if (!entry) return null;          // doc missing in chain
+    if (!entry.mergedInto) return id; // no further pointer — this is the survivor
+    id = entry.mergedInto;
+  }
+  return null; // depth cap reached
+}
+
+/**
  * Walk the mergedInto chain to find the active survivor product.
  *
  * Returns { id, entry } when an active product is reached, null if unresolvable.

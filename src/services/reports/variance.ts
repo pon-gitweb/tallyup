@@ -138,6 +138,8 @@ export async function computeVarianceSnapshot(
         .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
     );
     for (const item of items) {
+      // Skip items where variance figures are unreliable (legacy multi-area aggregation)
+      if (item.varianceReliable === false) continue;
       // Only items with a baseline (openingCount known from previous cycle)
       if (item.openingCount == null) continue;
 

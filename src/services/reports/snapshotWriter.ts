@@ -3,10 +3,13 @@ import {
   collection, getDocs, doc, getDoc, setDoc, writeBatch, deleteDoc,
   query, where, orderBy, limit, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
+import { stripUndefinedDeep } from '../../utils/stripUndefinedDeep';
 import { getAuth } from 'firebase/auth';
-import { resolveProduct, type ProdEntry } from '../products/resolveProduct';
+import { resolveProductChain, type ProdEntry } from '../products/resolveProduct';
 import { isReportActive } from '../sales/isReportActive';
 import { loadSnapshotItems } from '../../utils/snapshotItems';
+import { normaliseName, productKey, toProductItems } from '../../utils/productSnapshotItems';
+import { getParLevel } from '../../utils/productFields';
 
 function toMs(val: any): number | null {
   if (!val) return null;
@@ -105,7 +108,9 @@ export function computeSnapshotItemFigures(
       : null;
 
     const openingCount: number | null = cycleNumber > 0
-      ? (prevItemMap.has(rawName) ? prevItemMap.get(rawName)! : null)
+      ? ((_resolvedProductId != null && prevItemMap.has(_resolvedProductId))
+          ? prevItemMap.get(_resolvedProductId)!
+          : prevItemMap.has(rawName) ? prevItemMap.get(rawName)! : null)
       : null;
 
     const actualClosing = typeof item.lastCount === 'number' ? item.lastCount : 0;
@@ -127,8 +132,8 @@ export function computeSnapshotItemFigures(
       : null;
 
     return {
-      productId: item._id,
-      name: item.name || item._id,
+      productId: item.productId ?? null,
+      name: item.name || null,
       areaId: item._areaId,
       areaName: item._areaName,
       categoryName: item.category ?? item.categorySuggested ?? null,
@@ -172,6 +177,10 @@ export function computeSnapshotItemFigures(
       lastCountBy: item.lastCountBy || null,
       lastCountByName: item.lastCountByName || null,
       lastCountAt: item.lastCountAt || null,
+
+      areas: item._areas ?? null,
+      varianceReliable: item._ambiguous === true ? false : true,
+      ...(item._ambiguous === true ? { ambiguousName: true as const } : {}),
 
       _rawProductId: item.productId || null,
       _resolvedProductId,
@@ -315,11 +324,14 @@ export async function writeDepartmentSnapshot(
     // Declared before the try block so both productResolution and supplierResolution
     // are built in the same pass — productsSnap stays in scope for both.
     const supplierResolution: SupplierResolution = { supplierInfoByProductId: {} };
+    const parByProductId: Record<string, number | null> = {}; // resolved product id → parLevel
+    const liveProductIds = new Set<string>(); // survivor ids only (docs with no mergedInto)
     try {
       const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
-      // ProdEntry shape matches resolveProduct()'s expectations — same type used by
+      // ProdEntry shape matches resolveProductChain()'s expectations — same type used by
       // src/services/products/resolveProduct.ts (shared, no duplicate logic here).
       const prodById: Record<string, ProdEntry> = {};
+      const rawParByDocId: Record<string, number | null> = {};
       productsSnap.forEach(d => {
         const p = d.data() as any;
         prodById[d.id] = {
@@ -329,6 +341,7 @@ export async function writeDepartmentSnapshot(
           active: typeof p.active === 'boolean' ? p.active : undefined,
           mergedInto: p.mergedInto ?? null,
         };
+        rawParByDocId[d.id] = getParLevel(p);
         // Supplier info stamped in the same pass — no extra Firestore read required.
         // Firestore product schema fields: primarySupplierId / primarySupplierName.
         supplierResolution.supplierInfoByProductId[d.id] = {
@@ -337,13 +350,19 @@ export async function writeDepartmentSnapshot(
         };
       });
       productsSnap.forEach(d => {
-        const resolved = resolveProduct(d.id, prodById);
-        if (resolved) {
-          productResolution.resolvedIdById[d.id] = resolved.id;
+        const survivorId = resolveProductChain(d.id, prodById);
+        if (survivorId != null) {
+          productResolution.resolvedIdById[d.id] = survivorId;
           const name = prodById[d.id].name;
-          if (name) productResolution.resolvedIdByName[name] = resolved.id;
+          if (name) productResolution.resolvedIdByName[name] = survivorId;
+          // parLevel from survivor doc — rawParByDocId[survivorId] is the survivor's value
+          if (parByProductId[survivorId] === undefined) {
+            parByProductId[survivorId] = rawParByDocId[survivorId] ?? null;
+          }
         }
       });
+      // liveProductIds = all survivor ids (values of resolvedIdById, which are final chain endpoints)
+      for (const v of Object.values(productResolution.resolvedIdById)) liveProductIds.add(v);
     } catch (e: any) {
       console.warn('[snapshotWriter] product/supplier resolution build failed (safe degrade):', e?.message);
     }
@@ -355,7 +374,7 @@ export async function writeDepartmentSnapshot(
     const departmentName: string = deptData.name || departmentId;
 
     // ── Load previous cycle snapshot for openingCount — with gap fallback ────
-    const prevItemMap = new Map<string, number>(); // name.toLowerCase() → actualClosing
+    const prevItemMap = new Map<string, number>(); // productId or name.toLowerCase() → actualClosing
     let baselineCycleNumber: number | undefined;
     let baselineGapNote: string | null = null;
     if (cycleNumber > 0) {
@@ -370,10 +389,13 @@ export async function writeDepartmentSnapshot(
             getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', prevSnapshotId, 'itemChunks'))
               .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
           );
-          for (const item of prevItems) {
-            const key = (item.name || '').toLowerCase().trim();
-            if (key && typeof item.actualClosing === 'number') {
-              prevItemMap.set(key, item.actualClosing);
+          for (const item of toProductItems(prevItems, prevData.itemsGranularity, liveProductIds)) {
+            if (item.varianceReliable === false) continue;
+            const pKey = productKey(item, liveProductIds);
+            if (typeof item.actualClosing === 'number') {
+              if (pKey) prevItemMap.set(pKey, item.actualClosing);
+              const nameKey = normaliseName(item.name);
+              if (nameKey && nameKey !== pKey) prevItemMap.set(nameKey, item.actualClosing);
             }
           }
           baselineCycleNumber = cycleNumber - 1;
@@ -400,10 +422,13 @@ export async function writeDepartmentSnapshot(
                 getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', fallbackDoc.id, 'itemChunks'))
                   .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
               );
-              for (const item of fallbackItems) {
-                const key = (item.name || '').toLowerCase().trim();
-                if (key && typeof item.actualClosing === 'number') {
-                  prevItemMap.set(key, item.actualClosing);
+              for (const item of toProductItems(fallbackItems, fallbackData.itemsGranularity, liveProductIds)) {
+                if (item.varianceReliable === false) continue;
+                const pKey = productKey(item, liveProductIds);
+                if (typeof item.actualClosing === 'number') {
+                  if (pKey) prevItemMap.set(pKey, item.actualClosing);
+                  const nameKey = normaliseName(item.name);
+                  if (nameKey && nameKey !== pKey) prevItemMap.set(nameKey, item.actualClosing);
                 }
               }
               console.warn('[snapshotWriter] baseline fallback used:', baselineGapNote);
@@ -531,9 +556,97 @@ export async function writeDepartmentSnapshot(
       }
     } catch (e: any) { console.warn('[snapshotWriter] sales enrichment failed:', e?.message); }
 
+    // ── Aggregate per-area rawItems to product-level ─────────────────────────
+    // Two-pass aggregation so rows with stale/area-row productIds group with the
+    // live product via name lookup. Ambiguous names (those mapping to >1 distinct
+    // survivor) are NOT added to nameToProductId — unlinked rows with such names
+    // get key 'name:'+n with _ambiguous=true so varianceReliable is set false.
+    //   Pass 1 — for every row whose resolved id is a live product doc, record
+    //            normalisedName → Set<survivorId>. Names with exactly one survivor
+    //            are added to nameToProductId.
+    //   Pass 2 — key = live resolved productId if present; else
+    //            nameToProductId[name] if present; else 'name:'+normalisedName.
+    const nameToSurvivorIds = new Map<string, Set<string>>();
+    for (const item of rawItems) {
+      if (!item.productId) continue;
+      const rPid = productResolution.resolvedIdById[item.productId] ?? item.productId;
+      if (liveProductIds.has(rPid)) {
+        const n = normaliseName(item.name);
+        if (n) {
+          if (!nameToSurvivorIds.has(n)) nameToSurvivorIds.set(n, new Set());
+          nameToSurvivorIds.get(n)!.add(rPid);
+        }
+      }
+    }
+    const nameToProductId = new Map<string, string>();
+    for (const [n, pids] of nameToSurvivorIds) {
+      if (pids.size === 1) nameToProductId.set(n, [...pids][0]);
+    }
+
+    type AggEntry = { base: any; areas: any[]; sumLastCount: number; areaNames: Set<string>; groupPid: string | null; ambiguous: boolean };
+    const aggMap = new Map<string, AggEntry>();
+    for (const item of rawItems) {
+      const n = normaliseName(item.name);
+      let groupPid: string | null = null;
+      let key: string;
+      let isAmbiguous = false;
+      if (item.productId) {
+        const rPid = productResolution.resolvedIdById[item.productId] ?? item.productId;
+        if (liveProductIds.has(rPid)) {
+          groupPid = rPid;
+          key = rPid;
+        } else {
+          isAmbiguous = (nameToSurvivorIds.get(n)?.size ?? 0) > 1;
+          groupPid = nameToProductId.get(n) ?? null;
+          key = groupPid ?? ('name:' + n);
+        }
+      } else {
+        isAmbiguous = (nameToSurvivorIds.get(n)?.size ?? 0) > 1;
+        groupPid = nameToProductId.get(n) ?? null;
+        key = groupPid ?? ('name:' + n);
+      }
+      const lastCnt = typeof item.lastCount === 'number' ? item.lastCount : 0;
+      const areaEntry = {
+        areaId: item._areaId ?? null,
+        areaName: item._areaName ?? null,
+        areaItemId: item._id ?? null,
+        actualClosing: lastCnt,
+        lastCountAt: item.lastCountAt ?? null,
+        lastCountBy: item.lastCountBy ?? null,
+        lastCountByName: item.lastCountByName ?? null,
+      };
+      if (!aggMap.has(key)) {
+        aggMap.set(key, { base: item, areas: [areaEntry], sumLastCount: lastCnt, areaNames: new Set([item._areaName ?? '']), groupPid, ambiguous: isAmbiguous });
+      } else {
+        const e = aggMap.get(key)!;
+        e.areas.push(areaEntry);
+        e.sumLastCount += lastCnt;
+        if (item._areaName) e.areaNames.add(item._areaName);
+        if (!e.groupPid && groupPid) e.groupPid = groupPid;
+        if (isAmbiguous) e.ambiguous = true;
+      }
+    }
+    const areaRowsCounted = rawItems.length;
+    const aggregatedRawItems = Array.from(aggMap.values()).map(({ base, areas, sumLastCount, areaNames, groupPid, ambiguous }) => {
+      const distinctNames = [...areaNames].filter(Boolean);
+      const productParLevel = groupPid != null && parByProductId[groupPid] != null
+        ? parByProductId[groupPid]
+        : (typeof base.parLevel === 'number' ? base.parLevel : null);
+      return {
+        ...base,
+        productId: groupPid ?? null,
+        _ambiguous: ambiguous || undefined,
+        lastCount: sumLastCount,
+        _areaId: areas.length === 1 ? areas[0].areaId : null,
+        _areaName: distinctNames.join(', ') || base._areaName,
+        _areas: areas,
+        parLevel: productParLevel,
+      };
+    });
+
     // ── Pure computation ──────────────────────────────────────────────────────
     const { snapshotItems, hasBaseline, hasPrices, totalPricedItems, hasInvoices, hasSales, likelyMissingInvoices } =
-      computeSnapshotItemFigures(rawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines, productResolution, supplierResolution, baselineCycleNumber);
+      computeSnapshotItemFigures(aggregatedRawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines, productResolution, supplierResolution, baselineCycleNumber);
 
     // STEP C — PO reconciliation
     const poDiscrepancies: any[] = [];
@@ -627,8 +740,8 @@ export async function writeDepartmentSnapshot(
     const unexplainedVarianceDollars = hasPrices
       ? snapshotItems.reduce((s, si) => s + (si.unexplainedVarianceDollars ?? 0), 0)
       : null;
-    const pricedItemPercent = rawItems.length > 0
-      ? Math.round((totalPricedItems / rawItems.length) * 100)
+    const pricedItemPercent = aggregatedRawItems.length > 0
+      ? Math.round((totalPricedItems / aggregatedRawItems.length) * 100)
       : 0;
 
     // FIX 8 — Data quality validation
@@ -664,6 +777,7 @@ export async function writeDepartmentSnapshot(
 
     const summary = {
       totalItemsCounted: snapshotItems.length,
+      areaRowsCounted,
       totalItemsWithVariance: snapshotItems.filter(si => si.totalVarianceQty !== 0).length,
       totalStockValue,
       totalVarianceQty: snapshotItems.reduce((s, si) => s + si.totalVarianceQty, 0),
@@ -731,6 +845,7 @@ export async function writeDepartmentSnapshot(
       durationMinutes,
       baselineCycleNumber: baselineCycleNumber ?? null,
       baselineGapNote,
+      itemsGranularity: 'product' as const,
       dataCompleteness,
       summary,
       items: cleanItems,
@@ -750,9 +865,9 @@ export async function writeDepartmentSnapshot(
     // Write snapshot doc + all chunks atomically; delete any stale chunk docs
     const chunksColRef = collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', snapshotId, 'itemChunks');
     const batch = writeBatch(db);
-    batch.set(snapshotDocRef, snapshot);
+    batch.set(snapshotDocRef, stripUndefinedDeep(snapshot));
     for (let i = 0; i < itemChunks.length; i++) {
-      batch.set(doc(chunksColRef, String(i).padStart(3, '0')), { index: i, items: itemChunks[i] });
+      batch.set(doc(chunksColRef, String(i).padStart(3, '0')), stripUndefinedDeep({ index: i, items: itemChunks[i] }));
     }
     for (let i = newChunkCount; i < oldChunkCount; i++) {
       batch.delete(doc(chunksColRef, String(i).padStart(3, '0')));
@@ -804,7 +919,8 @@ export async function writeDepartmentSnapshot(
     });
 
     console.log(`[snapshotWriter] cycle-${cycleNumber} written for dept ${departmentId}`, {
-      items: allCleanItems.length,
+      products: allCleanItems.length,
+      areaRows: areaRowsCounted,
       chunks: newChunkCount,
       hasBaseline,
       hasInvoices,

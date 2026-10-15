@@ -8,7 +8,7 @@
 //   (e) merged chain         — survivor's quantityConfidence wins over the defunct's;
 //                              the chain-walk returns the survivor's full entry intact
 
-import { buildProductMaps, resolveProduct, type ProdEntry } from '../resolveProduct';
+import { buildProductMaps, resolveProduct, resolveProductChain, type ProdEntry } from '../resolveProduct';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -135,5 +135,68 @@ describe('resolveProduct — quantityConfidence via merge-chain', () => {
 
     expect(result).not.toBeNull();
     expect(result!.entry.quantityConfidence).toBe('estimated_no_sales');
+  });
+});
+
+// ── resolveProductChain: survivor resolution ──────────────────────────────────
+
+describe('resolveProductChain', () => {
+  it('3-step chain A → B → C collapses to survivor C', () => {
+    const prodById: Record<string, ProdEntry> = {
+      'A': { name: 'a', category: 'x', mergedInto: 'B' },
+      'B': { name: 'b', category: 'x', mergedInto: 'C' },
+      'C': { name: 'c', category: 'x', mergedInto: null },
+    };
+    expect(resolveProductChain('A', prodById)).toBe('C');
+    expect(resolveProductChain('B', prodById)).toBe('C');
+    expect(resolveProductChain('C', prodById)).toBe('C');
+  });
+
+  it('single doc with no mergedInto returns itself', () => {
+    const prodById: Record<string, ProdEntry> = {
+      'X': { name: 'x', category: 'y', mergedInto: null },
+    };
+    expect(resolveProductChain('X', prodById)).toBe('X');
+  });
+
+  it('cycle detected: returns null', () => {
+    const prodById: Record<string, ProdEntry> = {
+      'A': { name: 'a', category: 'x', mergedInto: 'B' },
+      'B': { name: 'b', category: 'x', mergedInto: 'A' },
+    };
+    expect(resolveProductChain('A', prodById)).toBeNull();
+  });
+
+  it('missing doc in chain: returns null', () => {
+    const prodById: Record<string, ProdEntry> = {
+      'A': { name: 'a', category: 'x', mergedInto: 'B' },
+      // B is missing from prodById
+    };
+    expect(resolveProductChain('A', prodById)).toBeNull();
+  });
+
+  it('depth cap (11-hop chain beyond the 10-hop limit): returns null', () => {
+    const prodById: Record<string, ProdEntry> = {};
+    for (let i = 0; i < 11; i++) {
+      prodById[`p${i}`] = { name: `p${i}`, category: 'x', mergedInto: i < 10 ? `p${i + 1}` : null };
+    }
+    // p0 → p1 → ... → p10 (no mergedInto), but that's 11 hops total including p10
+    // Actually the chain is p0→p1→...→p10 = 10 hops, with p10 being the survivor.
+    // Use 12 nodes to exceed the 10-hop cap:
+    const prodById12: Record<string, ProdEntry> = {};
+    for (let i = 0; i < 12; i++) {
+      prodById12[`q${i}`] = { name: `q${i}`, category: 'x', mergedInto: i < 11 ? `q${i + 1}` : null };
+    }
+    // q0→q1→...→q11 = 11 hops; cap is 10 → returns null
+    expect(resolveProductChain('q0', prodById12)).toBeNull();
+  });
+
+  it('inactive survivor (active: false, no mergedInto) is still returned', () => {
+    // resolveProductChain follows chains to the doc with no mergedInto, regardless of active flag
+    const prodById: Record<string, ProdEntry> = {
+      'A': { name: 'a', category: 'x', active: true, mergedInto: 'B' },
+      'B': { name: 'b', category: 'x', active: false, mergedInto: null }, // inactive but is the survivor
+    };
+    expect(resolveProductChain('A', prodById)).toBe('B');
   });
 });
