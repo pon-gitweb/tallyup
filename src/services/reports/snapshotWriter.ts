@@ -4,7 +4,7 @@ import {
   query, where, orderBy, limit, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { resolveProduct, type ProdEntry } from '../products/resolveProduct';
+import { resolveProductChain, type ProdEntry } from '../products/resolveProduct';
 import { isReportActive } from '../sales/isReportActive';
 import { loadSnapshotItems } from '../../utils/snapshotItems';
 import { normaliseName, productKey, toProductItems } from '../../utils/productSnapshotItems';
@@ -178,7 +178,8 @@ export function computeSnapshotItemFigures(
       lastCountAt: item.lastCountAt || null,
 
       areas: item._areas ?? null,
-      varianceReliable: item._areas != null ? true : undefined,
+      varianceReliable: item._ambiguous === true ? false : (item._areas != null ? true : undefined),
+      ambiguousName: item._ambiguous === true || undefined,
 
       _rawProductId: item.productId || null,
       _resolvedProductId,
@@ -323,16 +324,15 @@ export async function writeDepartmentSnapshot(
     // are built in the same pass — productsSnap stays in scope for both.
     const supplierResolution: SupplierResolution = { supplierInfoByProductId: {} };
     const parByProductId: Record<string, number | null> = {}; // resolved product id → parLevel
-    const liveProductIds = new Set<string>(); // all product doc ids in the catalogue
+    const liveProductIds = new Set<string>(); // survivor ids only (docs with no mergedInto)
     try {
       const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
-      // ProdEntry shape matches resolveProduct()'s expectations — same type used by
+      // ProdEntry shape matches resolveProductChain()'s expectations — same type used by
       // src/services/products/resolveProduct.ts (shared, no duplicate logic here).
       const prodById: Record<string, ProdEntry> = {};
       const rawParByDocId: Record<string, number | null> = {};
       productsSnap.forEach(d => {
         const p = d.data() as any;
-        liveProductIds.add(d.id);
         prodById[d.id] = {
           name: (p.name || '').toLowerCase().trim(),
           category: p.category ?? p.categorySuggested ?? 'Uncategorised',
@@ -349,17 +349,19 @@ export async function writeDepartmentSnapshot(
         };
       });
       productsSnap.forEach(d => {
-        const resolved = resolveProduct(d.id, prodById);
-        if (resolved) {
-          productResolution.resolvedIdById[d.id] = resolved.id;
+        const survivorId = resolveProductChain(d.id, prodById);
+        if (survivorId != null) {
+          productResolution.resolvedIdById[d.id] = survivorId;
           const name = prodById[d.id].name;
-          if (name) productResolution.resolvedIdByName[name] = resolved.id;
-          // parLevel from survivor doc — rawParByDocId[resolved.id] is the survivor's value
-          if (parByProductId[resolved.id] === undefined) {
-            parByProductId[resolved.id] = rawParByDocId[resolved.id] ?? null;
+          if (name) productResolution.resolvedIdByName[name] = survivorId;
+          // parLevel from survivor doc — rawParByDocId[survivorId] is the survivor's value
+          if (parByProductId[survivorId] === undefined) {
+            parByProductId[survivorId] = rawParByDocId[survivorId] ?? null;
           }
         }
       });
+      // liveProductIds = all survivor ids (values of resolvedIdById, which are final chain endpoints)
+      for (const v of Object.values(productResolution.resolvedIdById)) liveProductIds.add(v);
     } catch (e: any) {
       console.warn('[snapshotWriter] product/supplier resolution build failed (safe degrade):', e?.message);
     }
@@ -555,39 +557,50 @@ export async function writeDepartmentSnapshot(
 
     // ── Aggregate per-area rawItems to product-level ─────────────────────────
     // Two-pass aggregation so rows with stale/area-row productIds group with the
-    // live product via name lookup:
+    // live product via name lookup. Ambiguous names (those mapping to >1 distinct
+    // survivor) are NOT added to nameToProductId — unlinked rows with such names
+    // get key 'name:'+n with _ambiguous=true so varianceReliable is set false.
     //   Pass 1 — for every row whose resolved id is a live product doc, record
-    //            normalisedName → liveProductId.
+    //            normalisedName → Set<survivorId>. Names with exactly one survivor
+    //            are added to nameToProductId.
     //   Pass 2 — key = live resolved productId if present; else
     //            nameToProductId[name] if present; else 'name:'+normalisedName.
-    // This ensures all four André-Clouet rows (one live id, three stale ids,
-    // same name) collapse into a single snapshot item with the live productId.
-    const nameToProductId = new Map<string, string>();
+    const nameToSurvivorIds = new Map<string, Set<string>>();
     for (const item of rawItems) {
       if (!item.productId) continue;
       const rPid = productResolution.resolvedIdById[item.productId] ?? item.productId;
       if (liveProductIds.has(rPid)) {
         const n = normaliseName(item.name);
-        if (n) nameToProductId.set(n, rPid);
+        if (n) {
+          if (!nameToSurvivorIds.has(n)) nameToSurvivorIds.set(n, new Set());
+          nameToSurvivorIds.get(n)!.add(rPid);
+        }
       }
     }
+    const nameToProductId = new Map<string, string>();
+    for (const [n, pids] of nameToSurvivorIds) {
+      if (pids.size === 1) nameToProductId.set(n, [...pids][0]);
+    }
 
-    type AggEntry = { base: any; areas: any[]; sumLastCount: number; areaNames: Set<string>; groupPid: string | null };
+    type AggEntry = { base: any; areas: any[]; sumLastCount: number; areaNames: Set<string>; groupPid: string | null; ambiguous: boolean };
     const aggMap = new Map<string, AggEntry>();
     for (const item of rawItems) {
       const n = normaliseName(item.name);
       let groupPid: string | null = null;
       let key: string;
+      let isAmbiguous = false;
       if (item.productId) {
         const rPid = productResolution.resolvedIdById[item.productId] ?? item.productId;
         if (liveProductIds.has(rPid)) {
           groupPid = rPid;
           key = rPid;
         } else {
+          isAmbiguous = (nameToSurvivorIds.get(n)?.size ?? 0) > 1;
           groupPid = nameToProductId.get(n) ?? null;
           key = groupPid ?? ('name:' + n);
         }
       } else {
+        isAmbiguous = (nameToSurvivorIds.get(n)?.size ?? 0) > 1;
         groupPid = nameToProductId.get(n) ?? null;
         key = groupPid ?? ('name:' + n);
       }
@@ -602,17 +615,18 @@ export async function writeDepartmentSnapshot(
         lastCountByName: item.lastCountByName ?? null,
       };
       if (!aggMap.has(key)) {
-        aggMap.set(key, { base: item, areas: [areaEntry], sumLastCount: lastCnt, areaNames: new Set([item._areaName ?? '']), groupPid });
+        aggMap.set(key, { base: item, areas: [areaEntry], sumLastCount: lastCnt, areaNames: new Set([item._areaName ?? '']), groupPid, ambiguous: isAmbiguous });
       } else {
         const e = aggMap.get(key)!;
         e.areas.push(areaEntry);
         e.sumLastCount += lastCnt;
         if (item._areaName) e.areaNames.add(item._areaName);
         if (!e.groupPid && groupPid) e.groupPid = groupPid;
+        if (isAmbiguous) e.ambiguous = true;
       }
     }
     const areaRowsCounted = rawItems.length;
-    const aggregatedRawItems = Array.from(aggMap.values()).map(({ base, areas, sumLastCount, areaNames, groupPid }) => {
+    const aggregatedRawItems = Array.from(aggMap.values()).map(({ base, areas, sumLastCount, areaNames, groupPid, ambiguous }) => {
       const distinctNames = [...areaNames].filter(Boolean);
       const productParLevel = groupPid != null && parByProductId[groupPid] != null
         ? parByProductId[groupPid]
@@ -620,6 +634,7 @@ export async function writeDepartmentSnapshot(
       return {
         ...base,
         productId: groupPid ?? null,
+        _ambiguous: ambiguous || undefined,
         lastCount: sumLastCount,
         _areaId: areas.length === 1 ? areas[0].areaId : null,
         _areaName: distinctNames.join(', ') || base._areaName,

@@ -175,6 +175,22 @@ function normaliseName(name) {
   return (name || '').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+// Walk mergedInto chain to the final survivor (doc with no mergedInto).
+// Cycle-safe (visited Set), capped at 10 hops. Returns survivor id or null.
+function resolveProductChainJs(startId, prodById) {
+  let id = startId;
+  const visited = new Set();
+  for (let hop = 0; hop < 10; hop++) {
+    if (visited.has(id)) return null; // cycle detected
+    visited.add(id);
+    const entry = prodById[id];
+    if (!entry) return null;          // doc missing in chain
+    if (!entry.mergedInto) return id; // no further pointer — this is the survivor
+    id = entry.mergedInto;
+  }
+  return null; // depth cap reached
+}
+
 function productKey(item, liveProductIds) {
   const pid = typeof item.productId === 'string' && item.productId ? item.productId : null;
   if (pid != null && liveProductIds != null && liveProductIds.has(pid)) return pid;
@@ -230,22 +246,82 @@ async function loadAreaItems(dbInst, venueId, deptId) {
   return rawItems;
 }
 
+// ── Build raw items from stored snapshot (for --from-stored) ─────────────────
+// Pure helper: counts come from stored snapshot rows (areaEntry.actualClosing),
+// productId comes from the live area item doc (liveItemsById map).
+// liveItemsById: Map<areaItemId, productId | null>
+function buildRawItemsFromStoredSync(storedProductItems, liveItemsById) {
+  let noLiveItemCount = 0;
+  const rawItems = [];
+  for (const item of storedProductItems) {
+    const areas = item.areas || [];
+    if (areas.length === 0) {
+      noLiveItemCount++;
+      rawItems.push({
+        _id: null,
+        _areaId: null,
+        _areaName: null,
+        name: item.name,
+        productId: null,
+        lastCount: typeof item.actualClosing === 'number' ? item.actualClosing : 0,
+      });
+      continue;
+    }
+    for (const areaEntry of areas) {
+      const areaItemId = areaEntry.areaItemId ?? null;
+      let liveProductId = null;
+      if (areaItemId != null) {
+        if (liveItemsById.has(areaItemId)) {
+          liveProductId = liveItemsById.get(areaItemId) ?? null;
+        } else {
+          noLiveItemCount++;
+        }
+      } else {
+        noLiveItemCount++;
+      }
+      rawItems.push({
+        _id: areaItemId,
+        _areaId: areaEntry.areaId ?? null,
+        _areaName: areaEntry.areaName ?? null,
+        name: item.name,
+        productId: liveProductId,
+        lastCount: typeof areaEntry.actualClosing === 'number' ? areaEntry.actualClosing : 0,
+      });
+    }
+  }
+  return { rawItems, noLiveItemCount };
+}
+
 // ── Aggregate raw area items to product-level (mirrors snapshotWriter) ────────
 // Two-pass aggregation matching the writer's logic:
-//   Pass 1 — for every row whose productId is in liveProductIds, record
-//            normalisedName → liveProductId (so stale-id rows can find the live id by name).
-//   Pass 2 — key = live productId if present; else nameToProductId[name]; else 'name:'+name.
-function aggregateAreaItemsToProducts(rawItems, liveProductIds) {
+//   Pass 1 — for every row whose resolved id is a live survivor, record
+//            normalisedName → Set<survivorId>. Names with exactly one survivor
+//            go into nameToProductId (unambiguous).
+//   Pass 2 — key = live resolved productId if present; else
+//            nameToProductId[name] if present; else 'name:'+name.
+//            Names with >1 distinct survivors are ambiguous: those rows get
+//            varianceReliable: false and ambiguousName: true.
+// Optional resolvedIdById maps stale/merged product ids to their survivor.
+function aggregateAreaItemsToProducts(rawItems, liveProductIds, resolvedIdById) {
   liveProductIds = liveProductIds ?? new Set();
+  resolvedIdById = resolvedIdById ?? {};
 
-  // Pass 1: build name → live productId
-  const nameToProductId = new Map();
+  // Pass 1: build name → Set<survivorId>
+  const nameToSurvivorIds = new Map();
   for (const item of rawItems) {
     if (!item.productId) continue;
-    if (liveProductIds.has(item.productId)) {
+    const rPid = resolvedIdById[item.productId] ?? item.productId;
+    if (liveProductIds.has(rPid)) {
       const n = normaliseName(item.name);
-      if (n) nameToProductId.set(n, item.productId);
+      if (n) {
+        if (!nameToSurvivorIds.has(n)) nameToSurvivorIds.set(n, new Set());
+        nameToSurvivorIds.get(n).add(rPid);
+      }
     }
+  }
+  const nameToProductId = new Map();
+  for (const [n, pids] of nameToSurvivorIds) {
+    if (pids.size === 1) nameToProductId.set(n, [...pids][0]);
   }
 
   // Pass 2: aggregate
@@ -254,10 +330,19 @@ function aggregateAreaItemsToProducts(rawItems, liveProductIds) {
     const n = normaliseName(item.name);
     let groupPid = null;
     let key;
-    if (item.productId && liveProductIds.has(item.productId)) {
-      groupPid = item.productId;
-      key = item.productId;
+    let isAmbiguous = false;
+    if (item.productId) {
+      const rPid = resolvedIdById[item.productId] ?? item.productId;
+      if (liveProductIds.has(rPid)) {
+        groupPid = rPid;
+        key = rPid;
+      } else {
+        isAmbiguous = (nameToSurvivorIds.get(n)?.size ?? 0) > 1;
+        groupPid = nameToProductId.get(n) ?? null;
+        key = groupPid ?? ('name:' + n);
+      }
     } else {
+      isAmbiguous = (nameToSurvivorIds.get(n)?.size ?? 0) > 1;
       groupPid = nameToProductId.get(n) ?? null;
       key = groupPid ?? ('name:' + n);
     }
@@ -271,17 +356,18 @@ function aggregateAreaItemsToProducts(rawItems, liveProductIds) {
       lastCountBy: item.lastCountBy ?? null,
     };
     if (!aggMap.has(key)) {
-      aggMap.set(key, { base: item, areas: [areaEntry], sum: lastCnt, groupPid });
+      aggMap.set(key, { base: item, areas: [areaEntry], sum: lastCnt, groupPid, ambiguous: isAmbiguous });
     } else {
       const e = aggMap.get(key);
       e.areas.push(areaEntry);
       e.sum += lastCnt;
       if (!e.groupPid && groupPid) e.groupPid = groupPid;
+      if (isAmbiguous) e.ambiguous = true;
     }
   }
 
   const products = [];
-  for (const [, { base, areas, sum, groupPid }] of aggMap) {
+  for (const [, { base, areas, sum, groupPid, ambiguous }] of aggMap) {
     const costPrice = typeof base.costPrice === 'number' ? base.costPrice : null;
     products.push({
       productId: groupPid ?? null,
@@ -290,11 +376,13 @@ function aggregateAreaItemsToProducts(rawItems, liveProductIds) {
       costPrice,
       parLevel: typeof base.parLevel === 'number' ? base.parLevel : null,
       areas,
-      varianceReliable: true,
+      varianceReliable: ambiguous ? false : true,
+      ambiguousName: ambiguous || undefined,
     });
   }
 
-  // Count output items sharing a normalised name (must be 0 for a clean repair run)
+  // Count output items sharing a normalised name (same-name distinct survivors is allowed;
+  // this count is informational — mainFromStored prints them but does not abort)
   const nameCount = new Map();
   for (const p of products) {
     const n = normaliseName(p.name);
@@ -319,7 +407,7 @@ async function loadItems(docRef, data) {
   return data.items ?? [];
 }
 
-// ── --from-stored: rebuild product items from live area rows ──────────────────
+// ── --from-stored: rebuild product items from stored snapshot counts ──────────
 async function mainFromStored() {
   // 1. Load target snapshot (for metadata + previous cycle reference)
   const targetRef = db.doc(`venues/${venueId}/departments/${deptId}/snapshots/cycle-${cycleNumber}`);
@@ -330,25 +418,61 @@ async function mainFromStored() {
   }
   const target = targetDoc.data();
 
-  // 2. Load live product ids from catalogue (needed for two-pass aggregation key)
+  // 2. Load product catalogue and build full chain resolution
   console.log('\nLoading product catalogue...');
   const productsSnap = await db.collection(`venues/${venueId}/products`).get();
-  const liveProductIds = new Set(productsSnap.docs.map(d => d.id));
-  console.log(`Live products: ${liveProductIds.size}`);
+  const prodById = {};
+  for (const d of productsSnap.docs) {
+    const p = d.data();
+    prodById[d.id] = { name: normaliseName(p.name || ''), mergedInto: p.mergedInto ?? null };
+  }
+  const resolvedIdById = {};
+  for (const d of productsSnap.docs) {
+    const survivorId = resolveProductChainJs(d.id, prodById);
+    if (survivorId != null) resolvedIdById[d.id] = survivorId;
+  }
+  const liveProductIds = new Set(Object.values(resolvedIdById));
+  console.log(`Live products: ${productsSnap.docs.length} docs, ${liveProductIds.size} survivors`);
 
-  // 3. Load live area rows and aggregate to product-level
-  console.log('Loading live area items...');
-  const rawAreaItems = await loadAreaItems(db, venueId, deptId);
-  const { products: targetItems, areaRowCount, nameDuplicates } = aggregateAreaItemsToProducts(rawAreaItems, liveProductIds);
+  // 3. counts source: stored snapshot rows
+  console.log('counts source: stored snapshot rows');
+  const storedProductItems = await loadItems(targetRef, target);
+  console.log(`Stored product items: ${storedProductItems.length}`);
 
-  console.log(`Area rows: ${areaRowCount}  Products: ${targetItems.length}  Name duplicates: ${nameDuplicates}`);
-
-  if (nameDuplicates > 0) {
-    console.error(`\nAbort: ${nameDuplicates} output item(s) share a normalised name — grouping conflict. Fix before repair.`);
-    process.exit(1);
+  // 4. Load live area items for productId lookup (counts come from stored snapshot)
+  console.log('Loading live area items for product link lookup...');
+  const allLiveAreaItems = await loadAreaItems(db, venueId, deptId);
+  const liveItemsById = new Map();
+  for (const item of allLiveAreaItems) {
+    if (item._id) liveItemsById.set(item._id, item.productId ?? null);
   }
 
-  // 4. Find most recent previous snapshot as baseline
+  // 5. Build raw items: stored counts + live productIds
+  const { rawItems: rawAreaItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedProductItems, liveItemsById);
+  console.log(`Area rows: ${rawAreaItems.length}  No live area item: ${noLiveItemCount}`);
+
+  // 6. Aggregate to product-level
+  const { products: targetItems, areaRowCount, nameDuplicates } = aggregateAreaItemsToProducts(rawAreaItems, liveProductIds, resolvedIdById);
+  console.log(`Products: ${targetItems.length}  Name duplicates: ${nameDuplicates}`);
+
+  // Print same-name distinct products (allowed — both are real distinct products)
+  if (nameDuplicates > 0) {
+    const nameGroups = new Map();
+    for (const p of targetItems) {
+      const n = normaliseName(p.name);
+      if (!nameGroups.has(n)) nameGroups.set(n, []);
+      nameGroups.get(n).push(p);
+    }
+    console.log('\nSame-name distinct products:');
+    for (const [n, items] of nameGroups) {
+      if (items.length > 1) {
+        const ids = items.map(i => `${i.productId ?? '(name-keyed)'} (${i.actualClosing})`).join(', ');
+        console.log(`  "${n}": ${ids}`);
+      }
+    }
+  }
+
+  // 7. Find most recent previous snapshot as baseline
   const snapsRef = db.collection(`venues/${venueId}/departments/${deptId}/snapshots`);
   const earlierSnap = await snapsRef
     .where('cycleNumber', '<', cycleNumber)
@@ -371,7 +495,7 @@ async function mainFromStored() {
     console.log('No earlier snapshot found — all items will have no baseline (openingCount null).');
   }
 
-  // 5. Compute repaired items using baseline
+  // 8. Compute repaired items using baseline
   const repairedItems = repairItems(targetItems, baselineItems, baseCycleNumber);
 
   // André Clouet dry-run detail (per spec: show item with areas, actual, opening, variance)
@@ -606,4 +730,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { loadItems, repairItems, recomputeSummary, productKey, toProductItemsForRepair, aggregateAreaItemsToProducts };
+module.exports = { loadItems, repairItems, recomputeSummary, productKey, toProductItemsForRepair, aggregateAreaItemsToProducts, resolveProductChainJs, buildRawItemsFromStoredSync };

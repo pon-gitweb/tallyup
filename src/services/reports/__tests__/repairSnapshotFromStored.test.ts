@@ -7,6 +7,8 @@ const {
   aggregateAreaItemsToProducts,
   toProductItemsForRepair,
   repairItems,
+  resolveProductChainJs,
+  buildRawItemsFromStoredSync,
 } = require('../../../../scripts/admin/repair-snapshot-baseline.js');
 
 // ── productKey ────────────────────────────────────────────────────────────────
@@ -139,6 +141,125 @@ describe('aggregateAreaItemsToProducts', () => {
     expect(products).toHaveLength(1);
     expect(products[0].actualClosing).toBe(10);
     expect(products[0].productId).toBeNull(); // no live id confirmed
+  });
+});
+
+// ── aggregateAreaItemsToProducts: chain resolution + ambiguity ────────────────
+
+describe('aggregateAreaItemsToProducts — chain resolution', () => {
+  it('3-step chain A→B→C: all rows group under survivor C', () => {
+    const resolvedIdById = { 'A': 'C', 'B': 'C', 'C': 'C' };
+    const liveIds = new Set(['C']);
+    const rawItems = [
+      { _id: 'rA', _areaId: 'a1', _areaName: 'Bar',    productId: 'A', name: 'Foo', lastCount: 3 },
+      { _id: 'rB', _areaId: 'a2', _areaName: 'Cellar', productId: 'B', name: 'Foo', lastCount: 2 },
+      { _id: 'rC', _areaId: 'a3', _areaName: 'Fridge', productId: 'C', name: 'Foo', lastCount: 5 },
+    ];
+    const { products, nameDuplicates } = aggregateAreaItemsToProducts(rawItems, liveIds, resolvedIdById);
+    expect(nameDuplicates).toBe(0);
+    expect(products).toHaveLength(1);
+    expect(products[0].productId).toBe('C');
+    expect(products[0].actualClosing).toBe(10); // 3+2+5
+    expect(products[0].areas).toHaveLength(3);
+  });
+});
+
+describe('aggregateAreaItemsToProducts — ambiguous name', () => {
+  it('two distinct survivors with same name → 2 items, nameDuplicates=1, no abort', () => {
+    const liveIds = new Set(['prod-a', 'prod-b']);
+    const rawItems = [
+      { _id: 'prod-a', _areaId: 'a1', productId: 'prod-a', name: 'Champagne', lastCount: 3 },
+      { _id: 'prod-b', _areaId: 'a2', productId: 'prod-b', name: 'Champagne', lastCount: 5 },
+    ];
+    const { products, nameDuplicates } = aggregateAreaItemsToProducts(rawItems, liveIds);
+    expect(products).toHaveLength(2);
+    expect(nameDuplicates).toBe(1); // informational count, not an abort condition
+    // Both have live productIds — not ambiguous
+    expect(products.find(p => p.productId === 'prod-a')?.varianceReliable).toBe(true);
+    expect(products.find(p => p.productId === 'prod-b')?.varianceReliable).toBe(true);
+  });
+
+  it('ambiguous name (2 survivors) + unlinked row → 3 items, unlinked has varianceReliable false', () => {
+    const liveIds = new Set(['prod-a', 'prod-b']);
+    const rawItems = [
+      { _id: 'prod-a',   _areaId: 'a1', productId: 'prod-a', name: 'Champagne', lastCount: 3 },
+      { _id: 'prod-b',   _areaId: 'a2', productId: 'prod-b', name: 'Champagne', lastCount: 5 },
+      { _id: 'unlinked', _areaId: 'a3', productId: null,     name: 'Champagne', lastCount: 2 },
+    ];
+    const { products } = aggregateAreaItemsToProducts(rawItems, liveIds);
+    expect(products).toHaveLength(3);
+    const ambiguousItem = products.find(p => p.productId == null);
+    expect(ambiguousItem).toBeDefined();
+    expect(ambiguousItem?.varianceReliable).toBe(false);
+    expect(ambiguousItem?.ambiguousName).toBe(true);
+    // Linked items are not ambiguous
+    expect(products.find(p => p.productId === 'prod-a')?.varianceReliable).toBe(true);
+    expect(products.find(p => p.productId === 'prod-b')?.varianceReliable).toBe(true);
+  });
+});
+
+// ── resolveProductChainJs ─────────────────────────────────────────────────────
+
+describe('resolveProductChainJs', () => {
+  it('3-step chain collapses to survivor', () => {
+    const prodById = {
+      'A': { name: 'a', mergedInto: 'B' },
+      'B': { name: 'b', mergedInto: 'C' },
+      'C': { name: 'c', mergedInto: null },
+    };
+    expect(resolveProductChainJs('A', prodById)).toBe('C');
+    expect(resolveProductChainJs('C', prodById)).toBe('C');
+  });
+
+  it('cycle detected: returns null', () => {
+    const prodById = {
+      'A': { mergedInto: 'B' },
+      'B': { mergedInto: 'A' },
+    };
+    expect(resolveProductChainJs('A', prodById)).toBeNull();
+  });
+
+  it('missing doc in chain: returns null', () => {
+    expect(resolveProductChainJs('A', { 'A': { mergedInto: 'B' } })).toBeNull();
+  });
+});
+
+// ── buildRawItemsFromStoredSync ───────────────────────────────────────────────
+
+describe('buildRawItemsFromStoredSync', () => {
+  it('uses stored actualClosing as lastCount, live productId from liveItemsById', () => {
+    const storedItems = [{
+      name: 'Beer',
+      areas: [{ areaId: 'a1', areaItemId: 'item-1', areaName: 'Bar', actualClosing: 10 }],
+    }];
+    const liveItemsById = new Map([['item-1', 'prod-beer']]);
+    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById);
+    expect(rawItems).toHaveLength(1);
+    expect(rawItems[0].lastCount).toBe(10);    // stored count, not live
+    expect(rawItems[0].productId).toBe('prod-beer'); // live productId
+    expect(noLiveItemCount).toBe(0);
+  });
+
+  it('stored row with no live item gets null productId and increments noLiveItemCount', () => {
+    const storedItems = [{
+      name: 'Wine',
+      areas: [{ areaId: 'a1', areaItemId: 'missing-item', areaName: 'Bar', actualClosing: 5 }],
+    }];
+    const liveItemsById = new Map(); // no live items
+    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById);
+    expect(rawItems[0].productId).toBeNull();
+    expect(noLiveItemCount).toBe(1);
+  });
+
+  it('live item with null productId: passes null through as liveProductId', () => {
+    const storedItems = [{
+      name: 'Gin',
+      areas: [{ areaId: 'a1', areaItemId: 'item-x', areaName: 'Bar', actualClosing: 3 }],
+    }];
+    const liveItemsById = new Map([['item-x', null]]); // live item exists but has no productId
+    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById);
+    expect(rawItems[0].productId).toBeNull();
+    expect(noLiveItemCount).toBe(0); // live item found, even if productId is null
   });
 });
 

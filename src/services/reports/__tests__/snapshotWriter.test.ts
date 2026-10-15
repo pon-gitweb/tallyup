@@ -899,6 +899,60 @@ describe('writeDepartmentSnapshot — resolved productId grouping', () => {
     expect(snapshotData.items[0].productId).toBe('prod-beer');
   });
 
+  it('ambiguous name: 2 distinct survivors + 1 unlinked row → 3 items; unlinked has varianceReliable false', async () => {
+    // prod-champ-a and prod-champ-b are distinct live survivors with the same name 'Champagne'.
+    // Because two survivors share the name, the name is ambiguous and nameToProductId does NOT
+    // include 'champagne'. The unlinked row (no productId) cannot be attributed and gets
+    // its own group with varianceReliable: false and ambiguousName: true.
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'prod-champ-a', dataObj: { name: 'Champagne', active: true, mergedInto: null } },
+        { id: 'prod-champ-b', dataObj: { name: 'Champagne', active: true, mergedInto: null } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'area-1', dataObj: { name: 'Bar' } },
+        { id: 'area-2', dataObj: { name: 'Cellar' } },
+        { id: 'area-3', dataObj: { name: 'Storage' } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'i1', dataObj: { name: 'Champagne', productId: 'prod-champ-a', lastCount: 3 } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'i2', dataObj: { name: 'Champagne', productId: 'prod-champ-b', lastCount: 5 } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'i3', dataObj: { name: 'Champagne', lastCount: 2 } }, // no productId
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'd1', dataObj: { name: 'Bar Dept' } }]));
+
+    ff.getDoc
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ name: 'Bar Dept' }) })
+      .mockResolvedValueOnce({ exists: () => false })
+      .mockResolvedValueOnce({ exists: () => false });
+
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    const [, snapshotData] = mockBatch.set.mock.calls[0];
+    expect(snapshotData.items).toHaveLength(3);
+
+    const itemA = snapshotData.items.find((i: any) => i.productId === 'prod-champ-a');
+    const itemB = snapshotData.items.find((i: any) => i.productId === 'prod-champ-b');
+    const itemUnlinked = snapshotData.items.find((i: any) => i.productId == null);
+
+    expect(itemA).toBeDefined();
+    expect(itemA.actualClosing).toBe(3);
+    expect(itemA.varianceReliable).toBe(true);
+
+    expect(itemB).toBeDefined();
+    expect(itemB.actualClosing).toBe(5);
+    expect(itemB.varianceReliable).toBe(true);
+
+    expect(itemUnlinked).toBeDefined();
+    expect(itemUnlinked.actualClosing).toBe(2);
+    expect(itemUnlinked.varianceReliable).toBe(false);
+    expect(itemUnlinked.ambiguousName).toBe(true);
+  });
+
   it('André Clouet: 4 rows (1 live productId + 3 stale area-row ids), same name → 1 item', async () => {
     // Spec test for the two-pass aggregation:
     // Back Bar row has live productId 'eK07Fw'; Kitchen/Fridge/Fruit rows have stale ids.
