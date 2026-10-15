@@ -301,6 +301,7 @@ export async function previewCorrection(
   cycleNumber: number,
   rawItemName: string,
   newActualClosing: number,
+  areaId?: string | null,
 ): Promise<CorrectionPreview> {
   const lines: PreviewLine[] = []
 
@@ -313,8 +314,24 @@ export async function previewCorrection(
     throw new Error(`Item "${rawItemName}" not found in cycle ${cycleNumber}.`)
 
   const itemN = snapN.items[idxN]
+
+  // For multi-area products, block unless areaId is provided
+  const isMultiArea = Array.isArray(itemN.areas) && (itemN.areas as any[]).length > 1
+  if (isMultiArea && !areaId) {
+    throw new Error('This product was counted in several areas. Correct the count per area in the app.')
+  }
+
+  // Compute effective product actualClosing: for multi-area, sum after patching the target area
+  let effectiveNewClosing = newActualClosing
+  if (isMultiArea && areaId) {
+    const patchedAreas = (itemN.areas as any[]).map((a: any) =>
+      a.areaId === areaId ? { ...a, actualClosing: newActualClosing } : a
+    )
+    effectiveNewClosing = patchedAreas.reduce((s: number, a: any) => s + ((a.actualClosing as number) || 0), 0)
+  }
+
   const beforeN = recalculateItem(itemN)
-  const afterN = recalculateItem(itemN, { actualClosing: newActualClosing })
+  const afterN = recalculateItem(itemN, { actualClosing: effectiveNewClosing })
 
   lines.push({
     cycleNumber,
@@ -332,7 +349,7 @@ export async function previewCorrection(
     if (idxN1 !== -1) {
       const itemN1 = snapN1.items[idxN1]
       const beforeN1 = recalculateItem(itemN1)
-      const afterN1 = recalculateItem(itemN1, { openingCount: newActualClosing })
+      const afterN1 = recalculateItem(itemN1, { openingCount: effectiveNewClosing })
       lines.push({
         cycleNumber: cycleNumber + 1,
         departmentId,
@@ -357,7 +374,10 @@ export interface CommitCorrectionArgs {
   departmentName: string
   cycleNumber: number
   rawItemName: string
+  /** Product-level new count (single-area), or new count for the target area (multi-area). */
   newActualClosing: number
+  /** Required for products counted in more than one area. */
+  areaId?: string | null
   reason: string
   userId: string
   userEmail: string
@@ -366,7 +386,7 @@ export interface CommitCorrectionArgs {
 export async function commitCorrection(args: CommitCorrectionArgs): Promise<string> {
   const {
     venueId, departmentId, departmentName, cycleNumber,
-    rawItemName, newActualClosing, reason, userId, userEmail,
+    rawItemName, newActualClosing, areaId, reason, userId, userEmail,
   } = args
 
   // Re-read both cycles fresh to guard against concurrent edits
@@ -380,19 +400,33 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
   const itemN = snapN.items[idxN]
   const oldActualClosing: number = itemN.actualClosing as number
 
+  // Multi-area guard: block correction if >1 area and no areaId supplied
+  const isMultiArea = Array.isArray(itemN.areas) && (itemN.areas as any[]).length > 1
+  if (isMultiArea && !areaId) {
+    throw new Error('This product was counted in several areas. Correct the count per area in the app.')
+  }
+
+  // Compute effective product-level actualClosing
+  let effectiveNewClosing = newActualClosing
+  let updatedAreas: any[] | null = Array.isArray(itemN.areas) ? (itemN.areas as any[]) : null
+  if (isMultiArea && areaId) {
+    const areaIdx = (itemN.areas as any[]).findIndex((a: any) => a.areaId === areaId)
+    if (areaIdx === -1) throw new Error(`Area "${areaId}" not found in item areas.`)
+    updatedAreas = (itemN.areas as any[]).map((a: any, i: number) =>
+      i === areaIdx ? { ...a, actualClosing: newActualClosing } : a
+    )
+    effectiveNewClosing = updatedAreas.reduce((s: number, a: any) => s + ((a.actualClosing as number) || 0), 0)
+  } else if (!isMultiArea && Array.isArray(itemN.areas) && (itemN.areas as any[]).length === 1) {
+    updatedAreas = [{ ...(itemN.areas as any[])[0], actualClosing: newActualClosing }]
+  }
+
   // Compute new figures for cycle N
-  const afterN = recalculateItem(itemN, { actualClosing: newActualClosing })
+  const afterN = recalculateItem(itemN, { actualClosing: effectiveNewClosing })
 
   const updatedItemsN = [...snapN.items]
-  // For single-area product items, mirror the corrected actualClosing into areas[0]
-  // so the breakdown stays consistent.  Multi-area products keep their historical
-  // per-area counts as read-only audit info.
-  const updatedAreas = Array.isArray(itemN.areas) && itemN.areas.length === 1
-    ? [{ ...itemN.areas[0], actualClosing: newActualClosing }]
-    : itemN.areas ?? null
   updatedItemsN[idxN] = {
     ...itemN,
-    actualClosing: newActualClosing,
+    actualClosing: effectiveNewClosing,
     areas: updatedAreas,
     totalVarianceQty: afterN.totalVarianceQty,
     totalVarianceDollars: afterN.totalVarianceDollars,
@@ -424,12 +458,12 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
     const idxN1 = findItemIndex(snapN1.items, rawItemName)
     if (idxN1 !== -1) {
       const itemN1 = snapN1.items[idxN1]
-      const afterN1 = recalculateItem(itemN1, { openingCount: newActualClosing })
+      const afterN1 = recalculateItem(itemN1, { openingCount: effectiveNewClosing })
 
       const updatedItemsN1 = [...snapN1.items]
       updatedItemsN1[idxN1] = {
         ...itemN1,
-        openingCount: newActualClosing,
+        openingCount: effectiveNewClosing,
         totalVarianceQty: afterN1.totalVarianceQty,
         totalVarianceDollars: afterN1.totalVarianceDollars,
         expectedClosing: afterN1.expectedClosing,
@@ -464,7 +498,8 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
     cycleNumber,
     itemName: rawItemName,
     oldActualClosing,
-    newActualClosing,
+    newActualClosing: effectiveNewClosing,
+    ...(areaId ? { areaId, areaNewActualClosing: newActualClosing } : {}),
     downstreamCycleUpdated: downstreamUpdated,
     reason,
   })
