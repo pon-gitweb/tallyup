@@ -707,3 +707,84 @@ describe('computeSnapshotItemFigures — baseline fallback and no-baseline varia
     expect(si.unexplainedVarianceQty).toBe(0);
   });
 });
+
+// ── Suite: product-level aggregation (spec item-6 writer tests) ───────────────
+//
+// computeSnapshotItemFigures now receives PRE-AGGREGATED items (one per product,
+// lastCount = sum across areas, _areas attached).  These tests verify the
+// writer-level contract: productId-keyed prevItemMap, areas/varianceReliable on
+// output, and correct variance when stock moves between areas.
+
+describe('computeSnapshotItemFigures — productId-keyed prevItemMap + areas output', () => {
+  // Simulate what the writer sends after aggregating 3 area rows for one product.
+  function makeAggregatedItem(overrides: Record<string, any> = {}) {
+    return {
+      _id: 'prod-ac',
+      productId: 'prod-ac',
+      name: 'André Clouet',
+      lastCount: 10,          // sum: 3 + 5 + 2
+      costPrice: 20,
+      parLevel: 6,
+      _areaId: null,          // null for multi-area
+      _areaName: 'Bar, Cellar, Fridge',
+      _areas: [
+        { areaId: 'a1', areaName: 'Bar',    actualClosing: 3 },
+        { areaId: 'a2', areaName: 'Cellar', actualClosing: 5 },
+        { areaId: 'a3', areaName: 'Fridge', actualClosing: 2 },
+      ],
+      ...overrides,
+    };
+  }
+
+  // Spec test 1: product in 3 areas → one item, actual = sum, opening = prev total, correct variance
+  it('spec test 1: productId-keyed prevItemMap gives correct opening and variance', () => {
+    const item = makeAggregatedItem();
+    // prevItemMap keyed by productId (as writer now builds it)
+    const prev = prevMap({ 'prod-ac': 8 });
+    const { snapshotItems } = computeSnapshotItemFigures([item], prev, 2, [], []);
+    const si = snapshotItems[0];
+    expect(si.actualClosing).toBe(10);   // sum of areas
+    expect(si.openingCount).toBe(8);     // from productId-keyed map
+    expect(si.totalVarianceQty).toBe(2); // 10 − 8
+    expect(si.varianceReliable).toBe(true);
+  });
+
+  it('spec test 1: areas[] breakdown preserved from _areas on rawItem', () => {
+    const item = makeAggregatedItem();
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 2, [], []);
+    expect(snapshotItems[0].areas).toHaveLength(3);
+    expect(snapshotItems[0].areas[0]).toMatchObject({ areaId: 'a1', areaName: 'Bar', actualClosing: 3 });
+  });
+
+  it('spec test 1: varianceReliable: true for product items from writer', () => {
+    const item = makeAggregatedItem();
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 2, [], []);
+    expect(snapshotItems[0].varianceReliable).toBe(true);
+  });
+
+  // Spec test 2: stock moved between areas — same total → zero variance
+  it('spec test 2: stock moved between areas gives zero variance when totals equal', () => {
+    // Previous cycle: product had 10 across areas. This cycle: same 10, different distribution.
+    const item = makeAggregatedItem({ lastCount: 10 }); // sum still 10
+    const prev = prevMap({ 'prod-ac': 10 });
+    const { snapshotItems } = computeSnapshotItemFigures([item], prev, 2, [], []);
+    expect(snapshotItems[0].totalVarianceQty).toBe(0);
+    expect(snapshotItems[0].unexplainedVarianceQty).toBe(0);
+  });
+
+  // Spec test 5: parLevel from product doc
+  it('spec test 5: parLevel passed through from aggregated item', () => {
+    const item = makeAggregatedItem({ parLevel: 12 });
+    const prev = prevMap({ 'prod-ac': 8 });
+    const { snapshotItems } = computeSnapshotItemFigures([item], prev, 2, [], []);
+    expect(snapshotItems[0].parLevel).toBe(12);
+    expect(snapshotItems[0].belowPAR).toBe(true); // actualClosing 10 < parLevel 12
+  });
+
+  it('no _areas on item: areas null, varianceReliable undefined (backward compat)', () => {
+    const plain = makeItem({ name: 'Vodka' });
+    const { snapshotItems } = computeSnapshotItemFigures([plain], new Map(), 2, [], []);
+    expect(snapshotItems[0].areas).toBeNull();
+    expect(snapshotItems[0].varianceReliable).toBeUndefined();
+  });
+});
