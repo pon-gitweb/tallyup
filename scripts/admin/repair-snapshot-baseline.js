@@ -54,7 +54,7 @@ function fmtDollars(n) {
 
 function stripUndefinedDeep(obj) {
   if (Array.isArray(obj)) return obj.map(stripUndefinedDeep);
-  if (obj !== null && typeof obj === 'object') {
+  if (isPlainObject(obj)) {
     const result = {};
     for (const [k, v] of Object.entries(obj)) {
       if (v !== undefined) result[k] = stripUndefinedDeep(v);
@@ -62,6 +62,12 @@ function stripUndefinedDeep(obj) {
     return result;
   }
   return obj;
+}
+
+function isPlainObject(v) {
+  if (v === null || typeof v !== 'object') return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
 }
 
 // Re-derive all per-item fields that depend on openingCount, matching
@@ -824,4 +830,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { loadItems, repairItems, recomputeSummary, productKey, toProductItemsForRepair, aggregateAreaItemsToProducts, resolveProductChainJs, buildRawItemsFromStoredSync };
+module.exports = { loadItems, repairItems, recomputeSummary, productKey, toProductItemsForRepair, aggregateAreaItemsToProducts, resolveProductChainJs, buildRawItemsFromStoredSync, stripUndefinedDeep };

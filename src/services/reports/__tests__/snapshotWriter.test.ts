@@ -1166,5 +1166,12 @@ describe('writeDepartmentSnapshot — no undefined in batch.set payloads', () =>
       const payload = call[1];
       expect(hasUndefinedDeep(payload)).toBe(false);
     }
+
+    // The snapshot doc (first batch.set call) has completedAt and cycleEnd.
+    // completedAt = 'SERVER_TIMESTAMP' (mocked string); cycleEnd = Date (Timestamp.fromDate mock returns the Date).
+    // stripUndefinedDeep must NOT destroy these by converting to {}.
+    const [, snapshotPayload] = mockBatch.set.mock.calls[0];
+    expect(snapshotPayload.completedAt).toBe('SERVER_TIMESTAMP');
+    expect(snapshotPayload.cycleEnd).toBeInstanceOf(Date);
   });
 });

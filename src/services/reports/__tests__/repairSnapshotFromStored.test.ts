@@ -9,7 +9,59 @@ const {
   repairItems,
   resolveProductChainJs,
   buildRawItemsFromStoredSync,
+  stripUndefinedDeep,
 } = require('../../../../scripts/admin/repair-snapshot-baseline.js');
+
+// ── stripUndefinedDeep (repair script copy) ───────────────────────────────────
+// Simulates admin-SDK objects that must be returned by identity, not recursed into.
+
+class AdminTimestamp {
+  constructor(public _seconds: number, public _nanoseconds: number) {}
+}
+class AdminFieldValue {
+  constructor(public _methodName: string) {}
+}
+
+describe('repair script stripUndefinedDeep — class instances returned by identity', () => {
+  it('admin Timestamp is returned by identity', () => {
+    const ts = new AdminTimestamp(1700000000, 0);
+    const result = stripUndefinedDeep({ completedAt: ts, x: undefined });
+    expect(result.completedAt).toBe(ts);
+    expect(result.completedAt).toBeInstanceOf(AdminTimestamp);
+    expect('x' in result).toBe(false);
+  });
+
+  it('FieldValue.serverTimestamp() sentinel is returned by identity', () => {
+    const sv = new AdminFieldValue('serverTimestamp');
+    const result = stripUndefinedDeep({ createdAt: sv, gone: undefined });
+    expect(result.createdAt).toBe(sv);
+    expect(result.createdAt).toBeInstanceOf(AdminFieldValue);
+    expect('gone' in result).toBe(false);
+  });
+
+  it('Date is returned by identity', () => {
+    const d = new Date('2024-06-01');
+    const result = stripUndefinedDeep({ cycleEnd: d, name: 'test', bad: undefined });
+    expect(result.cycleEnd).toBe(d);
+    expect(result.cycleEnd).toBeInstanceOf(Date);
+    expect('bad' in result).toBe(false);
+  });
+
+  it('nested plain objects stripped; class instances in arrays preserved by identity', () => {
+    const ts = new AdminTimestamp(100, 0);
+    const sv = new AdminFieldValue('serverTimestamp');
+    const payload = {
+      meta: { ts, sv, gone: undefined },
+      items: [{ name: 'Beer', ts: new AdminTimestamp(2, 0), missing: undefined }],
+    };
+    const result = stripUndefinedDeep(payload);
+    expect(result.meta.ts).toBe(ts);
+    expect(result.meta.sv).toBe(sv);
+    expect('gone' in result.meta).toBe(false);
+    expect(result.items[0].ts).toBeInstanceOf(AdminTimestamp);
+    expect('missing' in result.items[0]).toBe(false);
+  });
+});
 
 // ── productKey ────────────────────────────────────────────────────────────────
 
