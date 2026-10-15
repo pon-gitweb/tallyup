@@ -263,6 +263,63 @@ describe('buildRawItemsFromStoredSync', () => {
   });
 });
 
+// ── buildRawItemsFromStoredSync: legacy granularity ───────────────────────────
+
+describe('buildRawItemsFromStoredSync — legacy granularity', () => {
+  it('legacy row (no areas[]): areaItemId = item.productId, resolves via liveItemsById to catalog productId', () => {
+    // In a legacy snapshot (itemsGranularity !== 'product'), each stored row is an
+    // area row: item.productId is the area row doc id, not a catalog product id.
+    // The live area item doc maps area row id → catalog productId.
+    const storedItems = [{
+      name: 'Heineken',
+      productId: 'area-row-abc123',   // area row doc id stored in legacy productId field
+      areaId: 'area-bar',
+      areaName: 'Bar',
+      actualClosing: 7,
+      costPrice: 3.5,
+    }];
+    const liveItemsById = new Map([['area-row-abc123', 'catalog-prod-hein']]);
+    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById, 'legacy');
+    expect(rawItems).toHaveLength(1);
+    expect(rawItems[0]._id).toBe('area-row-abc123');
+    expect(rawItems[0]._areaId).toBe('area-bar');
+    expect(rawItems[0]._areaName).toBe('Bar');
+    expect(rawItems[0].productId).toBe('catalog-prod-hein');
+    expect(rawItems[0].lastCount).toBe(7);
+    expect(rawItems[0].costPrice).toBe(3.5);
+    expect(noLiveItemCount).toBe(0);
+  });
+
+  it('legacy row with no matching live item: productId null, increments noLiveItemCount', () => {
+    const storedItems = [{
+      name: 'Sprite',
+      productId: 'missing-area-row',
+      areaId: 'area-bar',
+      areaName: 'Bar',
+      actualClosing: 2,
+    }];
+    const liveItemsById = new Map();
+    const { rawItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedItems, liveItemsById, 'legacy');
+    expect(rawItems[0].productId).toBeNull();
+    expect(noLiveItemCount).toBe(1);
+  });
+
+  it('legacy row with costPrice: costPrice propagates through to aggregation', () => {
+    const storedItems = [
+      { name: 'Wine', productId: 'row-1', areaId: 'a1', areaName: 'Bar', actualClosing: 4, costPrice: 12.5 },
+      { name: 'Wine', productId: 'row-2', areaId: 'a2', areaName: 'Cellar', actualClosing: 3, costPrice: 12.5 },
+    ];
+    const liveItemsById = new Map([['row-1', 'prod-wine'], ['row-2', 'prod-wine']]);
+    const liveIds = new Set(['prod-wine']);
+    const { rawItems } = buildRawItemsFromStoredSync(storedItems, liveItemsById, 'legacy');
+    const { products } = aggregateAreaItemsToProducts(rawItems, liveIds);
+    expect(products).toHaveLength(1);
+    expect(products[0].productId).toBe('prod-wine');
+    expect(products[0].actualClosing).toBe(7);
+    expect(products[0].costPrice).toBe(12.5);
+  });
+});
+
 // ── repairItems: uses baseline to compute openingCount and variance ────────────
 
 describe('repairItems', () => {

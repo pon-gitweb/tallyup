@@ -247,28 +247,20 @@ async function loadAreaItems(dbInst, venueId, deptId) {
 }
 
 // ── Build raw items from stored snapshot (for --from-stored) ─────────────────
-// Pure helper: counts come from stored snapshot rows (areaEntry.actualClosing),
-// productId comes from the live area item doc (liveItemsById map).
+// Pure helper: counts come from stored snapshot rows, productId from liveItemsById.
+// itemsGranularity: 'product' (default) → iterate item.areas[];
+//                   anything else        → legacy: each stored item IS one area row,
+//                                          item.productId holds the area row doc id.
 // liveItemsById: Map<areaItemId, productId | null>
-function buildRawItemsFromStoredSync(storedProductItems, liveItemsById) {
+function buildRawItemsFromStoredSync(storedProductItems, liveItemsById, itemsGranularity = 'product') {
   let noLiveItemCount = 0;
   const rawItems = [];
+  const isLegacy = itemsGranularity !== 'product';
   for (const item of storedProductItems) {
-    const areas = item.areas || [];
-    if (areas.length === 0) {
-      noLiveItemCount++;
-      rawItems.push({
-        _id: null,
-        _areaId: null,
-        _areaName: null,
-        name: item.name,
-        productId: null,
-        lastCount: typeof item.actualClosing === 'number' ? item.actualClosing : 0,
-      });
-      continue;
-    }
-    for (const areaEntry of areas) {
-      const areaItemId = areaEntry.areaItemId ?? null;
+    if (isLegacy) {
+      // Legacy granularity: each stored item IS one area row.
+      // item.productId holds the area row doc id (areaItemId), not a catalog product id.
+      const areaItemId = item.productId ?? null;
       let liveProductId = null;
       if (areaItemId != null) {
         if (liveItemsById.has(areaItemId)) {
@@ -281,12 +273,54 @@ function buildRawItemsFromStoredSync(storedProductItems, liveItemsById) {
       }
       rawItems.push({
         _id: areaItemId,
-        _areaId: areaEntry.areaId ?? null,
-        _areaName: areaEntry.areaName ?? null,
+        _areaId: item.areaId ?? null,
+        _areaName: item.areaName ?? null,
         name: item.name,
         productId: liveProductId,
-        lastCount: typeof areaEntry.actualClosing === 'number' ? areaEntry.actualClosing : 0,
+        lastCount: typeof item.actualClosing === 'number' ? item.actualClosing : 0,
+        costPrice: typeof item.costPrice === 'number' ? item.costPrice : null,
+        displayCostPrice: typeof item.displayCostPrice === 'number' ? item.displayCostPrice : null,
       });
+    } else {
+      // Product granularity: iterate areas[].
+      const areas = item.areas || [];
+      if (areas.length === 0) {
+        noLiveItemCount++;
+        rawItems.push({
+          _id: null,
+          _areaId: null,
+          _areaName: null,
+          name: item.name,
+          productId: null,
+          lastCount: typeof item.actualClosing === 'number' ? item.actualClosing : 0,
+          costPrice: typeof item.costPrice === 'number' ? item.costPrice : null,
+          displayCostPrice: typeof item.displayCostPrice === 'number' ? item.displayCostPrice : null,
+        });
+        continue;
+      }
+      for (const areaEntry of areas) {
+        const areaItemId = areaEntry.areaItemId ?? null;
+        let liveProductId = null;
+        if (areaItemId != null) {
+          if (liveItemsById.has(areaItemId)) {
+            liveProductId = liveItemsById.get(areaItemId) ?? null;
+          } else {
+            noLiveItemCount++;
+          }
+        } else {
+          noLiveItemCount++;
+        }
+        rawItems.push({
+          _id: areaItemId,
+          _areaId: areaEntry.areaId ?? null,
+          _areaName: areaEntry.areaName ?? null,
+          name: item.name,
+          productId: liveProductId,
+          lastCount: typeof areaEntry.actualClosing === 'number' ? areaEntry.actualClosing : 0,
+          costPrice: typeof item.costPrice === 'number' ? item.costPrice : null,
+          displayCostPrice: typeof item.displayCostPrice === 'number' ? item.displayCostPrice : null,
+        });
+      }
     }
   }
   return { rawItems, noLiveItemCount };
@@ -392,7 +426,7 @@ function aggregateAreaItemsToProducts(rawItems, liveProductIds, resolvedIdById) 
     .filter(([, v]) => v > 1)
     .reduce((s, [, v]) => s + (v - 1), 0);
 
-  return { products, areaRowCount: rawItems.length, nameDuplicates };
+  return { products, areaRowCount: rawItems.length, nameDuplicates, nameToProductId };
 }
 
 // ── Chunk loader (admin SDK) ──────────────────────────────────────────────────
@@ -424,7 +458,11 @@ async function mainFromStored() {
   const prodById = {};
   for (const d of productsSnap.docs) {
     const p = d.data();
-    prodById[d.id] = { name: normaliseName(p.name || ''), mergedInto: p.mergedInto ?? null };
+    prodById[d.id] = {
+      name: normaliseName(p.name || ''),
+      mergedInto: p.mergedInto ?? null,
+      costPrice: typeof p.costPrice === 'number' ? p.costPrice : null,
+    };
   }
   const resolvedIdById = {};
   for (const d of productsSnap.docs) {
@@ -448,11 +486,11 @@ async function mainFromStored() {
   }
 
   // 5. Build raw items: stored counts + live productIds
-  const { rawItems: rawAreaItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedProductItems, liveItemsById);
+  const { rawItems: rawAreaItems, noLiveItemCount } = buildRawItemsFromStoredSync(storedProductItems, liveItemsById, target.itemsGranularity);
   console.log(`Area rows: ${rawAreaItems.length}  No live area item: ${noLiveItemCount}`);
 
   // 6. Aggregate to product-level
-  const { products: targetItems, areaRowCount, nameDuplicates } = aggregateAreaItemsToProducts(rawAreaItems, liveProductIds, resolvedIdById);
+  const { products: targetItems, areaRowCount, nameDuplicates, nameToProductId } = aggregateAreaItemsToProducts(rawAreaItems, liveProductIds, resolvedIdById);
   console.log(`Products: ${targetItems.length}  Name duplicates: ${nameDuplicates}`);
 
   // Print same-name distinct products (allowed — both are real distinct products)
@@ -471,6 +509,40 @@ async function mainFromStored() {
       }
     }
   }
+
+  // Link stats (at raw area row level)
+  let linkedByLiveItem = 0;
+  let linkedByName = 0;
+  let unlinked = 0;
+  for (const rawItem of rawAreaItems) {
+    if (rawItem.productId != null) {
+      linkedByLiveItem++;
+    } else if (nameToProductId.has(normaliseName(rawItem.name))) {
+      linkedByName++;
+    } else {
+      unlinked++;
+    }
+  }
+  console.log(`\nRows linked via live area item: ${linkedByLiveItem}`);
+  console.log(`Rows linked by name: ${linkedByName}`);
+  console.log(`Rows unlinked: ${unlinked}`);
+
+  // Cost enrichment: use product doc's costPrice for linked items; stored row fallback
+  let costedFromProductDoc = 0;
+  let costedFromStoredRow = 0;
+  let uncostedCount = 0;
+  for (const product of targetItems) {
+    const docCost = product.productId != null ? (prodById[product.productId]?.costPrice ?? null) : null;
+    if (docCost != null) {
+      product.costPrice = docCost;
+      costedFromProductDoc++;
+    } else if (product.costPrice != null) {
+      costedFromStoredRow++;
+    } else {
+      uncostedCount++;
+    }
+  }
+  console.log(`\nCost source — product doc: ${costedFromProductDoc}, stored row: ${costedFromStoredRow}, uncosted: ${uncostedCount}`);
 
   // 7. Find most recent previous snapshot as baseline
   const snapsRef = db.collection(`venues/${venueId}/departments/${deptId}/snapshots`);
@@ -510,11 +582,21 @@ async function mainFromStored() {
     }
   }
 
-  // 7. Stats
+  // Stats
   const hasPrices = repairedItems.some(it => it.costPrice != null);
   const totalStockValue = hasPrices
     ? repairedItems.filter(it => it.costPrice != null).reduce((s, it) => s + it.actualClosing * it.costPrice, 0)
     : null;
+
+  const gstBasis = target.costPriceIncludesGst ? 'inc-GST' : 'ex-GST';
+  console.log(`\nStock value: ${fmtDollars(totalStockValue)} (${gstBasis})`);
+
+  // Abort if stock value is n/a but catalogue has costed products
+  if (totalStockValue === null && Object.values(prodById).some(p => p.costPrice != null)) {
+    console.error('Abort: stock value is n/a but product catalogue has costed items — check product link resolution.');
+    process.exit(1);
+  }
+
   const shortages = repairedItems.filter(it => it.openingCount != null && it.unexplainedVarianceQty < 0)
     .sort((a, b) => a.unexplainedVarianceQty - b.unexplainedVarianceQty);
   const excesses  = repairedItems.filter(it => it.openingCount != null && it.unexplainedVarianceQty > 0)
@@ -522,7 +604,6 @@ async function mainFromStored() {
   const totalShortage = shortages.reduce((s, it) => s + Math.abs(it.unexplainedVarianceDollars ?? 0), 0);
   const totalExcess   = excesses.reduce((s, it) => s + Math.abs(it.unexplainedVarianceDollars ?? 0), 0);
 
-  console.log(`\nStock value: ${fmtDollars(totalStockValue)}`);
   console.log(`Shortages: ${fmtDollars(-totalShortage)}  Excess: ${fmtDollars(totalExcess)}`);
   console.log('\nTop 10 shortages:');
   shortages.slice(0, 10).forEach(it => console.log(`  ${it.name}: ${it.unexplainedVarianceQty} (${fmtDollars(it.unexplainedVarianceDollars)})`));
