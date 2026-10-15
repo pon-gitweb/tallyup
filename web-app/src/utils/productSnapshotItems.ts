@@ -6,10 +6,13 @@ export function normaliseName(name: string): string {
 }
 
 // Stable grouping key for a snapshot item.
-// Uses productId when present; falls back to normalised name.
-export function productKey(item: any): string {
+// Uses productId only when it is confirmed to be a live product catalogue id
+// (i.e. present in liveProductIds).  Without a live-id set — or when the id
+// is not in it — falls back to normaliseName so stale area-row doc ids never
+// become grouping keys.
+export function productKey(item: any, liveProductIds?: ReadonlySet<string>): string {
   const pid = typeof item.productId === 'string' && item.productId ? item.productId : null;
-  if (pid) return pid;
+  if (pid != null && liveProductIds != null && liveProductIds.has(pid)) return pid;
   return normaliseName(item.name);
 }
 
@@ -20,12 +23,14 @@ export function productKey(item: any): string {
 //   Single-area product: keep all fields, add areas array, set varianceReliable: true.
 //   Multi-area product: sum actualClosing, null all variance/baseline fields,
 //   set varianceReliable: false (legacy per-area rows cannot give a reliable baseline).
-export function toProductItems(items: any[], granularity?: string): any[] {
+// liveProductIds: when provided, productKey uses it to distinguish live catalogue
+//   ids from stale area-row doc ids.  Without it, all items group by name.
+export function toProductItems(items: any[], granularity?: string, liveProductIds?: ReadonlySet<string>): any[] {
   if (granularity === 'product') return items;
 
   const grouped = new Map<string, any[]>();
   for (const item of items) {
-    const key = productKey(item);
+    const key = productKey(item, liveProductIds);
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key)!.push(item);
   }

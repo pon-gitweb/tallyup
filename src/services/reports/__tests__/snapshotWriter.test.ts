@@ -867,8 +867,9 @@ describe('writeDepartmentSnapshot — resolved productId grouping', () => {
     expect(snapshotData.items[0].actualClosing).toBe(10); // 4 + 6
   });
 
-  it('row without productId groups with a same-named row (name normalisation)', async () => {
-    // Two area rows: one has a productId, one does not but has the same name (normalised)
+  it('row without productId groups with a same-named row via two-pass nameToProductId', async () => {
+    // Two area rows: one has live productId 'prod-beer', one has no productId but same name.
+    // Pass 1 records name→'prod-beer'; pass 2 keys the no-productId row to 'prod-beer' too.
     ff.getDocs
       .mockResolvedValueOnce(fakeQSnap([
         { id: 'prod-beer', dataObj: { name: 'Beer', active: true, mergedInto: null } },
@@ -880,7 +881,6 @@ describe('writeDepartmentSnapshot — resolved productId grouping', () => {
       .mockResolvedValueOnce(fakeQSnap([
         { id: 'i1', dataObj: { name: 'Beer', productId: 'prod-beer', lastCount: 3 } },
       ]))
-      // area-2 row has no productId but same name
       .mockResolvedValueOnce(fakeQSnap([
         { id: 'i2', dataObj: { name: 'Beer', lastCount: 5 } },
       ]))
@@ -894,10 +894,45 @@ describe('writeDepartmentSnapshot — resolved productId grouping', () => {
     await writeDepartmentSnapshot('v1', 'd1', 1);
 
     const [, snapshotData] = mockBatch.set.mock.calls[0];
-    // prod-beer row has productId → key = 'prod-beer'; no-productId row falls back to normaliseName('Beer') = 'beer'
-    // They have different keys — only mergedInto chain collapses ids; name alone cannot auto-merge a productId row
-    expect(snapshotData.items).toHaveLength(2);
-    expect(snapshotData.items.map((i: any) => i.actualClosing).sort((a: number, b: number) => a - b)).toEqual([3, 5]);
+    expect(snapshotData.items).toHaveLength(1);
+    expect(snapshotData.items[0].actualClosing).toBe(8); // 3 + 5
+    expect(snapshotData.items[0].productId).toBe('prod-beer');
+  });
+
+  it('André Clouet: 4 rows (1 live productId + 3 stale area-row ids), same name → 1 item', async () => {
+    // Spec test for the two-pass aggregation:
+    // Back Bar row has live productId 'eK07Fw'; Kitchen/Fridge/Fruit rows have stale ids.
+    // Pass 1: records 'andré clouet' → 'eK07Fw'.
+    // Pass 2: stale rows look up nameToProductId['andré clouet'] = 'eK07Fw' → all group together.
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'eK07Fw', dataObj: { name: 'André Clouet', active: true, mergedInto: null } },
+      ]))
+      .mockResolvedValueOnce(fakeQSnap([
+        { id: 'back-bar',    dataObj: { name: 'Back Bar' } },
+        { id: 'kitchen',     dataObj: { name: 'Kitchen' } },
+        { id: 'fridge',      dataObj: { name: 'Fridge' } },
+        { id: 'fruit-fridge', dataObj: { name: 'Fruit fridge' } },
+      ]))
+      // items in each area — stale ids are not in the products collection
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'eK07Fw',  dataObj: { name: 'André Clouet', productId: 'eK07Fw', lastCount: 3 } }]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'stale-1', dataObj: { name: 'André Clouet', productId: 'stale-1', lastCount: 2 } }]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'stale-2', dataObj: { name: 'André Clouet', productId: 'stale-2', lastCount: 4 } }]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'stale-3', dataObj: { name: 'André Clouet', productId: 'stale-3', lastCount: 1 } }]))
+      .mockResolvedValueOnce(fakeQSnap([{ id: 'd1', dataObj: { name: 'Bar Dept' } }]));
+
+    ff.getDoc
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ name: 'Bar Dept' }) })
+      .mockResolvedValueOnce({ exists: () => false })
+      .mockResolvedValueOnce({ exists: () => false });
+
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    const [, snapshotData] = mockBatch.set.mock.calls[0];
+    expect(snapshotData.items).toHaveLength(1);
+    expect(snapshotData.items[0].actualClosing).toBe(10); // 3+2+4+1
+    expect(snapshotData.items[0].productId).toBe('eK07Fw');
+    expect(snapshotData.items[0].areas).toHaveLength(4);
   });
 });
 

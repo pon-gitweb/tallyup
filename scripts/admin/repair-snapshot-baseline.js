@@ -175,9 +175,9 @@ function normaliseName(name) {
   return (name || '').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-function productKey(item) {
+function productKey(item, liveProductIds) {
   const pid = typeof item.productId === 'string' && item.productId ? item.productId : null;
-  if (pid) return pid;
+  if (pid != null && liveProductIds != null && liveProductIds.has(pid)) return pid;
   return normaliseName(item.name);
 }
 
@@ -231,36 +231,60 @@ async function loadAreaItems(dbInst, venueId, deptId) {
 }
 
 // ── Aggregate raw area items to product-level (mirrors snapshotWriter) ────────
-function aggregateAreaItemsToProducts(rawItems) {
+// Two-pass aggregation matching the writer's logic:
+//   Pass 1 — for every row whose productId is in liveProductIds, record
+//            normalisedName → liveProductId (so stale-id rows can find the live id by name).
+//   Pass 2 — key = live productId if present; else nameToProductId[name]; else 'name:'+name.
+function aggregateAreaItemsToProducts(rawItems, liveProductIds) {
+  liveProductIds = liveProductIds ?? new Set();
+
+  // Pass 1: build name → live productId
+  const nameToProductId = new Map();
+  for (const item of rawItems) {
+    if (!item.productId) continue;
+    if (liveProductIds.has(item.productId)) {
+      const n = normaliseName(item.name);
+      if (n) nameToProductId.set(n, item.productId);
+    }
+  }
+
+  // Pass 2: aggregate
   const aggMap = new Map();
   for (const item of rawItems) {
-    const key = productKey({ productId: item.productId, name: item.name });
+    const n = normaliseName(item.name);
+    let groupPid = null;
+    let key;
+    if (item.productId && liveProductIds.has(item.productId)) {
+      groupPid = item.productId;
+      key = item.productId;
+    } else {
+      groupPid = nameToProductId.get(n) ?? null;
+      key = groupPid ?? ('name:' + n);
+    }
     const lastCnt = typeof item.lastCount === 'number' ? item.lastCount : 0;
     const areaEntry = {
       areaId: item._areaId ?? null,
       areaName: item._areaName ?? null,
+      areaItemId: item._id ?? null,
       actualClosing: lastCnt,
       lastCountAt: item.lastCountAt ?? null,
       lastCountBy: item.lastCountBy ?? null,
     };
     if (!aggMap.has(key)) {
-      aggMap.set(key, { base: item, areas: [areaEntry], sum: lastCnt });
+      aggMap.set(key, { base: item, areas: [areaEntry], sum: lastCnt, groupPid });
     } else {
       const e = aggMap.get(key);
       e.areas.push(areaEntry);
       e.sum += lastCnt;
+      if (!e.groupPid && groupPid) e.groupPid = groupPid;
     }
   }
 
   const products = [];
-  const seenKeys = new Set();
-  let duplicateKeys = 0;
-  for (const [key, { base, areas, sum }] of aggMap) {
-    if (seenKeys.has(key)) { duplicateKeys++; continue; }
-    seenKeys.add(key);
+  for (const [, { base, areas, sum, groupPid }] of aggMap) {
     const costPrice = typeof base.costPrice === 'number' ? base.costPrice : null;
     products.push({
-      productId: base.productId || base._id,
+      productId: groupPid ?? null,
       name: base.name,
       actualClosing: sum,
       costPrice,
@@ -269,7 +293,18 @@ function aggregateAreaItemsToProducts(rawItems) {
       varianceReliable: true,
     });
   }
-  return { products, areaRowCount: rawItems.length, duplicateKeys };
+
+  // Count output items sharing a normalised name (must be 0 for a clean repair run)
+  const nameCount = new Map();
+  for (const p of products) {
+    const n = normaliseName(p.name);
+    nameCount.set(n, (nameCount.get(n) ?? 0) + 1);
+  }
+  const nameDuplicates = [...nameCount.entries()]
+    .filter(([, v]) => v > 1)
+    .reduce((s, [, v]) => s + (v - 1), 0);
+
+  return { products, areaRowCount: rawItems.length, nameDuplicates };
 }
 
 // ── Chunk loader (admin SDK) ──────────────────────────────────────────────────
@@ -295,19 +330,25 @@ async function mainFromStored() {
   }
   const target = targetDoc.data();
 
-  // 2. Load live area rows and aggregate to product-level
-  console.log('\nLoading live area items...');
+  // 2. Load live product ids from catalogue (needed for two-pass aggregation key)
+  console.log('\nLoading product catalogue...');
+  const productsSnap = await db.collection(`venues/${venueId}/products`).get();
+  const liveProductIds = new Set(productsSnap.docs.map(d => d.id));
+  console.log(`Live products: ${liveProductIds.size}`);
+
+  // 3. Load live area rows and aggregate to product-level
+  console.log('Loading live area items...');
   const rawAreaItems = await loadAreaItems(db, venueId, deptId);
-  const { products: targetItems, areaRowCount, duplicateKeys } = aggregateAreaItemsToProducts(rawAreaItems);
+  const { products: targetItems, areaRowCount, nameDuplicates } = aggregateAreaItemsToProducts(rawAreaItems, liveProductIds);
 
-  console.log(`Area rows: ${areaRowCount}  Products: ${targetItems.length}  Duplicate keys: ${duplicateKeys}`);
+  console.log(`Area rows: ${areaRowCount}  Products: ${targetItems.length}  Name duplicates: ${nameDuplicates}`);
 
-  if (duplicateKeys > 0) {
-    console.error(`\nAbort: ${duplicateKeys} duplicate product key(s) in output. Fix productKey conflicts first.`);
+  if (nameDuplicates > 0) {
+    console.error(`\nAbort: ${nameDuplicates} output item(s) share a normalised name — grouping conflict. Fix before repair.`);
     process.exit(1);
   }
 
-  // 3. Find most recent previous snapshot as baseline
+  // 4. Find most recent previous snapshot as baseline
   const snapsRef = db.collection(`venues/${venueId}/departments/${deptId}/snapshots`);
   const earlierSnap = await snapsRef
     .where('cycleNumber', '<', cycleNumber)
@@ -330,10 +371,22 @@ async function mainFromStored() {
     console.log('No earlier snapshot found — all items will have no baseline (openingCount null).');
   }
 
-  // 4. Compute repaired items using baseline
+  // 5. Compute repaired items using baseline
   const repairedItems = repairItems(targetItems, baselineItems, baseCycleNumber);
 
-  // 5. Stats
+  // André Clouet dry-run detail (per spec: show item with areas, actual, opening, variance)
+  const andreItem = repairedItems.find(it => normaliseName(it.name) === 'andré clouet');
+  if (andreItem) {
+    console.log('\nAndré Clouet item:');
+    console.log(`  productId: ${andreItem.productId ?? 'null'}`);
+    console.log(`  actualClosing: ${andreItem.actualClosing}  openingCount: ${andreItem.openingCount ?? 'null'}  variance: ${andreItem.totalVarianceQty}`);
+    console.log(`  areas (${(andreItem.areas || []).length}):`);
+    for (const a of (andreItem.areas || [])) {
+      console.log(`    ${a.areaName ?? a.areaId}: ${a.actualClosing} (areaItemId: ${a.areaItemId ?? 'null'})`);
+    }
+  }
+
+  // 7. Stats
   const hasPrices = repairedItems.some(it => it.costPrice != null);
   const totalStockValue = hasPrices
     ? repairedItems.filter(it => it.costPrice != null).reduce((s, it) => s + it.actualClosing * it.costPrice, 0)
@@ -352,7 +405,7 @@ async function mainFromStored() {
   console.log('\nTop 10 excesses:');
   excesses.slice(0, 10).forEach(it => console.log(`  ${it.name}: +${it.unexplainedVarianceQty} (${fmtDollars(it.unexplainedVarianceDollars)})`));
 
-  // 6. JSON backup
+  // 8. JSON backup
   const outputDir = path.join(__dirname, 'output');
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
   const backupPath = path.join(
@@ -375,7 +428,7 @@ async function mainFromStored() {
     return;
   }
 
-  // 7. Write corrected snapshot
+  // 9. Write corrected snapshot
   const repairedSummary = recomputeSummary(repairedItems, target.summary || {});
   repairedSummary.areaRowsCounted = areaRowCount;
 

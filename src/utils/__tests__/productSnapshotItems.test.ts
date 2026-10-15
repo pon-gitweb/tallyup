@@ -3,8 +3,14 @@ import { productKey, toProductItems } from '../productSnapshotItems';
 // ── productKey ────────────────────────────────────────────────────────────────
 
 describe('productKey', () => {
-  it('returns productId when present', () => {
-    expect(productKey({ productId: 'prod-001', name: 'Beer' })).toBe('prod-001');
+  it('returns productId when present in live set', () => {
+    expect(productKey({ productId: 'prod-001', name: 'Beer' }, new Set(['prod-001']))).toBe('prod-001');
+  });
+
+  it('falls back to normalised name when no live set provided (stale id safety)', () => {
+    // Without a live set, productKey must never use productId alone — stale area-row
+    // doc ids would become incorrect grouping keys.
+    expect(productKey({ productId: 'prod-001', name: 'Beer' })).toBe('beer');
   });
 
   it('falls back to normalised name when productId absent', () => {
@@ -161,13 +167,24 @@ describe('toProductItems — productId as grouping key', () => {
     expect(result[0].varianceReliable).toBe(false);
   });
 
-  it('keeps distinct productIds as separate products even with same name', () => {
+  it('keeps distinct productIds as separate products even with same name (with live set)', () => {
+    const items = [
+      { productId: 'p-beer-a', name: 'Beer', areaId: 'a1', actualClosing: 5 },
+      { productId: 'p-beer-b', name: 'Beer', areaId: 'a2', actualClosing: 3 },
+    ];
+    const liveIds = new Set(['p-beer-a', 'p-beer-b']);
+    const result = toProductItems(items, undefined, liveIds);
+    expect(result).toHaveLength(2);
+  });
+
+  it('without live set, same-name rows always group together regardless of productId', () => {
     const items = [
       { productId: 'p-beer-a', name: 'Beer', areaId: 'a1', actualClosing: 5 },
       { productId: 'p-beer-b', name: 'Beer', areaId: 'a2', actualClosing: 3 },
     ];
     const result = toProductItems(items);
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(1);
+    expect(result[0].actualClosing).toBe(8);
   });
 });
 

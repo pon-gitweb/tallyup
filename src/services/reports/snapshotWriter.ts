@@ -131,8 +131,8 @@ export function computeSnapshotItemFigures(
       : null;
 
     return {
-      productId: item._id,
-      name: item.name || item._id,
+      productId: item.productId ?? null,
+      name: item.name || null,
       areaId: item._areaId,
       areaName: item._areaName,
       categoryName: item.category ?? item.categorySuggested ?? null,
@@ -323,6 +323,7 @@ export async function writeDepartmentSnapshot(
     // are built in the same pass — productsSnap stays in scope for both.
     const supplierResolution: SupplierResolution = { supplierInfoByProductId: {} };
     const parByProductId: Record<string, number | null> = {}; // resolved product id → parLevel
+    const liveProductIds = new Set<string>(); // all product doc ids in the catalogue
     try {
       const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
       // ProdEntry shape matches resolveProduct()'s expectations — same type used by
@@ -331,6 +332,7 @@ export async function writeDepartmentSnapshot(
       const rawParByDocId: Record<string, number | null> = {};
       productsSnap.forEach(d => {
         const p = d.data() as any;
+        liveProductIds.add(d.id);
         prodById[d.id] = {
           name: (p.name || '').toLowerCase().trim(),
           category: p.category ?? p.categorySuggested ?? 'Uncategorised',
@@ -384,9 +386,9 @@ export async function writeDepartmentSnapshot(
             getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', prevSnapshotId, 'itemChunks'))
               .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
           );
-          for (const item of toProductItems(prevItems, prevData.itemsGranularity)) {
+          for (const item of toProductItems(prevItems, prevData.itemsGranularity, liveProductIds)) {
             if (item.varianceReliable === false) continue;
-            const pKey = productKey(item);
+            const pKey = productKey(item, liveProductIds);
             if (typeof item.actualClosing === 'number') {
               if (pKey) prevItemMap.set(pKey, item.actualClosing);
               const nameKey = normaliseName(item.name);
@@ -417,9 +419,9 @@ export async function writeDepartmentSnapshot(
                 getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', fallbackDoc.id, 'itemChunks'))
                   .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
               );
-              for (const item of toProductItems(fallbackItems, fallbackData.itemsGranularity)) {
+              for (const item of toProductItems(fallbackItems, fallbackData.itemsGranularity, liveProductIds)) {
                 if (item.varianceReliable === false) continue;
-                const pKey = productKey(item);
+                const pKey = productKey(item, liveProductIds);
                 if (typeof item.actualClosing === 'number') {
                   if (pKey) prevItemMap.set(pKey, item.actualClosing);
                   const nameKey = normaliseName(item.name);
@@ -552,41 +554,72 @@ export async function writeDepartmentSnapshot(
     } catch (e: any) { console.warn('[snapshotWriter] sales enrichment failed:', e?.message); }
 
     // ── Aggregate per-area rawItems to product-level ─────────────────────────
-    // Each product may appear in multiple areas; sum lastCount across all areas
-    // so variance is computed once per product against a single baseline figure.
-    type AggEntry = { base: any; areas: any[]; sumLastCount: number; areaNames: Set<string>; resolvedPid: string | null };
+    // Two-pass aggregation so rows with stale/area-row productIds group with the
+    // live product via name lookup:
+    //   Pass 1 — for every row whose resolved id is a live product doc, record
+    //            normalisedName → liveProductId.
+    //   Pass 2 — key = live resolved productId if present; else
+    //            nameToProductId[name] if present; else 'name:'+normalisedName.
+    // This ensures all four André-Clouet rows (one live id, three stale ids,
+    // same name) collapse into a single snapshot item with the live productId.
+    const nameToProductId = new Map<string, string>();
+    for (const item of rawItems) {
+      if (!item.productId) continue;
+      const rPid = productResolution.resolvedIdById[item.productId] ?? item.productId;
+      if (liveProductIds.has(rPid)) {
+        const n = normaliseName(item.name);
+        if (n) nameToProductId.set(n, rPid);
+      }
+    }
+
+    type AggEntry = { base: any; areas: any[]; sumLastCount: number; areaNames: Set<string>; groupPid: string | null };
     const aggMap = new Map<string, AggEntry>();
     for (const item of rawItems) {
-      const resolvedPid = item.productId
-        ? (productResolution.resolvedIdById[item.productId] ?? item.productId)
-        : null;
-      const key = resolvedPid || normaliseName(item.name);
+      const n = normaliseName(item.name);
+      let groupPid: string | null = null;
+      let key: string;
+      if (item.productId) {
+        const rPid = productResolution.resolvedIdById[item.productId] ?? item.productId;
+        if (liveProductIds.has(rPid)) {
+          groupPid = rPid;
+          key = rPid;
+        } else {
+          groupPid = nameToProductId.get(n) ?? null;
+          key = groupPid ?? ('name:' + n);
+        }
+      } else {
+        groupPid = nameToProductId.get(n) ?? null;
+        key = groupPid ?? ('name:' + n);
+      }
       const lastCnt = typeof item.lastCount === 'number' ? item.lastCount : 0;
       const areaEntry = {
         areaId: item._areaId ?? null,
         areaName: item._areaName ?? null,
+        areaItemId: item._id ?? null,
         actualClosing: lastCnt,
         lastCountAt: item.lastCountAt ?? null,
         lastCountBy: item.lastCountBy ?? null,
         lastCountByName: item.lastCountByName ?? null,
       };
       if (!aggMap.has(key)) {
-        aggMap.set(key, { base: item, areas: [areaEntry], sumLastCount: lastCnt, areaNames: new Set([item._areaName ?? '']), resolvedPid });
+        aggMap.set(key, { base: item, areas: [areaEntry], sumLastCount: lastCnt, areaNames: new Set([item._areaName ?? '']), groupPid });
       } else {
         const e = aggMap.get(key)!;
         e.areas.push(areaEntry);
         e.sumLastCount += lastCnt;
         if (item._areaName) e.areaNames.add(item._areaName);
+        if (!e.groupPid && groupPid) e.groupPid = groupPid;
       }
     }
     const areaRowsCounted = rawItems.length;
-    const aggregatedRawItems = Array.from(aggMap.values()).map(({ base, areas, sumLastCount, areaNames, resolvedPid }) => {
+    const aggregatedRawItems = Array.from(aggMap.values()).map(({ base, areas, sumLastCount, areaNames, groupPid }) => {
       const distinctNames = [...areaNames].filter(Boolean);
-      const productParLevel = resolvedPid != null && parByProductId[resolvedPid] != null
-        ? parByProductId[resolvedPid]
+      const productParLevel = groupPid != null && parByProductId[groupPid] != null
+        ? parByProductId[groupPid]
         : (typeof base.parLevel === 'number' ? base.parLevel : null);
       return {
         ...base,
+        productId: groupPid ?? null,
         lastCount: sumLastCount,
         _areaId: areas.length === 1 ? areas[0].areaId : null,
         _areaName: distinctNames.join(', ') || base._areaName,
