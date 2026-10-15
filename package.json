@@ -23,7 +23,7 @@
     "check:parser-sync": "node scripts/check-parser-sync.js",
     "check:rules-payloads": "node scripts/check-rules-payloads.js",
     "check:nav-targets": "node scripts/check-nav-targets.js",
-    "preflight": "npm run check:imports && npm run check:undefined && npm run check:undefined-nocheck && npm run check:write-guards && npm run check:modal-safe-area && npm run check:parser-sync && npm run check:rules-payloads && npm run check:isreportactive-sync && node scripts/check-weeklyledger-sync.js && node scripts/check-snapshotitems-sync.js && node scripts/check-snapshot-items-reads.js && npm run check:nav-targets",
+    "preflight": "npm run check:imports && npm run check:undefined && npm run check:undefined-nocheck && npm run check:write-guards && npm run check:modal-safe-area && npm run check:parser-sync && npm run check:rules-payloads && npm run check:isreportactive-sync && node scripts/check-weeklyledger-sync.js && node scripts/check-snapshotitems-sync.js && node scripts/check-productsnapshotitems-sync.js && node scripts/check-snapshot-items-reads.js && npm run check:nav-targets",
     "eas-build-post-install": "npm run preflight",
     "check:imports": "node scripts/check-relative-imports.js",
     "test:rules": "firebase emulators:exec --only firestore --project demo-tallyup 'npm --prefix rules-tests test'",

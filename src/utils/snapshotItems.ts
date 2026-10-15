@@ -1,3 +1,5 @@
+import { toProductItems } from './productSnapshotItems';
+
 /**
  * loadSnapshotItems — reads snapshot items from either the legacy inline array
  * or the itemChunks subcollection (for snapshots with >200 items).
@@ -14,12 +16,15 @@ export async function loadSnapshotItems(
   snapshotData: any,
   fetchChunks: () => Promise<Array<{ index: number; items: any[] }>>,
 ): Promise<any[]> {
+  let items: any[];
   if ((snapshotData.itemChunkCount ?? 0) > 0) {
-    const chunks = await fetchChunks()
-    return chunks
+    const chunks = await fetchChunks();
+    items = chunks
       .slice()
       .sort((a, b) => a.index - b.index)
-      .flatMap(c => c.items)
+      .flatMap(c => c.items);
+  } else {
+    items = snapshotData.items ?? [];
   }
-  return snapshotData.items ?? []
+  return toProductItems(items, snapshotData.itemsGranularity);
 }
