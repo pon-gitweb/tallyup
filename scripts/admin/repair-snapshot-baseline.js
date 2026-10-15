@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 
 // ── CLI args (only parsed when run directly) ─────────────────────────────────
-let venueId, deptId, cycleNumber, execute;
+let venueId, deptId, cycleNumber, execute, fromStored;
 
 if (require.main === module) {
   const args = process.argv.slice(2);
@@ -24,13 +24,16 @@ if (require.main === module) {
     const i = args.indexOf(flag);
     return i !== -1 && i + 1 < args.length ? args[i + 1] : null;
   }
-  venueId  = getArg('--venue');
-  deptId   = getArg('--dept');
+  venueId    = getArg('--venue');
+  deptId     = getArg('--dept');
   const cycleArg = getArg('--cycle');
-  execute  = args.includes('--execute');
+  execute    = args.includes('--execute');
+  fromStored = args.includes('--from-stored');
 
   if (!venueId || !deptId || !cycleArg) {
-    console.error('Usage: node repair-snapshot-baseline.js --venue <id> --dept <id> --cycle <n> [--execute]');
+    console.error(
+      'Usage: node repair-snapshot-baseline.js --venue <id> --dept <id> --cycle <n> [--execute] [--from-stored]'
+    );
     process.exit(1);
   }
   cycleNumber = parseInt(cycleArg, 10);
@@ -167,6 +170,104 @@ function snapshotSummaryLine(summary) {
   ].join('  ');
 }
 
+// ── productKey: mirrors src/utils/productSnapshotItems.ts ────────────────────
+function productKey(item) {
+  const pid = typeof item.productId === 'string' && item.productId ? item.productId : null;
+  if (pid) return pid;
+  return (item.name || '').toLowerCase().trim();
+}
+
+// ── toProductItems: aggregate legacy per-area rows to product-level ───────────
+// Mirrors toProductItems() from productSnapshotItems.ts for use in repair.
+function toProductItemsForRepair(items, granularity) {
+  if (granularity === 'product') return items;
+  const grouped = new Map();
+  for (const item of items) {
+    const key = productKey(item);
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(item);
+  }
+  const result = [];
+  for (const [, rows] of grouped) {
+    const base = rows[0];
+    const areas = rows.map(r => ({
+      areaId: r.areaId ?? null,
+      areaName: r.areaName ?? null,
+      actualClosing: typeof r.actualClosing === 'number' ? r.actualClosing : 0,
+    }));
+    const actualClosing = areas.reduce((s, a) => s + a.actualClosing, 0);
+    if (rows.length === 1) {
+      result.push({ ...base, areas, varianceReliable: true });
+    } else {
+      result.push({
+        ...base, actualClosing, areas,
+        openingCount: null, expectedClosing: null,
+        totalVarianceQty: null, totalVarianceDollars: null,
+        unexplainedVarianceQty: null, unexplainedVarianceDollars: null,
+        varianceReliable: false,
+      });
+    }
+  }
+  return result;
+}
+
+// ── Load raw area items from the live areas subcollection ─────────────────────
+async function loadAreaItems(dbInst, venueId, deptId) {
+  const areasRef = dbInst.collection(`venues/${venueId}/departments/${deptId}/areas`);
+  const areasSnap = await areasRef.get();
+  const rawItems = [];
+  for (const areaDoc of areasSnap.docs) {
+    const areaName = areaDoc.data().name || areaDoc.id;
+    const itemsSnap = await areaDoc.ref.collection('items').get();
+    for (const itemDoc of itemsSnap.docs) {
+      rawItems.push({ _id: itemDoc.id, _areaId: areaDoc.id, _areaName: areaName, ...itemDoc.data() });
+    }
+  }
+  return rawItems;
+}
+
+// ── Aggregate raw area items to product-level (mirrors snapshotWriter) ────────
+function aggregateAreaItemsToProducts(rawItems) {
+  const aggMap = new Map();
+  for (const item of rawItems) {
+    const key = productKey({ productId: item.productId || item._id, name: item.name });
+    const lastCnt = typeof item.lastCount === 'number' ? item.lastCount : 0;
+    const areaEntry = {
+      areaId: item._areaId ?? null,
+      areaName: item._areaName ?? null,
+      actualClosing: lastCnt,
+      lastCountAt: item.lastCountAt ?? null,
+      lastCountBy: item.lastCountBy ?? null,
+    };
+    if (!aggMap.has(key)) {
+      aggMap.set(key, { base: item, areas: [areaEntry], sum: lastCnt });
+    } else {
+      const e = aggMap.get(key);
+      e.areas.push(areaEntry);
+      e.sum += lastCnt;
+    }
+  }
+
+  const products = [];
+  const seenKeys = new Set();
+  let duplicateKeys = 0;
+  for (const [key, { base, areas, sum }] of aggMap) {
+    if (seenKeys.has(key)) { duplicateKeys++; continue; }
+    seenKeys.add(key);
+    const costPrice = typeof base.costPrice === 'number' ? base.costPrice : null;
+    products.push({
+      productId: base.productId || base._id,
+      name: base.name,
+      actualClosing: sum,
+      costPrice,
+      parLevel: typeof base.parLevel === 'number' ? base.parLevel : null,
+      areas,
+      varianceReliable: true,
+    });
+  }
+  return { products, areaRowCount: rawItems.length, duplicateKeys };
+}
+
 // ── Chunk loader (admin SDK) ──────────────────────────────────────────────────
 async function loadItems(docRef, data) {
   if ((data.itemChunkCount ?? 0) > 0) {
@@ -179,10 +280,141 @@ async function loadItems(docRef, data) {
   return data.items ?? [];
 }
 
+// ── --from-stored: rebuild product items from live area rows ──────────────────
+async function mainFromStored() {
+  // 1. Load target snapshot (for metadata + previous cycle reference)
+  const targetRef = db.doc(`venues/${venueId}/departments/${deptId}/snapshots/cycle-${cycleNumber}`);
+  const targetDoc = await targetRef.get();
+  if (!targetDoc.exists) {
+    console.error(`\nTarget snapshot cycle-${cycleNumber} not found.`);
+    process.exit(1);
+  }
+  const target = targetDoc.data();
+
+  // 2. Load live area rows and aggregate to product-level
+  console.log('\nLoading live area items...');
+  const rawAreaItems = await loadAreaItems(db, venueId, deptId);
+  const { products: targetItems, areaRowCount, duplicateKeys } = aggregateAreaItemsToProducts(rawAreaItems);
+
+  console.log(`Area rows: ${areaRowCount}  Products: ${targetItems.length}  Duplicate keys: ${duplicateKeys}`);
+
+  if (duplicateKeys > 0) {
+    console.error(`\nAbort: ${duplicateKeys} duplicate product key(s) in output. Fix productKey conflicts first.`);
+    process.exit(1);
+  }
+
+  // 3. Find most recent previous snapshot as baseline
+  const snapsRef = db.collection(`venues/${venueId}/departments/${deptId}/snapshots`);
+  const earlierSnap = await snapsRef
+    .where('cycleNumber', '<', cycleNumber)
+    .orderBy('cycleNumber', 'desc')
+    .limit(1)
+    .get();
+
+  let baselineItems = [];
+  let baseCycleNumber = null;
+  if (!earlierSnap.empty) {
+    const baselineDoc = earlierSnap.docs[0];
+    const baselineData = baselineDoc.data();
+    baseCycleNumber = baselineData.cycleNumber;
+    const rawBaselineItems = await loadItems(baselineDoc.ref, baselineData);
+    // Aggregate legacy per-area baseline to product-level
+    baselineItems = toProductItemsForRepair(rawBaselineItems, baselineData.itemsGranularity)
+      .filter(it => it.varianceReliable !== false);
+    console.log(`Baseline: cycle-${baseCycleNumber} (${baselineItems.length} reliable product items)`);
+  } else {
+    console.log('No earlier snapshot found — all items will have no baseline (openingCount null).');
+  }
+
+  // 4. Compute repaired items using baseline
+  const repairedItems = repairItems(targetItems, baselineItems, baseCycleNumber);
+
+  // 5. Stats
+  const hasPrices = repairedItems.some(it => it.costPrice != null);
+  const totalStockValue = hasPrices
+    ? repairedItems.filter(it => it.costPrice != null).reduce((s, it) => s + it.actualClosing * it.costPrice, 0)
+    : null;
+  const shortages = repairedItems.filter(it => it.openingCount != null && it.unexplainedVarianceQty < 0)
+    .sort((a, b) => a.unexplainedVarianceQty - b.unexplainedVarianceQty);
+  const excesses  = repairedItems.filter(it => it.openingCount != null && it.unexplainedVarianceQty > 0)
+    .sort((a, b) => b.unexplainedVarianceQty - a.unexplainedVarianceQty);
+  const totalShortage = shortages.reduce((s, it) => s + Math.abs(it.unexplainedVarianceDollars ?? 0), 0);
+  const totalExcess   = excesses.reduce((s, it) => s + Math.abs(it.unexplainedVarianceDollars ?? 0), 0);
+
+  console.log(`\nStock value: ${fmtDollars(totalStockValue)}`);
+  console.log(`Shortages: ${fmtDollars(-totalShortage)}  Excess: ${fmtDollars(totalExcess)}`);
+  console.log('\nTop 10 shortages:');
+  shortages.slice(0, 10).forEach(it => console.log(`  ${it.name}: ${it.unexplainedVarianceQty} (${fmtDollars(it.unexplainedVarianceDollars)})`));
+  console.log('\nTop 10 excesses:');
+  excesses.slice(0, 10).forEach(it => console.log(`  ${it.name}: +${it.unexplainedVarianceQty} (${fmtDollars(it.unexplainedVarianceDollars)})`));
+
+  // 6. JSON backup
+  const outputDir = path.join(__dirname, 'output');
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+  const backupPath = path.join(
+    outputDir,
+    `from-stored-${venueId.slice(0, 8)}-${deptId}-cycle${cycleNumber}-${Date.now()}.json`,
+  );
+  fs.writeFileSync(backupPath, JSON.stringify({
+    venueId, deptId, cycleNumber, baseCycleNumber, areaRowCount,
+    productCount: repairedItems.length,
+    totalStockValue,
+    totalShortage: -totalShortage,
+    totalExcess,
+    originalItems: rawAreaItems,
+    repairedItems,
+  }, null, 2));
+  console.log(`\nBackup written: ${backupPath}`);
+
+  if (!execute) {
+    console.log('\nDry run complete. Pass --execute to write to Firestore.');
+    return;
+  }
+
+  // 7. Write corrected snapshot
+  const repairedSummary = recomputeSummary(repairedItems, target.summary || {});
+  repairedSummary.areaRowsCounted = areaRowCount;
+
+  const CHUNK_SIZE = 200;
+  const newChunkCount = Math.ceil(repairedItems.length / CHUNK_SIZE);
+  const oldChunkCount = target.itemChunkCount ?? 0;
+
+  const repairedSnapshot = {
+    ...target,
+    items: repairedItems.slice(0, CHUNK_SIZE),
+    itemCount: repairedItems.length,
+    itemChunkCount: newChunkCount,
+    itemsGranularity: 'product',
+    summary: repairedSummary,
+    baselineCycleNumber: baseCycleNumber ?? null,
+    repairedAt: new Date().toISOString(),
+    repairedFrom: baseCycleNumber != null ? `cycle-${baseCycleNumber}` : null,
+    repairNote: `Rebuilt from stored area rows by --from-stored repair script`,
+  };
+
+  const batch = db.batch();
+  batch.set(targetRef, repairedSnapshot);
+  const chunksRef = targetRef.collection('itemChunks');
+  for (let i = 0; i < newChunkCount; i++) {
+    const chunkId = String(i).padStart(3, '0');
+    batch.set(chunksRef.doc(chunkId), { index: i, items: repairedItems.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE) });
+  }
+  for (let i = newChunkCount; i < oldChunkCount; i++) {
+    batch.delete(chunksRef.doc(String(i).padStart(3, '0')));
+  }
+  await batch.commit();
+  console.log(`\n✓ Snapshot cycle-${cycleNumber} rebuilt from stored area rows (${repairedItems.length} products, ${areaRowCount} area rows).`);
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
   console.log(`\n── Snapshot repair ──────────────────────────────────────────────`);
-  console.log(`venue=${venueId}  dept=${deptId}  cycle=${cycleNumber}  execute=${execute}`);
+  console.log(`venue=${venueId}  dept=${deptId}  cycle=${cycleNumber}  execute=${execute}  fromStored=${fromStored ?? false}`);
+
+  if (fromStored) {
+    await mainFromStored();
+    return;
+  }
 
   // 1. Load target snapshot
   const targetRef = db.doc(
@@ -317,4 +549,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { loadItems, repairItems, recomputeSummary };
+module.exports = { loadItems, repairItems, recomputeSummary, productKey, toProductItemsForRepair, aggregateAreaItemsToProducts };
