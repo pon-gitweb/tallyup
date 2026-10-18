@@ -121,6 +121,11 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
   const triedAutoAttachForUid = useRef<string | null>(null);
   const lastVenueIdRef = useRef<string | null>(undefined as any);
+  // Tracks the current venueId state (not Firestore's activeVenueId field).
+  // lastVenueIdRef tracks what Firestore says and can be null when the provider
+  // intentionally holds venueId (activeVenueId null, venueIds non-empty). This ref
+  // is used for membership checks and stale-result guards instead of lastVenueIdRef.
+  const activeVenueIdRef = useRef<string | null>(null);
   const lastVenueTypeRef = useRef<string | null>(null);
   const unsubUserDocRef = useRef<Unsubscribe | null>(null);
   const unsubVenueDocRef = useRef<Unsubscribe | null>(null);
@@ -136,6 +141,12 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
   // Tracks which venueId we've already attempted trial init for — prevents
   // double-write across React Strict Mode double-invoke or rapid re-renders.
+
+  // Keep activeVenueIdRef in sync with venueId state so error-handler guards
+  // always see the current venue even when lastVenueIdRef is null.
+  useEffect(() => {
+    activeVenueIdRef.current = venueId;
+  }, [venueId]);
 
   function clearUserSnapshotFailsafe() {
     if (userSnapshotFailsafeRef.current) {
@@ -280,7 +291,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
           clearUserSnapshotFailsafe();
           if (__DEV__) console.log('[TallyUp VenueProvider] user snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
           if (err?.code === 'permission-denied') {
-            const vid = lastVenueIdRef.current;
+            const vid = activeVenueIdRef.current;
             let isMember = false;
             if (vid) {
               try {
@@ -294,7 +305,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
                     : userSnap.data()?.venueId === vid));
               } catch {}
             }
-            if (lastVenueIdRef.current !== vid) return;
+            if (activeVenueIdRef.current !== vid) return;
             if (isMember && userDocRetryRef.current.count < BACKOFF_DELAYS.length) {
               const delay = BACKOFF_DELAYS[userDocRetryRef.current.count] ?? 10000;
               userDocRetryRef.current.count++;
@@ -421,7 +432,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
                 : userSnap.data()?.venueId === venueId));
           } catch {}
         }
-        if (lastVenueIdRef.current !== vidAtCheck) return;
+        if (activeVenueIdRef.current !== vidAtCheck) return;
         if (isMember && venueDocRetryRef.current.count < BACKOFF_DELAYS.length) {
           const delay = BACKOFF_DELAYS[venueDocRetryRef.current.count] ?? 10000;
           venueDocRetryRef.current.count++;

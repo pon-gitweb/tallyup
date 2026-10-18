@@ -194,6 +194,77 @@ describe('VenueProvider — genuine sign-out (no captureError)', () => {
   });
 });
 
+// ── Tests: held venueId (activeVenueId null, venueIds non-empty) ─────────────
+// Scenario: Firestore user doc has activeVenueId=null, venueIds=['v1'].
+// The provider holds venueId='v1' (see ~line 262 of VenueProvider.tsx).
+// lastVenueIdRef = null (tracks Firestore activeVenueId field).
+// activeVenueIdRef = 'v1' (tracks venueId state).
+// The fix: membership checks and stale guards use activeVenueIdRef, not lastVenueIdRef.
+
+describe('VenueProvider — held venueId (activeVenueId null, venueIds non-empty)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetAuth.mockReturnValue({ currentUser: { uid: 'uid-1' } });
+  });
+
+  it('(a) venue-doc perm-denied with membership intact → retry, venue kept', async () => {
+    // activeVenueIdRef = 'v1'; using it for the check finds membership → retry
+    mockGetDoc.mockResolvedValue(makeExists({ role: 'staff' }));
+
+    const result = await verifyAndDecide({
+      venueId: 'v1', // activeVenueIdRef.current in production
+      uid: 'uid-1', retryCount: 0,
+      listener: 'venue-doc', code: 'permission-denied',
+    });
+
+    expect(result.action).toBe('retry');
+    expect((result as any).retryDelay).toBe(1000);
+    expect(mockCaptureError).not.toHaveBeenCalled();
+  });
+
+  it('(b) user-doc perm-denied with membership intact → retry, no clear', async () => {
+    mockGetDoc.mockResolvedValue(makeExists({ role: 'staff' }));
+
+    const result = await verifyAndDecide({
+      venueId: 'v1', // activeVenueIdRef.current
+      uid: 'uid-1', retryCount: 0,
+      listener: 'user-doc', code: 'permission-denied',
+    });
+
+    expect(result.action).toBe('retry');
+    expect(mockCaptureError).not.toHaveBeenCalled();
+  });
+
+  it('(c) membership gone → cleared with captureError', async () => {
+    mockGetDoc
+      .mockResolvedValueOnce(makeNotExists())                       // venues/v1/members/uid-1
+      .mockResolvedValueOnce(makeExists({ venueIds: ['v999'] }));  // users/uid-1 — different venue
+
+    const result = await verifyAndDecide({
+      venueId: 'v1', uid: 'uid-1', retryCount: 0,
+      listener: 'venue-doc', code: 'permission-denied',
+    });
+
+    expect(result.action).toBe('clear');
+    expect(mockCaptureError).toHaveBeenCalledWith('venue:cleared', expect.objectContaining({
+      reason: 'venue-doc-not-member',
+      venueId: 'v1',
+    }));
+  });
+
+  it('null venueId (old lastVenueIdRef behaviour) would have wrongly cleared the venue', async () => {
+    // Documents the pre-fix bug: lastVenueIdRef was null when activeVenueId=null, so
+    // vid=null → no membership check → isMember=false → captureError + clear. Wrong.
+    const result = await verifyAndDecide({
+      venueId: null, uid: 'uid-1', retryCount: 0,
+      listener: 'venue-doc', code: 'permission-denied',
+    });
+
+    expect(result.action).toBe('clear');
+    expect(mockCaptureError).toHaveBeenCalled(); // bug: incorrectly cleared an active venue
+  });
+});
+
 // ── Tests: venue-doc recovery → status 'ready' ───────────────────────────────
 
 describe('VenueProvider — venue-doc recovery status transition', () => {
