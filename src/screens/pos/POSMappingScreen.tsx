@@ -4,7 +4,7 @@ import {
   Alert, View, Text, TouchableOpacity, ScrollView, TextInput,
   Modal, FlatList, SafeAreaView, ActivityIndicator,
 } from 'react-native';
-import { collection, getDocs, addDoc, query, where, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, query, where, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId, useVenue } from '../../context/VenueProvider';
 import { useWriteGuard } from '../../hooks/useWriteGuard';
@@ -13,6 +13,16 @@ import { suggestMatch } from '../../services/pos/posMatching';
 import { useToast } from '../../components/common/Toast';
 import type { POSSaleItem } from '../../services/pos/POSService';
 import type { MatchSuggestion } from '../../services/pos/posMatching';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function normName(s: string): string {
+  return (s || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
+}
+
+function mappingDocId(posItemName: string, posSystem: string): string {
+  return `${normName(posItemName).replace(/\s+/g, '_')}_${posSystem}`.slice(0, 500);
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -175,7 +185,9 @@ export default function POSMappingScreen() {
           ? (item.suggestion.confidence === 'high' ? 'auto-high' : 'auto-medium')
           : 'manual';
 
-      await addDoc(collection(db, 'venues', venueId, 'posProductMappings'), {
+      // 3b: deterministic doc id → re-mapping updates rather than duplicates
+      const docId = mappingDocId(item.posItem.posItemName, adapterSystem);
+      await setDoc(doc(db, 'venues', venueId, 'posProductMappings', docId), {
         posSystem: adapterSystem,
         posItemId: item.posItem.posItemId,
         posItemName: item.posItem.posItemName,
@@ -191,12 +203,42 @@ export default function POSMappingScreen() {
         createdAt: serverTimestamp(),
         createdBy: user?.uid ?? null,
         updatedAt: serverTimestamp(),
-      });
+      }, { merge: true });
+
+      // 3a: mark all salesReportUnknowns with the same normalised line name as 'mapped'
+      try {
+        const norm = normName(item.posItem.posItemName);
+        const unknownsSnap = await getDocs(
+          query(
+            collection(db, 'venues', venueId, 'salesReportUnknowns'),
+            where('status', '==', 'unmapped'),
+          )
+        );
+        const toMark = unknownsSnap.docs.filter(d => {
+          const lineName = (d.data()?.line?.name as string) || '';
+          return normName(lineName) === norm;
+        });
+        if (toMark.length > 0) {
+          const batch = writeBatch(db);
+          toMark.forEach(d => batch.update(d.ref, { status: 'mapped' }));
+          await batch.commit();
+        }
+      } catch (e: any) {
+        if (e?.code === 'permission-denied') {
+          showError('You need manager or owner role to mark items as mapped.');
+          return;
+        }
+        // Non-fatal: mapping doc already saved; unknown status update is best-effort
+      }
 
       updateItem(idx, { state: 'confirmed' });
       showSuccess('Mapping saved');
     } catch (e: any) {
-      showError(e?.message || 'Could not save mapping');
+      if (e?.code === 'permission-denied') {
+        showError('You need manager or owner role to save mappings.');
+      } else {
+        showError(e?.message || 'Could not save mapping');
+      }
     }
   }
 
@@ -204,7 +246,8 @@ export default function POSMappingScreen() {
     if (!productWriteGuard.allowed) { Alert.alert('Read-only', 'This venue is read-only, so this action is unavailable.'); return; }
     const item = items[idx];
     try {
-      await addDoc(collection(db, 'venues', venueId, 'posProductMappings'), {
+      const docId = mappingDocId(item.posItem.posItemName, adapterSystem);
+      await setDoc(doc(db, 'venues', venueId, 'posProductMappings', docId), {
         posSystem: adapterSystem,
         posItemId: item.posItem.posItemId,
         posItemName: item.posItem.posItemName,
@@ -217,10 +260,14 @@ export default function POSMappingScreen() {
         createdAt: serverTimestamp(),
         createdBy: user?.uid ?? null,
         updatedAt: serverTimestamp(),
-      });
+      }, { merge: true });
       updateItem(idx, { state: 'skipped' });
     } catch (e: any) {
-      showError(e?.message || 'Could not skip item');
+      if (e?.code === 'permission-denied') {
+        showError('You need manager or owner role to skip items.');
+      } else {
+        showError(e?.message || 'Could not skip item');
+      }
     }
   }
 

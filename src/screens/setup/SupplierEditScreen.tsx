@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity } from 'react-native';
 import { useToast } from '../../components/common/Toast';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { useVenueId } from '../../context/VenueProvider';
+import { useVenueId, useVenueStatus } from '../../context/VenueProvider';
 import { createSupplier, updateSupplier, Supplier } from '../../services/suppliers';
 
 function isValidHHmm(s: string) {
@@ -18,6 +18,7 @@ export default function SupplierEditScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueId = useVenueId();
+  const venueStatus = useVenueStatus();
   const { supplierId, supplier }: { supplierId?: string|null; supplier?: Supplier } = route.params || {};
 
   const [name, setName] = useState(supplier?.name || '');
@@ -36,7 +37,7 @@ export default function SupplierEditScreen() {
   const { showError, showInfo } = useToast();
 
   async function onSave() {
-    if (!venueId) { showError('Attach or create a venue first.'); return; }
+    if (!venueId) { showError(venueStatus === 'recovering' ? 'Reconnecting to venue…' : 'Attach or create a venue first.'); return; }
     if (!name.trim()) { showError('Enter supplier name.'); return; }
     if (!isValidHHmm(orderCutoffLocalTime)) {
       showError('Use HH:mm in 24-hour format (e.g., 16:00).');

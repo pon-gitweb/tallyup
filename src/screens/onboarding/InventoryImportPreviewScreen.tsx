@@ -14,6 +14,7 @@ import {
   Text, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { useVenueId as useCtxVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { inferDefaultPAR, getPARDescription } from '../../services/parDefaults';
@@ -44,7 +45,9 @@ function InventoryImportPreviewScreen() {
   const themeColours = useColours();
   const db = getFirestore();
 
-  const { result, venueId } = route.params as { result: ExtractionResult; venueId: string };
+  const { result, venueId: venueIdFromRoute } = route.params as { result: ExtractionResult; venueId: string };
+  const venueIdFromCtx = useCtxVenueId();
+  const venueId = venueIdFromCtx || venueIdFromRoute;
   const [products, setProducts] = useState<ExtractedProduct[]>(result.products);
   const [importing, setImporting] = useState(false);
   const [showImportGuide, setShowImportGuide] = useState(false);

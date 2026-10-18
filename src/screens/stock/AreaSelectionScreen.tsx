@@ -13,6 +13,7 @@ import {
 import { getAuth } from 'firebase/auth';
 import IdentityBadge from '../../components/IdentityBadge';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useVenueId as useCtxVenueId } from '../../context/VenueProvider';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useColours } from '../../context/ThemeContext';
@@ -81,7 +82,9 @@ function Stars({ status }: { status: 'idle' | 'inprog' | 'done' }) {
 function AreaSelectionInner() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
-  const { venueId, departmentId } = (route.params || {}) as Params;
+  const { venueId: venueIdFromRoute, departmentId } = (route.params || {}) as Params;
+  const venueIdFromCtx = useCtxVenueId();
+  const venueId = venueIdFromCtx || venueIdFromRoute;
   const colours = useColours();
   const styles = makeStyles(colours);
 

@@ -5,6 +5,7 @@ import {
   TextInput, SafeAreaView, StyleSheet, Alert,
 } from 'react-native';
 import { useRoute } from '@react-navigation/native';
+import { useVenueId as useCtxVenueId } from '../../context/VenueProvider';
 import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { loadSnapshotItems } from '../../utils/snapshotItems';
@@ -38,7 +39,9 @@ function fmtDuration(mins: number): string {
 
 export default function StocktakeCycleDetailScreen() {
   const route = useRoute<any>();
-  const { venueId, departmentId, snapshotId } = route.params as RouteParams;
+  const { venueId: venueIdFromRoute, departmentId, snapshotId } = route.params as RouteParams;
+  const venueIdFromCtx = useCtxVenueId();
+  const venueId = venueIdFromCtx || venueIdFromRoute;
 
   const [loading, setLoading] = useState(true);
   const [snapshot, setSnapshot] = useState<any>(null);

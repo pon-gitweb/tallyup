@@ -5,6 +5,7 @@ import {
   TextInput, SafeAreaView, StyleSheet, Alert,
 } from 'react-native';
 import { useRoute } from '@react-navigation/native';
+import { useVenueId as useCtxVenueId } from '../../context/VenueProvider';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { loadSnapshotItems } from '../../utils/snapshotItems';
@@ -32,7 +33,9 @@ function fmtVal(v: number): string {
 
 export default function CycleComparisonScreen() {
   const route = useRoute<any>();
-  const { venueId, deptIdA, snapshotIdA, deptIdB, snapshotIdB } = route.params as RouteParams;
+  const { venueId: venueIdFromRoute, deptIdA, snapshotIdA, deptIdB, snapshotIdB } = route.params as RouteParams;
+  const venueIdFromCtx = useCtxVenueId();
+  const venueId = venueIdFromCtx || venueIdFromRoute;
 
   const [loading, setLoading] = useState(true);
   const [snapA, setSnapA] = useState<any>(null);
