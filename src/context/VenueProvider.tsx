@@ -162,6 +162,8 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
         clearUserSnapshotFailsafe();
         if (unsubUserDocRef.current) { unsubUserDocRef.current(); unsubUserDocRef.current = null; }
+        if (userDocRetryRef.current.timer) { clearTimeout(userDocRetryRef.current.timer); userDocRetryRef.current.timer = null; }
+        if (venueDocRetryRef.current.timer) { clearTimeout(venueDocRetryRef.current.timer); venueDocRetryRef.current.timer = null; }
         return;
       }
 
@@ -292,6 +294,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
                     : userSnap.data()?.venueId === vid));
               } catch {}
             }
+            if (lastVenueIdRef.current !== vid) return;
             if (isMember && userDocRetryRef.current.count < BACKOFF_DELAYS.length) {
               const delay = BACKOFF_DELAYS[userDocRetryRef.current.count] ?? 10000;
               userDocRetryRef.current.count++;
@@ -355,6 +358,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       // Mark venue-doc snapshot as belonging to the current venueId so resolveEntitlements
       // and useWriteGuard know the data is for the venue currently being viewed.
       setVenueDocVenueId(venueId);
+      setVenueStatus(s => s === 'recovering' ? 'ready' : s);
       setStocktakeActive(data?.stocktakeActive === true);
       // The venue doc updates for reasons unrelated to venueType too (e.g.
       // totalStocktakesCompleted incrementing after a stocktake). Only adopt a new
@@ -402,6 +406,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     }, async (err) => {
       if (__DEV__) console.log('[TallyUp VenueProvider] venue snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
       if (err?.code === 'permission-denied') {
+        const vidAtCheck = venueId;
         const uid = getAuth().currentUser?.uid ?? null;
         let isMember = false;
         if (uid && venueId) {
@@ -416,6 +421,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
                 : userSnap.data()?.venueId === venueId));
           } catch {}
         }
+        if (lastVenueIdRef.current !== vidAtCheck) return;
         if (isMember && venueDocRetryRef.current.count < BACKOFF_DELAYS.length) {
           const delay = BACKOFF_DELAYS[venueDocRetryRef.current.count] ?? 10000;
           venueDocRetryRef.current.count++;
