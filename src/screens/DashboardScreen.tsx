@@ -17,7 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp, where, Timestamp } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, getCountFromServer, query, orderBy, limit, serverTimestamp, where, Timestamp } from 'firebase/firestore';
 import { useVenueId, useVenueType, useVenue } from '../context/VenueProvider';
 import { VenueSwitcher } from '../components/common/VenueSwitcher';
 import { updateDoc } from 'firebase/firestore';
@@ -297,17 +297,17 @@ export default function DashboardScreen() {
   const [unmappedPOSCount, setUnmappedPOSCount] = React.useState(0);
   const [incompleteProductCount, setIncompleteProductCount] = React.useState(0);
 
-  React.useEffect(() => {
+  const fetchUnmappedPOSCount = React.useCallback(() => {
     if (!venueId) return;
     const db = getFirestore();
-    getDocs(
-      query(
-        collection(db, 'venues', venueId, 'salesReportUnknowns'),
-        where('status', '==', 'unmapped'),
-        limit(50)
-      )
-    ).then(snap => setUnmappedPOSCount(snap.size)).catch(() => {});
+    getCountFromServer(
+      query(collection(db, 'venues', venueId, 'salesReportUnknowns'), where('status', '==', 'unmapped'))
+    ).then(snap => setUnmappedPOSCount(snap.data().count)).catch(() => {});
   }, [venueId]);
+
+  React.useEffect(() => { fetchUnmappedPOSCount(); }, [fetchUnmappedPOSCount]);
+
+  useFocusEffect(React.useCallback(() => { fetchUnmappedPOSCount(); }, [fetchUnmappedPOSCount]));
 
   const [showRecoveryPrompt, setShowRecoveryPrompt] = React.useState(false);
   const [recovering, setRecovering] = React.useState(false);
@@ -474,6 +474,21 @@ export default function DashboardScreen() {
 
   const [priceChangeCount, setPriceChangeCount] = React.useState(0);
   const [openDisputeCount, setOpenDisputeCount] = React.useState(0);
+  // Per-venue dismiss signatures — nudge hidden while sig unchanged, reappears when count changes.
+  const [priceChangesDismissedSig, setPriceChangesDismissedSig] = React.useState<string | null>(null);
+  const [priceDiscrepancyDismissedSig, setPriceDiscrepancyDismissedSig] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!venueId) { setPriceChangesDismissedSig(null); setPriceDiscrepancyDismissedSig(null); return; }
+    Promise.all([
+      AsyncStorage.getItem(`tallyup_price_changes_sig_${venueId}`),
+      AsyncStorage.getItem(`tallyup_price_discrepancy_sig_${venueId}`),
+    ]).then(([pcs, pds]) => {
+      setPriceChangesDismissedSig(pcs);
+      setPriceDiscrepancyDismissedSig(pds);
+    }).catch(() => {});
+  }, [venueId]);
+
   React.useEffect(() => {
     if (!venueId) return;
     const db = getFirestore();
@@ -525,6 +540,18 @@ export default function DashboardScreen() {
   function dismissNudge(key: string) {
     setNudgeDismissed(prev => ({ ...prev, [key]: true }));
     AsyncStorage.setItem(NUDGE_KEYS[key], '1').catch(() => {});
+  }
+
+  function dismissPriceChanges() {
+    const sig = `priceChanges:${priceChangeCount}`;
+    setPriceChangesDismissedSig(sig);
+    if (venueId) AsyncStorage.setItem(`tallyup_price_changes_sig_${venueId}`, sig).catch(() => {});
+  }
+
+  function dismissPriceDiscrepancy() {
+    const sig = `priceDiscrepancy:${priceChangeCount}:${openDisputeCount}`;
+    setPriceDiscrepancyDismissedSig(sig);
+    if (venueId) AsyncStorage.setItem(`tallyup_price_discrepancy_sig_${venueId}`, sig).catch(() => {});
   }
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -1095,22 +1122,24 @@ export default function DashboardScreen() {
           <ContextNudge c={colours} message="First one's done. Take a look at your stock holding report — it breaks down what you have by category." cta="View report →" onCta={() => nav.navigate('StockHolding')} onDismiss={() => dismissNudge('firstStocktakeDone')} />
         )}
 
-        {venueType === 'festival' && (priceChangeCount > 0 || openDisputeCount > 0) && (
+        {venueType === 'festival' && (priceChangeCount > 0 || openDisputeCount > 0) &&
+          `priceDiscrepancy:${priceChangeCount}:${openDisputeCount}` !== priceDiscrepancyDismissedSig && (
           <ContextNudge
             c={colours}
             message={`⚠️ ${priceChangeCount} invoice price${priceChangeCount !== 1 ? 's' : ''} differ from agreed rates${openDisputeCount > 0 ? ` · ${openDisputeCount} open dispute${openDisputeCount !== 1 ? 's' : ''}` : ''}`}
             cta="Review discrepancies →"
             onCta={() => nav.navigate('Reports')}
-            onDismiss={() => {}}
+            onDismiss={dismissPriceDiscrepancy}
           />
         )}
-        {venueType !== 'festival' && priceChangeCount > 0 && (
+        {venueType !== 'festival' && priceChangeCount > 0 &&
+          `priceChanges:${priceChangeCount}` !== priceChangesDismissedSig && (
           <ContextNudge
             c={colours}
             message={`📊 ${priceChangeCount} product price change${priceChangeCount !== 1 ? 's' : ''} detected since last stocktake`}
             cta="Review →"
             onCta={() => nav.navigate('Reports')}
-            onDismiss={() => {}}
+            onDismiss={dismissPriceChanges}
           />
         )}
 
