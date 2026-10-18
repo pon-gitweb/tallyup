@@ -33,9 +33,14 @@ export function clearUserContext() {
   Sentry.setUser(null);
 }
 
-export function captureError(error: any, context?: string) {
-  console.error('[Error]', context || '', error);
-  Sentry.captureException(error, { tags: { context: context || 'unknown' } });
+export function captureError(error: any, contextOrExtras?: string | Record<string, any>) {
+  const context = typeof contextOrExtras === 'string' ? contextOrExtras : undefined;
+  const extras = typeof contextOrExtras === 'object' && contextOrExtras !== null ? contextOrExtras : undefined;
+  console.error('[Error]', context ?? (extras ? JSON.stringify(extras) : ''), error);
+  Sentry.captureException(
+    typeof error === 'string' ? new Error(error) : error,
+    { tags: { context: context || 'unknown' }, extra: extras },
+  );
 }
 
 export function captureMessage(message: string, level: 'info' | 'warning' | 'error' = 'info') {

@@ -8,6 +8,7 @@ import {
   query, where, limit as qlimit, Unsubscribe, serverTimestamp, runTransaction,
 } from 'firebase/firestore';
 import { DEV_VENUE_ID, IS_DEV_PIN_ENABLED, isDevEmail } from '../config/dev';
+import { captureError } from '../services/crashReporting';
 import { BillingState, defaultBillingState } from '../services/billing/entitlements';
 import { MODULE_INTRODUCED_AT } from '../services/billing/modules';
 import { resolveEntitlements } from '../services/billing/resolveEntitlements';
@@ -45,6 +46,8 @@ export type SubscriptionOverride = {
   modules: string[];
 };
 
+export type VenueStatus = 'loading' | 'ready' | 'recovering' | 'none';
+
 type VenueCtx = {
   loading: boolean;
   user: User | null;
@@ -53,6 +56,8 @@ type VenueCtx = {
   venueIds: string[];
   venueType: string | null;
   venueCountry: string;
+  /** 'loading' = initial; 'ready' = connected; 'recovering' = permission-denied but still member; 'none' = no venue */
+  venueStatus: VenueStatus;
   initVenue: (newVenueId: string, newVenueType: string, newVenueCountry: string) => void;
   switchVenue: (newVenueId: string) => Promise<void>;
   refresh: () => void;
@@ -75,6 +80,7 @@ type VenueCtx = {
 
 const Ctx = createContext<VenueCtx>({
   loading: true, user: null, venueId: null, activeVenueId: null, venueIds: [], venueType: null, venueCountry: 'NZ',
+  venueStatus: 'loading',
   initVenue: () => {},
   switchVenue: async () => {},
   refresh: () => {}, attachVenueIfMissing: async () => {},
@@ -108,6 +114,10 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [enforceReadOnly, setEnforceReadOnly] = useState(false);
   // true while venue.stocktakeActive is set on the venue doc (a cycle is in progress).
   const [stocktakeActive, setStocktakeActive] = useState(false);
+  // 'loading' until first auth resolves; 'ready' when connected; 'recovering' on perm-denied retry; 'none' when cleared
+  const [venueStatus, setVenueStatus] = useState<VenueStatus>('loading');
+  // Incrementing this causes the venue-doc useEffect to re-subscribe (used by backoff retry).
+  const [venueDocNonce, setVenueDocNonce] = useState(0);
 
   const triedAutoAttachForUid = useRef<string | null>(null);
   const lastVenueIdRef = useRef<string | null>(undefined as any);
@@ -115,6 +125,15 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const unsubUserDocRef = useRef<Unsubscribe | null>(null);
   const unsubVenueDocRef = useRef<Unsubscribe | null>(null);
   const userSnapshotFailsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Holds the function that (re-)subscribes to users/{uid}. Set inside the auth callback
+  // so the backoff retry handler can call it without re-running the whole auth effect.
+  const subscribeUserDocFnRef = useRef<(() => void) | null>(null);
+  // Retry counters and pending timers for both listeners.
+  const userDocRetryRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null });
+  const venueDocRetryRef = useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null });
+  // Tracks the venueId for which venue-doc state was last reset, so retries don't wipe it.
+  const venueDocResetForRef = useRef<string | null>(null);
+
   // Tracks which venueId we've already attempted trial init for — prevents
   // double-write across React Strict Mode double-invoke or rapid re-renders.
 
@@ -198,82 +217,136 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
       }, 10000);
 
-      unsubUserDocRef.current = onSnapshot(uref, async (snap) => {
-        clearUserSnapshotFailsafe();
-        const data = snap.exists() ? (snap.data() as any) : null;
-        const currentVenue: string | null = data?.activeVenueId ?? data?.venueId ?? null;
-        const currentVenueIds: string[] = data?.venueIds ?? (data?.venueId ? [data.venueId] : []);
-        if (__DEV__) console.log('[TallyUp VenueProvider] user snapshot', JSON.stringify({ uid: u.uid, venueId: currentVenue ?? null, venueIds: currentVenueIds }));
+      const BACKOFF_DELAYS = [1000, 3000, 10000, 10000, 10000];
 
-        // Auto-select first venue if user has venues but no active one set (once per uid).
-        // Skips soft-deleted venues (deletedAt set) — those only surface in the
-        // "Recently deleted" recovery section, never as the active venue.
-        if (!currentVenue && currentVenueIds.length > 0 && triedAutoAttachForUid.current !== u.uid) {
-          triedAutoAttachForUid.current = u.uid;
-          try {
-            let nextVenueId: string | null = null;
-            for (const candidateId of currentVenueIds) {
-              const candidateSnap = await getDoc(doc(db, 'venues', candidateId));
-              if (candidateSnap.exists() && !candidateSnap.data()?.deletedAt) {
-                nextVenueId = candidateId;
-                break;
+      const doSubscribeUserDoc = () => {
+        if (unsubUserDocRef.current) { unsubUserDocRef.current(); unsubUserDocRef.current = null; }
+        unsubUserDocRef.current = onSnapshot(uref, async (snap) => {
+          clearUserSnapshotFailsafe();
+          userDocRetryRef.current.count = 0; // reset on successful read
+          const data = snap.exists() ? (snap.data() as any) : null;
+          const currentVenue: string | null = data?.activeVenueId ?? data?.venueId ?? null;
+          const currentVenueIds: string[] = data?.venueIds ?? (data?.venueId ? [data.venueId] : []);
+          if (__DEV__) console.log('[TallyUp VenueProvider] user snapshot', JSON.stringify({ uid: u.uid, venueId: currentVenue ?? null, venueIds: currentVenueIds }));
+
+          // Auto-select first venue if user has venues but no active one set (once per uid).
+          // Skips soft-deleted venues (deletedAt set) — those only surface in the
+          // "Recently deleted" recovery section, never as the active venue.
+          if (!currentVenue && currentVenueIds.length > 0 && triedAutoAttachForUid.current !== u.uid) {
+            triedAutoAttachForUid.current = u.uid;
+            try {
+              let nextVenueId: string | null = null;
+              for (const candidateId of currentVenueIds) {
+                const candidateSnap = await getDoc(doc(db, 'venues', candidateId));
+                if (candidateSnap.exists() && !candidateSnap.data()?.deletedAt) {
+                  nextVenueId = candidateId;
+                  break;
+                }
               }
-            }
-            if (nextVenueId) {
-              await updateDoc(doc(db, 'users', u.uid), { activeVenueId: nextVenueId, touchedAt: new Date() });
-              return; // onSnapshot will fire again with updated data
-            }
-          } catch {}
-        }
-
-        if (lastVenueIdRef.current !== currentVenue) {
-          // Only downgrade to null if we're certain the user has no venue:
-          // - currentVenue is null AND
-          // - user has no venueIds at all (not just no active one)
-          // This prevents network flickers or intermediate Firestore states from
-          // clearing the venue while the user is actively using the app.
-          const shouldClearVenue = currentVenue === null && currentVenueIds.length === 0;
-          const nextVenueId = currentVenue ?? (shouldClearVenue ? null : lastVenueIdRef.current);
-
-          lastVenueIdRef.current = currentVenue; // track what Firestore says
-          setVenueId(nextVenueId);              // but hold existing venueId if user still has venues
-
-          if (currentVenue) {
-            AsyncStorage.setItem('lastKnownVenueId', currentVenue).catch(() => {});
+              if (nextVenueId) {
+                await updateDoc(doc(db, 'users', u.uid), { activeVenueId: nextVenueId, touchedAt: new Date() });
+                return; // onSnapshot will fire again with updated data
+              }
+            } catch {}
           }
-        }
-        setVenueIds(currentVenueIds);
-        setLoading(false);
 
-        if ((currentVenue === null || currentVenue === undefined) && triedAutoAttachForUid.current !== u.uid) {
-          triedAutoAttachForUid.current = u.uid;
-          await attemptAutoAttach(u);
-        }
-      }, (err) => {
-        clearUserSnapshotFailsafe();
-        if (__DEV__) console.log('[TallyUp VenueProvider] user snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
-        // Only clear venueId on permanent errors — transient errors should self-heal
-        if (err?.code === 'permission-denied') {
-          setVenueId(null);
-        }
-        setLoading(false);
-      });
+          if (lastVenueIdRef.current !== currentVenue) {
+            // Only downgrade to null if we're certain the user has no venue:
+            // - currentVenue is null AND
+            // - user has no venueIds at all (not just no active one)
+            // This prevents network flickers or intermediate Firestore states from
+            // clearing the venue while the user is actively using the app.
+            const shouldClearVenue = currentVenue === null && currentVenueIds.length === 0;
+            const nextVenueId = currentVenue ?? (shouldClearVenue ? null : lastVenueIdRef.current);
+
+            lastVenueIdRef.current = currentVenue; // track what Firestore says
+            setVenueId(nextVenueId);              // but hold existing venueId if user still has venues
+
+            if (currentVenue) {
+              AsyncStorage.setItem('lastKnownVenueId', currentVenue).catch(() => {});
+            }
+          }
+          setVenueIds(currentVenueIds);
+          setVenueStatus(currentVenue ? 'ready' : 'none');
+          setLoading(false);
+
+          if ((currentVenue === null || currentVenue === undefined) && triedAutoAttachForUid.current !== u.uid) {
+            triedAutoAttachForUid.current = u.uid;
+            await attemptAutoAttach(u);
+          }
+        }, async (err) => {
+          clearUserSnapshotFailsafe();
+          if (__DEV__) console.log('[TallyUp VenueProvider] user snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
+          if (err?.code === 'permission-denied') {
+            const vid = lastVenueIdRef.current;
+            let isMember = false;
+            if (vid) {
+              try {
+                const [memberSnap, userSnap] = await Promise.all([
+                  getDoc(doc(db, 'venues', vid, 'members', u.uid)),
+                  getDoc(doc(db, 'users', u.uid)),
+                ]);
+                isMember = memberSnap.exists() ||
+                  (userSnap.exists() && (Array.isArray(userSnap.data()?.venueIds)
+                    ? userSnap.data()!.venueIds.includes(vid)
+                    : userSnap.data()?.venueId === vid));
+              } catch {}
+            }
+            if (isMember && userDocRetryRef.current.count < BACKOFF_DELAYS.length) {
+              const delay = BACKOFF_DELAYS[userDocRetryRef.current.count] ?? 10000;
+              userDocRetryRef.current.count++;
+              setVenueStatus('recovering');
+              if (userDocRetryRef.current.timer) clearTimeout(userDocRetryRef.current.timer);
+              userDocRetryRef.current.timer = setTimeout(() => {
+                userDocRetryRef.current.timer = null;
+                doSubscribeUserDoc();
+              }, delay);
+            } else {
+              captureError('venue:cleared', {
+                reason: isMember ? 'user-doc-max-retries' : 'user-doc-not-member',
+                listener: 'user-doc', code: err?.code, venueId: vid,
+              });
+              setVenueId(null);
+              setVenueStatus('none');
+              userDocRetryRef.current.count = 0;
+            }
+          }
+          setLoading(false);
+        });
+      };
+
+      subscribeUserDocFnRef.current = doSubscribeUserDoc;
+      doSubscribeUserDoc();
     });
 
     return () => {
       unsubAuth();
       clearUserSnapshotFailsafe();
       if (unsubUserDocRef.current) { unsubUserDocRef.current(); unsubUserDocRef.current = null; }
+      if (userDocRetryRef.current.timer) { clearTimeout(userDocRetryRef.current.timer); userDocRetryRef.current.timer = null; }
     };
   }, [nonce]);
 
   useEffect(() => {
     // Reset per-venue state so stale data from the previous venue is never evaluated.
-    setVenueDocVenueId(null);
-    lastVenueTypeRef.current = null; // never inherit venueType across venue boundaries
+    // Only reset when venueId itself changed, not on venueDocNonce retry increments.
+    if (venueDocResetForRef.current !== venueId) {
+      venueDocResetForRef.current = venueId;
+      setVenueDocVenueId(null);
+      lastVenueTypeRef.current = null; // never inherit venueType across venue boundaries
+      venueDocRetryRef.current = { count: 0, timer: null };
+    }
     if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
-    if (!venueId) { setSubscription(null); setSubscriptionOverride(null); setLegacyFreeAccess(false); setOwnerUid(null); setVenueCreatedAt(null); setVenueType(null); setVenueCountry('NZ'); setStocktakeActive(false); return; }
+    if (!venueId) {
+      setSubscription(null); setSubscriptionOverride(null); setLegacyFreeAccess(false);
+      setOwnerUid(null); setVenueCreatedAt(null); setVenueType(null); setVenueCountry('NZ'); setStocktakeActive(false);
+      return;
+    }
+
+    const BACKOFF_DELAYS = [1000, 3000, 10000, 10000, 10000];
+
     unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
+      venueDocRetryRef.current.count = 0; // reset on successful read
       if (!snap.exists()) {
         // Venue doc not yet written — keep loading, don't flip to null/festival
         return;
@@ -326,25 +399,55 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       setOwnerUid((data?.ownerUid as string) || null);
       const rawCreatedAt = data?.createdAt;
       setVenueCreatedAt(rawCreatedAt?.toDate ? rawCreatedAt.toDate() : null);
-    }, (err) => {
+    }, async (err) => {
       if (__DEV__) console.log('[TallyUp VenueProvider] venue snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
-      // Only clear state on permanent errors — not transient network issues
       if (err?.code === 'permission-denied') {
-        // User has been removed from this venue — clear context so HomeRouter can redirect
-        setVenueId(null);
-        setSubscription(null);
-        setSubscriptionOverride(null);
-        setLegacyFreeAccess(false);
-        setVenueType(null);
-        setVenueCountry('NZ');
+        const uid = getAuth().currentUser?.uid ?? null;
+        let isMember = false;
+        if (uid && venueId) {
+          try {
+            const [memberSnap, userSnap] = await Promise.all([
+              getDoc(doc(db, 'venues', venueId, 'members', uid)),
+              getDoc(doc(db, 'users', uid)),
+            ]);
+            isMember = memberSnap.exists() ||
+              (userSnap.exists() && (Array.isArray(userSnap.data()?.venueIds)
+                ? userSnap.data()!.venueIds.includes(venueId)
+                : userSnap.data()?.venueId === venueId));
+          } catch {}
+        }
+        if (isMember && venueDocRetryRef.current.count < BACKOFF_DELAYS.length) {
+          const delay = BACKOFF_DELAYS[venueDocRetryRef.current.count] ?? 10000;
+          venueDocRetryRef.current.count++;
+          setVenueStatus('recovering');
+          if (venueDocRetryRef.current.timer) clearTimeout(venueDocRetryRef.current.timer);
+          venueDocRetryRef.current.timer = setTimeout(() => {
+            venueDocRetryRef.current.timer = null;
+            setVenueDocNonce(n => n + 1);
+          }, delay);
+        } else {
+          captureError('venue:cleared', {
+            reason: isMember ? 'venue-doc-max-retries' : 'venue-doc-not-member',
+            listener: 'venue-doc', code: err?.code, venueId,
+          });
+          setVenueId(null);
+          setVenueStatus('none');
+          setSubscription(null);
+          setSubscriptionOverride(null);
+          setLegacyFreeAccess(false);
+          setVenueType(null);
+          setVenueCountry('NZ');
+          venueDocRetryRef.current = { count: 0, timer: null };
+        }
       }
       // For transient errors (unavailable, network, etc.) — leave existing state intact
       // Firebase will automatically retry the snapshot when the connection recovers
     });
     return () => {
       if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
+      if (venueDocRetryRef.current.timer) { clearTimeout(venueDocRetryRef.current.timer); venueDocRetryRef.current.timer = null; }
     };
-  }, [venueId]);
+  }, [venueId, venueDocNonce]);
 
   // Read pilotTriggerDate from config/billing — reactive, no rebuild needed when date changes.
   // This is a global config doc, not per-venue, so it mounts once with no dependency.
@@ -511,6 +614,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     venueIds,
     venueType,
     venueCountry,
+    venueStatus,
     // Optimistic update for initial venue creation: called by CreateVenueScreen after all
     // Firestore writes succeed but before navigation.reset, so HomeRouter never sees a
     // stale null venueId and bounces the user back to a blank CreateVenueScreen.
@@ -567,7 +671,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     enforceReadOnly,
     stocktakeActive,
     trialState,
-  }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, subscriptionOverride, isPilot, isActive, plan, ownerUid, venueCreatedAt, pilotTriggerDate, discountPercent, trialState, moduleTrialState, venueDocVenueId, ready, enforceReadOnly, stocktakeActive]);
+  }), [loading, user, venueId, venueIds, venueType, venueCountry, venueStatus, subscription, subscriptionOverride, isPilot, isActive, plan, ownerUid, venueCreatedAt, pilotTriggerDate, discountPercent, trialState, moduleTrialState, venueDocVenueId, ready, enforceReadOnly, stocktakeActive]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 
@@ -614,6 +718,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
 export function useVenue() { return useContext(Ctx); }
 export function useVenueId(): string | null { return useContext(Ctx).venueId; }
+export function useVenueStatus(): VenueStatus { return useContext(Ctx).venueStatus; }
 export function useVenueType(): string | null { return useContext(Ctx).venueType; }
 export function useVenueCountry(): string { return useContext(Ctx).venueCountry; }
 export function useSubscription() {
