@@ -377,6 +377,7 @@ export async function writeDepartmentSnapshot(
     const prevItemMap = new Map<string, number>(); // productId or name.toLowerCase() → actualClosing
     let baselineCycleNumber: number | undefined;
     let baselineGapNote: string | null = null;
+    let prevCycleEndMs: number | null = null; // used for daysSinceLastCycle fix below
     if (cycleNumber > 0) {
       try {
         const prevSnapshotId = `cycle-${cycleNumber - 1}`;
@@ -385,6 +386,7 @@ export async function writeDepartmentSnapshot(
         );
         if (prevSnap.exists()) {
           const prevData = prevSnap.data() as any;
+          prevCycleEndMs = toMs(prevData.cycleEnd ?? prevData.completedAt);
           const prevItems = await loadSnapshotItems(prevData, () =>
             getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'snapshots', prevSnapshotId, 'itemChunks'))
               .then(s => s.docs.map(d => d.data() as { index: number; items: any[] }))
@@ -477,8 +479,17 @@ export async function writeDepartmentSnapshot(
       ? Math.max(0, Math.round((cycleEnd.getTime() - cycleStart.getTime()) / 60000))
       : 0;
 
-    // Days since last cycle
-    const prevCycleDateMs = cycleNumber > 0 ? toMs(deptData.lastCycleAt) : null;
+    // Days since last cycle.
+    // deptData.lastCycleAt is written by the screen immediately before calling
+    // writeDepartmentSnapshot, so it reflects the CURRENT cycle's completion
+    // time (not the previous one) once the update lands.  We only trust it when
+    // it is strictly earlier than cycleStart; otherwise fall back to the cycleEnd
+    // of cycle-(cycleNumber-1) that we read above.
+    const lastCycleAtMs = cycleNumber > 0 ? toMs(deptData.lastCycleAt) : null;
+    const cycleStartMs = cycleStart ? cycleStart.getTime() : null;
+    const prevCycleDateMs = (lastCycleAtMs && cycleStartMs && lastCycleAtMs < cycleStartMs)
+      ? lastCycleAtMs
+      : prevCycleEndMs;
     const daysSinceLastCycle = prevCycleDateMs
       ? Math.round((cycleEnd.getTime() - prevCycleDateMs) / (1000 * 60 * 60 * 24))
       : null;
@@ -527,34 +538,10 @@ export async function writeDepartmentSnapshot(
       }
     } catch (e: any) { console.warn('[snapshotWriter] invoice enrichment failed:', e?.message); }
 
-    // ── STEP A2 I/O: Gather sales lines ──────────────────────────────────────
+    // ── STEP A2: Sales enrichment moved to cloud trigger ─────────────────────
+    // soldQty is applied post-write by onSnapshotWrittenNeutraliseSales which
+    // also handles the matchbox-report overlap bug (period=null summed all time).
     const salesLines: SnapshotSalesLine[] = [];
-    try {
-      if (cycleStart) {
-        const startIso = cycleStart.toISOString().slice(0, 10);
-        const endIso = cycleEnd.toISOString().slice(0, 10);
-        const salesSnap = await getDocs(
-          collection(db, 'venues', venueId, 'salesReports'),
-        );
-        for (const salesDoc of salesSnap.docs) {
-          const salesData = salesDoc.data() as any;
-          if (!isReportActive(salesData)) continue;
-          const report = salesData.report;
-          if (!report || !Array.isArray(report.lines)) continue;
-          const periodStart = report.period?.start ?? null;
-          const periodEnd = report.period?.end ?? null;
-          const overlapStart = !periodEnd || periodEnd >= startIso;
-          const overlapEnd = !periodStart || periodStart <= endIso;
-          if (!overlapStart || !overlapEnd) continue;
-          for (const line of report.lines) {
-            const lineName = (line.name || '').toLowerCase().trim();
-            const qtySold = typeof line.qtySold === 'number' ? line.qtySold : 0;
-            if (!lineName || qtySold <= 0) continue;
-            salesLines.push({ name: lineName, qtySold });
-          }
-        }
-      }
-    } catch (e: any) { console.warn('[snapshotWriter] sales enrichment failed:', e?.message); }
 
     // ── Aggregate per-area rawItems to product-level ─────────────────────────
     // Two-pass aggregation so rows with stale/area-row productIds group with the
