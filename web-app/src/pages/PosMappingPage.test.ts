@@ -101,14 +101,15 @@ describe('buildNoServingRows', () => {
     }
   }
 
-  function makeMatchData(matches: { name: string; productId: string; productName: string; qtySold: number; conversionSource: string }[]): MatchData {
+  // conversionSource can be omitted (legacy) or set to 'default'
+  function makeMatchData(matches: { name: string; productId: string; productName: string; qtySold: number; conversionSource?: string | null }[]): MatchData {
     return {
       matched: matches.length, total: matches.length, matchedQty: 0, matchedRevenue: 0,
       matches: matches.map(m => ({ name: m.name, productId: m.productId, productName: m.productName, qtySold: m.qtySold, conversionSource: m.conversionSource })),
     }
   }
 
-  it('returns rows with conversionSource === default', () => {
+  it('new-style: includes rows with conversionSource === default', () => {
     const report = makeReport('r1', [{ name: 'House Red', qtySold: 10 }])
     const md = makeMatchData([{ name: 'House Red', productId: 'p1', productName: 'Chateau Rouge', qtySold: 10, conversionSource: 'default' }])
     const rows = buildNoServingRows([report], { r1: md })
@@ -118,14 +119,69 @@ describe('buildNoServingRows', () => {
     expect(rows[0].totalQty).toBe(10)
   })
 
-  it('excludes rows with conversionSource !== default', () => {
+  it('excludes rows with conversionSource servingMl', () => {
     const report = makeReport('r1', [{ name: 'Heineken', qtySold: 5 }])
     const md = makeMatchData([{ name: 'Heineken', productId: 'p2', productName: 'Heineken 330ml', qtySold: 5, conversionSource: 'servingMl' }])
     const rows = buildNoServingRows([report], { r1: md })
     expect(rows).toHaveLength(0)
   })
 
-  it('aggregates qty across multiple reports for same name', () => {
+  it('excludes rows with conversionSource each', () => {
+    const report = makeReport('r1', [{ name: 'Lime', qtySold: 20 }])
+    const md = makeMatchData([{ name: 'Lime', productId: 'p3', productName: 'Lime', qtySold: 20, conversionSource: 'each' }])
+    const rows = buildNoServingRows([report], { r1: md })
+    expect(rows).toHaveLength(0)
+  })
+
+  it('legacy: no conversionSource, no mapping → included', () => {
+    const report = makeReport('r1', [{ name: 'House Sav', qtySold: 7 }])
+    const md = makeMatchData([{ name: 'House Sav', productId: 'p4', productName: 'Sauvignon Blanc', qtySold: 7, conversionSource: null }])
+    const rows = buildNoServingRows([report], { r1: md }, {})
+    expect(rows).toHaveLength(1)
+    expect(rows[0].posName).toBe('House Sav')
+  })
+
+  it('legacy: no conversionSource, mapping has conversionRatio → excluded', () => {
+    const report = makeReport('r1', [{ name: 'House Sav', qtySold: 7 }])
+    const md = makeMatchData([{ name: 'House Sav', productId: 'p4', productName: 'Sauvignon Blanc', qtySold: 7, conversionSource: null }])
+    const mappings = { 'house sav': { mappingType: 'direct_product', conversionRatio: 0.04, servingMl: null } }
+    const rows = buildNoServingRows([report], { r1: md }, mappings)
+    expect(rows).toHaveLength(0)
+  })
+
+  it('legacy: no conversionSource, mapping has servingMl → excluded', () => {
+    const report = makeReport('r1', [{ name: 'Pinot Noir', qtySold: 4 }])
+    const md = makeMatchData([{ name: 'Pinot Noir', productId: 'p5', productName: 'Central Otago Pinot', qtySold: 4, conversionSource: null }])
+    const mappings = { 'pinot noir': { mappingType: 'direct_product', servingMl: 150, conversionRatio: null } }
+    const rows = buildNoServingRows([report], { r1: md }, mappings)
+    expect(rows).toHaveLength(0)
+  })
+
+  it('legacy: no conversionSource, recipe mapping → excluded', () => {
+    const report = makeReport('r1', [{ name: 'Margarita', qtySold: 3 }])
+    const md = makeMatchData([{ name: 'Margarita', productId: 'p6', productName: 'Lime', qtySold: 3, conversionSource: null }])
+    const mappings = { 'margarita': { mappingType: 'recipe', servingMl: null, conversionRatio: null } }
+    const rows = buildNoServingRows([report], { r1: md }, mappings)
+    expect(rows).toHaveLength(0)
+  })
+
+  it('two POS names for one product → two separate rows', () => {
+    const report = makeReport('r1', [
+      { name: 'House Red Glass', qtySold: 10 },
+      { name: 'House Red Bottle', qtySold: 3 },
+    ])
+    const md = makeMatchData([
+      { name: 'House Red Glass',  productId: 'p1', productName: 'Rouge', qtySold: 10, conversionSource: 'default' },
+      { name: 'House Red Bottle', productId: 'p1', productName: 'Rouge', qtySold: 3,  conversionSource: 'default' },
+    ])
+    const rows = buildNoServingRows([report], { r1: md })
+    expect(rows).toHaveLength(2)
+    const names = rows.map(r => r.posName)
+    expect(names).toContain('House Red Glass')
+    expect(names).toContain('House Red Bottle')
+  })
+
+  it('aggregates qty across multiple reports for same POS name', () => {
     const r1 = makeReport('r1', [{ name: 'House Red', qtySold: 10 }])
     const r2 = makeReport('r2', [{ name: 'House Red', qtySold: 8 }])
     const md1 = makeMatchData([{ name: 'House Red', productId: 'p1', productName: 'Rouge', qtySold: 10, conversionSource: 'default' }])

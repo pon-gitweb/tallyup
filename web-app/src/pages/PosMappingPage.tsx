@@ -52,16 +52,41 @@ export function buildNotLinkedRows(
   return rows.filter(r => !mappingsByLower[(r.origName || '').toLowerCase()])
 }
 
+type MappingIndex = Record<string, { mappingType: string; servingMl?: number | null; conversionRatio?: number | null }>
+
+function hasFiniteSize(mp: { servingMl?: number | null; conversionRatio?: number | null }): boolean {
+  return (mp.servingMl != null && isFinite(mp.servingMl) && mp.servingMl > 0)
+    || (mp.conversionRatio != null && isFinite(mp.conversionRatio) && mp.conversionRatio > 0)
+}
+
 export function buildNoServingRows(
   activeReports: ActiveReport[],
   matchesByReport: Record<string, MatchData | null>,
+  mappingsByLower: MappingIndex = {},
 ): NoServingRow[] {
   const byNorm = new Map<string, NoServingRow>()
   for (const r of activeReports) {
     const md = matchesByReport[r.id]
     if (!md) continue
     for (const m of md.matches) {
-      if (m.conversionSource !== 'default') continue
+      const src = m.conversionSource
+      // Explicit good conversion — already sized
+      if (src === 'servingMl' || src === 'conversionRatio' || src === 'each') continue
+
+      if (src !== 'default' && src != null) continue  // unknown future source — skip
+
+      // src === 'default' OR src is absent (legacy doc written before conversionSource existed)
+      if (src == null) {
+        // Legacy doc: check the mapping to see if a size is already stored
+        const key = (m.name ?? '').toLowerCase()
+        const mp = mappingsByLower[key]
+        if (mp) {
+          if (mp.mappingType === 'recipe' || mp.mappingType === 'skipped') continue
+          if (hasFiniteSize(mp)) continue  // mapping already has a serving size
+        }
+      }
+
+      // POS name is m.name; fall back to productName only for very old docs
       const name = (m.name ?? m.productName ?? '').trim()
       if (!name || !m.productId) continue
       const nn = wlNormName(name)
@@ -598,10 +623,10 @@ export default function PosMappingPage({
   const { reports: activeReports } = useMemo(() => partitionReports(allDocs), [allDocs])
 
   const mappingsByLower = useMemo(() => {
-    const m: Record<string, { mappingType: string }> = {}
+    const m: MappingIndex = {}
     for (const mp of mappings) {
       const k = (mp.posItemName || '').toLowerCase()
-      if (k) m[k] = { mappingType: mp.mappingType }
+      if (k) m[k] = { mappingType: mp.mappingType, servingMl: mp.servingMl ?? null, conversionRatio: mp.conversionRatio ?? null }
     }
     return m
   }, [mappings])
@@ -617,8 +642,8 @@ export default function PosMappingPage({
   )
 
   const noServingRows = useMemo(
-    () => buildNoServingRows(activeReports, matchesByReport),
-    [activeReports, matchesByReport],
+    () => buildNoServingRows(activeReports, matchesByReport, mappingsByLower),
+    [activeReports, matchesByReport, mappingsByLower],
   )
 
   async function reloadMatchesForReports(reportIds: string[]): Promise<Record<string, MatchData | null>> {
