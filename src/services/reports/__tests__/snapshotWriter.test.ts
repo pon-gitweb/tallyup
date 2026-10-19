@@ -1175,3 +1175,125 @@ describe('writeDepartmentSnapshot — no undefined in batch.set payloads', () =>
     expect(snapshotPayload.cycleEnd).toBeInstanceOf(Date);
   });
 });
+
+// ── Suite: daysSinceLastCycle uses prevSnapshot cycleEnd when lastCycleAt is stale ──────
+
+describe('writeDepartmentSnapshot — daysSinceLastCycle fix', () => {
+  // The screen sets lastCycleAt = serverTimestamp() *before* calling writeDepartmentSnapshot,
+  // so deptData.lastCycleAt is always "now" (i.e. cycleEnd), giving daysSinceLastCycle ≈ 0.
+  // Fix: use lastCycleAt only when it is strictly before cycleStart; otherwise fall back to
+  // the cycleEnd from the previous snapshot doc (cycle-{n-1}).
+  //
+  // Dates used:
+  //   prevCycleEnd  = 2026-01-01 (ms: 1735689600000)
+  //   cycleStart    = 2026-01-08 (+7 days)
+  //   cycleEnd      = 2026-01-10 (+9 days from prevCycleEnd)
+  //   lastCycleAt   = 2026-01-10 (same as cycleEnd — the stale/buggy value)
+  //
+  // Expected daysSinceLastCycle = 9  (cycleEnd − prevCycleEnd = 9 days)
+  // Wrong    daysSinceLastCycle = 0  (cycleEnd − lastCycleAt  = 0 days)
+
+  const MS_PER_DAY = 1000 * 60 * 60 * 24;
+  // Use dates in the future so cycleEnd (initialised to new Date()) gets
+  // overwritten by the area's completedAt mock value.
+  const prevCycleEndMs = Date.now() + 10 * MS_PER_DAY;  // 10 days from now
+  const cycleStartMs   = prevCycleEndMs + 7 * MS_PER_DAY;
+  const cycleEndMs     = prevCycleEndMs + 9 * MS_PER_DAY;
+
+  // Firestore Timestamp-like object (has .toMillis())
+  const ts = (ms: number) => ({ toMillis: () => ms });
+
+  const ff = require('firebase/firestore') as any;
+
+  function fakeQSnap(docs: Array<{ id: string; dataObj: Record<string, any> }>) {
+    return {
+      docs: docs.map(d => ({ id: d.id, data: () => d.dataObj, ref: { id: d.id } })),
+      forEach: (fn: any) => docs.forEach(d => fn({ id: d.id, data: () => d.dataObj })),
+    };
+  }
+
+  beforeEach(() => {
+    ff.writeBatch.mockReturnValue(mockBatch);
+    ff.collection.mockImplementation((...args: any[]) => args.join('/'));
+    ff.doc.mockImplementation((...args: any[]) => args.join('/'));
+    ff.getDocs.mockReset();
+    ff.getDoc.mockReset();
+    mockBatch.set.mockReset();
+    mockBatch.delete.mockReset();
+    mockBatch.commit.mockResolvedValue(undefined);
+  });
+
+  it('uses prevSnapshot cycleEnd when lastCycleAt is not earlier than cycleStart', async () => {
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([]))  // products
+      .mockResolvedValueOnce(fakeQSnap([{   // areas — one area with timestamps bracketing cycleStart..cycleEnd
+        id: 'area-1',
+        dataObj: {
+          name: 'Bar',
+          startedAt: ts(cycleStartMs),
+          completedAt: ts(cycleEndMs),
+        },
+      }]))
+      .mockResolvedValueOnce(fakeQSnap([]))  // area-1 items
+      .mockResolvedValueOnce(fakeQSnap([]))  // invoice query 1 (invoiceDateTimestamp)
+      .mockResolvedValueOnce(fakeQSnap([])); // invoice query 2 (date)
+
+    ff.getDoc
+      .mockResolvedValueOnce({  // dept doc — lastCycleAt = cycleEnd (the stale value)
+        exists: () => true,
+        data: () => ({ name: 'Bar Dept', lastCycleAt: ts(cycleEndMs) }),
+      })
+      .mockResolvedValueOnce({  // prev snapshot cycle-1 — cycleEnd 9 days before current cycleEnd
+        exists: () => true,
+        data: () => ({
+          cycleEnd: ts(prevCycleEndMs),
+          items: [],
+          itemChunkCount: 0,
+        }),
+      })
+      .mockResolvedValueOnce({ exists: () => false });  // old chunk count
+
+    await writeDepartmentSnapshot('v1', 'd1', 2);
+
+    const [, snapshotPayload] = mockBatch.set.mock.calls[0];
+    // With the fix: daysSinceLastCycle = 9 (not 0)
+    expect(snapshotPayload.daysSinceLastCycle).toBe(9);
+  });
+
+  it('uses lastCycleAt when it is strictly before cycleStart', async () => {
+    // lastCycleAt = 5 days before cycleStart → trust it
+    const lastCycleAtMs = cycleStartMs - 5 * MS_PER_DAY;
+
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([]))  // products
+      .mockResolvedValueOnce(fakeQSnap([{
+        id: 'area-1',
+        dataObj: {
+          name: 'Bar',
+          startedAt: ts(cycleStartMs),
+          completedAt: ts(cycleEndMs),
+        },
+      }]))
+      .mockResolvedValueOnce(fakeQSnap([]))  // area items
+      .mockResolvedValueOnce(fakeQSnap([]))  // invoice query 1
+      .mockResolvedValueOnce(fakeQSnap([])); // invoice query 2
+
+    ff.getDoc
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ name: 'Bar Dept', lastCycleAt: ts(lastCycleAtMs) }),
+      })
+      .mockResolvedValueOnce({  // prev snapshot — cycleEnd further back
+        exists: () => true,
+        data: () => ({ cycleEnd: ts(prevCycleEndMs), items: [], itemChunkCount: 0 }),
+      })
+      .mockResolvedValueOnce({ exists: () => false });  // old chunk count
+
+    await writeDepartmentSnapshot('v1', 'd1', 2);
+
+    const [, snapshotPayload] = mockBatch.set.mock.calls[0];
+    // lastCycleAt = cycleStart - 5d = prevCycleEnd + 7d - 5d = prevCycleEnd + 2d
+    // daysSinceLastCycle = round((cycleEnd - lastCycleAt) / msPerDay) = (9d - 2d) = 7
+    expect(snapshotPayload.daysSinceLastCycle).toBe(7);
+  });
+});

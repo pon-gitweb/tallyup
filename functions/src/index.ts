@@ -62,6 +62,9 @@ export { onBarItemVelocityUpdate } from "./barItemNotifications";
 // === Product price-change cascade to recipe COGS ===
 export { onProductPriceChanged } from "./priceCascade";
 
+// === Snapshot sales neutralise — corrects soldQty summed from matchbox reports ===
+export { onSnapshotWrittenNeutraliseSales, onLatestSnapshotWrittenSync } from "./snapshotNeutraliseTrigger";
+
 // === Soft-deleted venue hard-delete sweep ===
 // Runs hourly — for any venue past its 48h recovery window (set by
 // POST /deleteVenue), permanently removes all its data. Venues restored via
