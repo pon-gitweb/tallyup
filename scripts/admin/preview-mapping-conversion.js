@@ -10,20 +10,10 @@
  *   npm --prefix functions run build   (compiles functions/src → functions/lib)
  *   GOOGLE_APPLICATION_CREDENTIALS set, or run from a machine with ADC configured
  *
- * Exits non-zero on any write attempt (write APIs are not imported).
+ * Exits non-zero on any write attempt.
  */
 
 'use strict';
-
-// ── Guard: ensure no write APIs are ever imported ────────────────────────────
-const BANNED_WRITE_APIS = ['setDoc', 'updateDoc', 'deleteDoc', 'writeBatch', 'runTransaction', 'set', 'update', 'delete', 'add'];
-
-const originalRequire = Module.prototype.require;
-const Module = require('module');
-Module.prototype.require = function (id) {
-  // Allow firebase-admin — but we'll never call write methods on purpose.
-  return originalRequire.apply(this, arguments);
-};
 
 // ── Parse args ───────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -35,7 +25,7 @@ if (!venueId) {
   process.exit(1);
 }
 
-// ── Load firebase-admin and compiled modules ─────────────────────────────────
+// ── Load firebase-admin ──────────────────────────────────────────────────────
 const path = require('path');
 const admin = require(path.join(__dirname, '../../functions/node_modules/firebase-admin'));
 
@@ -44,7 +34,44 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-// Load compiled pure functions
+// ── Read-only guard: patch write methods on Firestore classes ────────────────
+// Capture constructors from live instances before any patching.
+const DocumentReference = db.doc('__guard__/x').constructor;
+const CollectionReference = db.collection('__guard__').constructor;
+const WriteBatch = db.batch().constructor;
+const FirestoreClass = db.constructor;
+
+function readOnlyError() {
+  throw new Error('READ-ONLY: write attempted');
+}
+
+['set', 'update', 'delete', 'create'].forEach(m => {
+  DocumentReference.prototype[m] = readOnlyError;
+});
+CollectionReference.prototype.add = readOnlyError;
+WriteBatch.prototype.commit = readOnlyError;
+['runTransaction', 'batch', 'bulkWriter'].forEach(m => {
+  if (typeof FirestoreClass.prototype[m] === 'function') {
+    FirestoreClass.prototype[m] = readOnlyError;
+  }
+});
+
+// ── Self-check: confirm the guard fires before doing anything else ────────────
+(function selfCheck() {
+  let threw = false;
+  try {
+    db.doc('__readonly_probe__/x').set({});
+  } catch (e) {
+    if (e?.message?.includes('READ-ONLY')) threw = true;
+  }
+  if (!threw) {
+    console.error('FATAL: read-only guard did not activate — aborting.');
+    process.exit(1);
+  }
+  console.log('✓ Read-only guard active.');
+})();
+
+// ── Load compiled pure functions ─────────────────────────────────────────────
 const functionsLib = path.join(__dirname, '../../functions/lib');
 const { parseProductSize } = require(path.join(functionsLib, 'productSize'));
 const { stockUnitsPerSale, ingredientStockQty } = require(path.join(functionsLib, 'mappingConversion'));
@@ -129,11 +156,6 @@ async function main() {
   const reportsSnap = await db.collection(`venues/${venueId}/salesReports`).get();
   const { reports: activeReports } = partitionReports(reportsSnap.docs);
 
-  // Find last 4 complete weeks boundary
-  const now = new Date();
-  const todayNZ = now.toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' });
-  const currentMonMs = new Date(todayNZ.slice(0, 7) + '-01T00:00:00Z').getTime(); // approx
-
   // Take up to 4 most recent reports (by startMs)
   const recentReports = activeReports
     .filter(r => r.startStr)
@@ -151,7 +173,7 @@ async function main() {
   let totalIgnored = 0;
   let totalRecipeMissing = 0;
   const recipeMissingNames = new Set();
-  // productId → { name, posUnits, source } for default-source product matches
+  // productId → { name, posUnits } for default-source product matches
   const defaultMatches = new Map();
 
   for (const r of recentReports) {
