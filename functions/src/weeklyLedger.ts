@@ -63,6 +63,33 @@ export type MatchEntry = {
   name?: string | null
   qtySold?: number | null
   gross?: number | null
+  // Additive conversion fields — absent in docs written by older app versions
+  stockQty?: number | null
+  conversionSource?: string | null
+  mappingType?: string | null
+}
+
+export type RecipeDeductionEntry = {
+  posName?: string | null
+  recipeId?: string | null
+  recipeName?: string | null
+  productId?: string | null
+  productName?: string | null
+  qtySold?: number | null
+  stockQty?: number | null
+  unconvertibleReason?: string | null
+}
+
+export type IgnoredEntry = {
+  name?: string | null
+  qtySold?: number | null
+}
+
+export type MatchCoverage = {
+  matchedPct: number | null
+  recipePct: number | null
+  ignoredPct: number | null
+  unknownPct: number | null
 }
 
 export type MatchData = {
@@ -71,17 +98,52 @@ export type MatchData = {
   matchedRevenue: number
   matchedQty: number
   matches: MatchEntry[]
+  recipeDeductions?: RecipeDeductionEntry[]
+  ignored?: IgnoredEntry[]
+  coverage?: MatchCoverage
 }
 
 /** Maps a raw Firestore salesReportMatches document to MatchData. */
 export function matchDocToMatchData(d: Record<string, any>): MatchData {
   const matches: MatchEntry[] = Array.isArray(d.matches) ? (d.matches as MatchEntry[]) : []
+  const recipeDeductions: RecipeDeductionEntry[] = Array.isArray(d.recipeDeductions) ? (d.recipeDeductions as RecipeDeductionEntry[]) : []
+  const ignored: IgnoredEntry[] = Array.isArray(d.ignored) ? (d.ignored as IgnoredEntry[]) : []
+  const total: number | null = d.counts?.total ?? null
+
+  // Coverage in POS units (qtySold)
+  const matchedQtySold = matches.reduce((s, m) => s + (m.qtySold ?? 0), 0)
+  // Build posName → qtySold map to sum recipe line qtySold without double-counting ingredients
+  const recipePosQty = new Map<string, number>()
+  for (const r of recipeDeductions) {
+    if (r.posName && !recipePosQty.has(r.posName)) {
+      recipePosQty.set(r.posName, r.qtySold ?? 0)
+    }
+  }
+  const recipeQtySoldTotal = [...recipePosQty.values()].reduce((s, q) => s + q, 0)
+  const ignoredQtySold = ignored.reduce((s, i) => s + (i.qtySold ?? 0), 0)
+
+  // Use totalQtySold (POS units) as denominator for coverage; fall back to total line count
+  const totalQtySold: number | null = d.counts?.totalQtySold ?? null
+  const coverageDenominator = totalQtySold != null ? totalQtySold : null
+
+  let coverage: MatchCoverage = { matchedPct: null, recipePct: null, ignoredPct: null, unknownPct: null }
+  if (coverageDenominator != null && coverageDenominator > 0) {
+    const matchedPct = (matchedQtySold / coverageDenominator) * 100
+    const recipePct  = (recipeQtySoldTotal / coverageDenominator) * 100
+    const ignoredPct = (ignoredQtySold / coverageDenominator) * 100
+    const unknownPct = Math.max(0, 100 - matchedPct - recipePct - ignoredPct)
+    coverage = { matchedPct, recipePct, ignoredPct, unknownPct }
+  }
+
   return {
     matched:        d.counts?.matched ?? matches.length,
-    total:          d.counts?.total   ?? null,
+    total,
     matchedQty:     matches.reduce((s, m) => s + (m.qtySold ?? 0), 0),
     matchedRevenue: matches.reduce((s, m) => s + (m.gross   ?? 0), 0),
     matches,
+    recipeDeductions,
+    ignored,
+    coverage,
   }
 }
 
@@ -300,11 +362,12 @@ export function buildWeeklyAggregation(
 
     if (!md) continue
 
+    // Product matches: use stockQty (stock units) when available, else qtySold (POS units)
     for (const m of md.matches) {
       const pid   = m.productId
       if (!pid) continue
       const name  = m.productName ?? m.name ?? pid
-      const qty   = m.qtySold ?? 0
+      const qty   = m.stockQty != null ? m.stockQty : (m.qtySold ?? 0)
       const gross = m.gross   ?? 0
 
       for (const [wk, daysInWk] of Object.entries(wdMap)) {
@@ -321,6 +384,29 @@ export function buildWeeklyAggregation(
         const pE = productMap.get(pid)!
         pE.totalUnits   += qty   * frac
         pE.totalRevenue += gross * frac
+        pE.reportWeeks.add(wk)
+      }
+    }
+
+    // Recipe deductions: each entry represents ingredient consumption (stockQty = stock units)
+    for (const rd of md.recipeDeductions ?? []) {
+      const pid = rd.productId
+      if (!pid) continue
+      const name = rd.productName ?? pid
+      const qty  = rd.stockQty ?? 0   // null stockQty (unconvertible) contributes 0
+
+      for (const [wk, daysInWk] of Object.entries(wdMap)) {
+        const frac = daysInWk / totalDays
+
+        if (!weekMap.has(wk)) weekMap.set(wk, { units: 0, revenue: 0 })
+        const wkE = weekMap.get(wk)!
+        wkE.units += qty * frac
+
+        if (!productMap.has(pid)) {
+          productMap.set(pid, { name, totalUnits: 0, totalRevenue: 0, reportWeeks: new Set() })
+        }
+        const pE = productMap.get(pid)!
+        pE.totalUnits += qty * frac
         pE.reportWeeks.add(wk)
       }
     }
@@ -448,17 +534,34 @@ export function buildVelocityRowsFromReports(
     const wdMap = weekDayBreakdown(r.startStr!, r.endStr!)
     const totalDays = r.days ?? 1
 
+    // Product matches: use stockQty when available, else qtySold
     for (const m of md.matches) {
       const pid = m.productId
       if (!pid) continue
       const name = m.productName ?? m.name ?? pid
-      const qty  = m.qtySold ?? 0
+      const qty  = m.stockQty != null ? m.stockQty : (m.qtySold ?? 0)
 
       if (!prodWeekUnits.has(pid)) prodWeekUnits.set(pid, { name, byWeek: new Map() })
       const e = prodWeekUnits.get(pid)!
 
       for (const [wk, daysInWk] of Object.entries(wdMap)) {
         if (wk >= currentWeekMon) continue  // ignore current-week spill
+        e.byWeek.set(wk, (e.byWeek.get(wk) ?? 0) + qty * (daysInWk / totalDays))
+      }
+    }
+
+    // Recipe deductions: ingredient stock consumption for velocity
+    for (const rd of md.recipeDeductions ?? []) {
+      const pid = rd.productId
+      if (!pid) continue
+      const name = rd.productName ?? pid
+      const qty  = rd.stockQty ?? 0
+
+      if (!prodWeekUnits.has(pid)) prodWeekUnits.set(pid, { name, byWeek: new Map() })
+      const e = prodWeekUnits.get(pid)!
+
+      for (const [wk, daysInWk] of Object.entries(wdMap)) {
+        if (wk >= currentWeekMon) continue
         e.byWeek.set(wk, (e.byWeek.get(wk) ?? 0) + qty * (daysInWk / totalDays))
       }
     }

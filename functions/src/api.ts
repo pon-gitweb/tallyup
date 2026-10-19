@@ -12,7 +12,9 @@ import { resolveSupplier, commitSupplierResolution } from './supplierResolution'
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES, HOSTI_BUSINESS_REDIRECT } from "./izzyContext";
 import { AiCallType, checkAiLimit, trackAiCall, AI_METER_EXTENSION_LOOKUP_KEY, resolveVenuePlan, PLAN_LIMITS } from './services/aiMeter';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
-import { matchSalesLine, buildProductIndex, isBlankSalesLine } from './salesMatching';
+import { buildProductIndex, isBlankSalesLine } from './salesMatching';
+import { MappingDoc } from './mappingConversion';
+import { classifySalesLines } from './classifySalesLines';
 import { isReportActive } from './isReportActive';
 import { voidSalesReportLogic } from './voidSalesReportLogic';
 import { loadSnapshotItems } from './snapshotItems';
@@ -112,29 +114,53 @@ async function matchAndStoreSalesLines(
       allProducts.push({ id: d.id, ...d.data() as any });
     });
     const productIndex = buildProductIndex(allProducts);
+    // Product lookup by id (for size/unit used in conversion)
+    const productById: Record<string, any> = {};
+    allProducts.forEach(p => { productById[p.id] = p; });
 
-    // Load confirmed mappings (operator-confirmed POS → product links)
+    // Load full mapping docs (not just posItemName → productId)
     const mappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`).get();
     const confirmedMappings: Record<string, string> = {};
+    const fullMappings: Record<string, MappingDoc & { id: string }> = {};
     mappingsSnap.forEach(d => {
       const data = d.data() as any;
-      if (data.posItemName && data.productId) {
-        confirmedMappings[data.posItemName.toLowerCase()] = data.productId;
+      const key = (data.posItemName || '').toLowerCase();
+      if (!key) return;
+      fullMappings[key] = { id: d.id, ...data };
+      if (data.productId && !data.recipeId && data.mappingType !== 'skipped') {
+        confirmedMappings[key] = data.productId;
       }
     });
 
-    const matches: any[] = [];
-    const unknowns: any[] = [];
-
+    // Collect recipeIds referenced by lines in this batch so we can pre-load them
+    const neededRecipeIds = new Set<string>();
     for (const ln of lines) {
       if (isBlankSalesLine(ln)) continue;
-      const result = matchSalesLine(ln, productIndex, confirmedMappings);
-      if (result) {
-        matches.push({ productId: result.product.id, productName: result.product.name ?? null, name: ln.name, qtySold: ln.qtySold, gross: ln.gross ?? null, via: result.via });
-      } else {
-        unknowns.push({ line: ln });
-      }
+      const key = (ln.name || '').toLowerCase();
+      const mapping = fullMappings[key];
+      if (mapping?.recipeId) neededRecipeIds.add(mapping.recipeId);
     }
+
+    // Load needed recipe docs in parallel (one Firestore read per unique recipeId)
+    const recipesById: Record<string, any | null> = {};
+    await Promise.all([...neededRecipeIds].map(async (recipeId) => {
+      try {
+        const rSnap = await db.doc(`venues/${venueId}/recipes/${recipeId}`).get();
+        if (rSnap.exists) {
+          recipesById[recipeId] = rSnap.data();
+        } else {
+          console.warn(`[matchAndStoreSalesLines] recipe doc missing: venues/${venueId}/recipes/${recipeId}`);
+          recipesById[recipeId] = null;
+        }
+      } catch (e: any) {
+        console.error(`[matchAndStoreSalesLines] recipe doc load error: venues/${venueId}/recipes/${recipeId}`, e?.message);
+        recipesById[recipeId] = null;
+      }
+    }));
+
+    const { matches, recipeDeductions, ignored, unknowns, counts } = classifySalesLines(
+      lines, productIndex, confirmedMappings, fullMappings, recipesById, productById,
+    );
 
     const matchRef = db.doc(`venues/${venueId}/salesReportMatches/${reportId}`);
     await db.runTransaction(async (tx) => {
@@ -143,8 +169,10 @@ async function matchAndStoreSalesLines(
         reportId,
         source,
         period: period || null,
-        counts: { total: lines.length, matched: matches.length, unknowns: unknowns.length },
+        counts,
         matches,
+        recipeDeductions,
+        ignored,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
       if (!snap.exists) {
@@ -153,6 +181,7 @@ async function matchAndStoreSalesLines(
       tx.set(matchRef, data, { merge: true });
     });
 
+    // Create salesReportUnknowns docs only for genuinely unknown lines (not skipped ones)
     if (unknowns.length > 0) {
       const existingSnap = await db.collection(`venues/${venueId}/salesReportUnknowns`)
         .where('status', '==', 'unmapped')
@@ -175,9 +204,11 @@ async function matchAndStoreSalesLines(
     }
 
     console.log(`[matchAndStoreSalesLines] ${source} ${reportId}`, {
-      total: lines.length, matched: matches.length, unknowns: unknowns.length,
+      total: counts.total, matched: counts.matched, unknowns: counts.unknowns,
+      recipeDeductions: recipeDeductions.length, recipeMissing: counts.recipeMissing,
+      ignored: counts.ignored,
     });
-    return { matched: matches.length, unknowns: unknowns.length };
+    return { matched: counts.matched, unknowns: counts.unknowns };
   } catch (e: any) {
     console.error('[matchAndStoreSalesLines] ERROR', e?.message);
     return { matched: 0, unknowns: 0 };
