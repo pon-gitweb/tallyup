@@ -11,18 +11,9 @@ import { useWriteGuard } from '../../hooks/useWriteGuard';
 import { getCurrentAdapter } from '../../services/pos/POSRegistry';
 import { suggestMatch } from '../../services/pos/posMatching';
 import { useToast } from '../../components/common/Toast';
+import { normName, mappingDocId } from '../../utils/mappingId';
 import type { POSSaleItem } from '../../services/pos/POSService';
 import type { MatchSuggestion } from '../../services/pos/posMatching';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function normName(s: string): string {
-  return (s || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
-}
-
-function mappingDocId(posItemName: string, posSystem: string): string {
-  return `${normName(posItemName).replace(/\s+/g, '_')}_${posSystem}`.slice(0, 500);
-}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

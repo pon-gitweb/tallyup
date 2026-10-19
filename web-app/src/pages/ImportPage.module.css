@@ -63,3 +63,17 @@
   cursor: pointer;
   white-space: nowrap;
 }
+
+.linkBtn {
+  display: inline-block;
+  margin-top: 8px;
+  background: none;
+  border: none;
+  color: #f59e0b;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.linkBtn:hover { color: #d97706; }
