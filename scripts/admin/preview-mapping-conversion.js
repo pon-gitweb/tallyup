@@ -149,6 +149,10 @@ async function main() {
   let totalRecipeDeductions = 0;
   let totalUnconvertibleIngredients = 0;
   let totalIgnored = 0;
+  let totalRecipeMissing = 0;
+  const recipeMissingNames = new Set();
+  // productId → { name, posUnits, source } for default-source product matches
+  const defaultMatches = new Map();
 
   for (const r of recentReports) {
     const linesSnap = r.rawLines ?? [];
@@ -163,28 +167,31 @@ async function main() {
 
       if (mapping?.mappingType === 'skipped') {
         totalIgnored += qty;
-        repStockUnits += qty; // count as 1:1 for total stock units (ignored)
+        repStockUnits += qty;
         continue;
       }
 
       if (mapping?.recipeId) {
         const recipe = recipeById[mapping.recipeId];
-        if (recipe) {
-          const items = Array.isArray(recipe.items) ? recipe.items : [];
-          for (const item of items) {
-            if (!item.productId) continue;
-            const ingProd = productById[item.productId] ?? null;
-            const { stockQty, reason } = ingredientStockQty(qty, item.qty ?? 1, item.unit ?? 'each', recipe.yield ?? 1, ingProd);
-            totalRecipeDeductions++;
-            if (stockQty === null) {
-              totalUnconvertibleIngredients++;
-            } else {
-              const pid = item.productId;
-              const name = item.productName ?? ingProd?.name ?? pid;
-              if (!productChanges.has(pid)) productChanges.set(pid, { name, posUnits: 0, stockUnits: 0, source: 'recipe' });
-              productChanges.get(pid).stockUnits += stockQty;
-              repStockUnits += stockQty;
-            }
+        if (!recipe) {
+          totalRecipeMissing++;
+          recipeMissingNames.add(mapping.recipeId);
+          continue;
+        }
+        const items = Array.isArray(recipe.items) ? recipe.items : [];
+        for (const item of items) {
+          if (!item.productId) continue;
+          const ingProd = productById[item.productId] ?? null;
+          const { stockQty } = ingredientStockQty(qty, item.qty, item.unit ?? 'each', recipe.yield ?? null, ingProd);
+          totalRecipeDeductions++;
+          if (stockQty === null) {
+            totalUnconvertibleIngredients++;
+          } else {
+            const pid = item.productId;
+            const name = item.productName ?? ingProd?.name ?? pid;
+            if (!productChanges.has(pid)) productChanges.set(pid, { name, posUnits: 0, stockUnits: 0, source: 'recipe' });
+            productChanges.get(pid).stockUnits += stockQty;
+            repStockUnits += stockQty;
           }
         }
         continue;
@@ -202,6 +209,12 @@ async function main() {
         e.stockUnits += stockQty;
         if (e.source === 'default' && conv.source !== 'default') e.source = conv.source;
         repStockUnits += stockQty;
+        // Track default-source matches separately
+        if (conv.source === 'default') {
+          const dm = defaultMatches.get(pid) ?? { name, posUnits: 0 };
+          dm.posUnits += qty;
+          defaultMatches.set(pid, dm);
+        }
       }
     }
 
@@ -227,9 +240,23 @@ async function main() {
     }
   }
 
+  // Default-source product matches (no conversion info — still recorded as 1:1)
+  const topDefault = [...defaultMatches.values()]
+    .sort((a, b) => b.posUnits - a.posUnits)
+    .slice(0, 20);
+  console.log(`\nProduct matches with conversionSource 'default' (no conversion info, 1:1): ${defaultMatches.size} products`);
+  if (topDefault.length > 0) {
+    console.log(`Top ${topDefault.length} by POS units:`);
+    topDefault.forEach(e => console.log(`  ${e.name}: ${e.posUnits} POS units`));
+  }
+
   console.log(`\nRecipe deductions: ${totalRecipeDeductions} ingredient entries`);
   console.log(`Unconvertible ingredients: ${totalUnconvertibleIngredients}`);
   console.log(`Ignored (skipped) POS units: ${totalIgnored}`);
+  console.log(`Recipe missing (recipe doc absent — treated as unknown): ${totalRecipeMissing}`);
+  if (recipeMissingNames.size > 0) {
+    console.log(`Missing recipe IDs: ${[...recipeMissingNames].join(', ')}`);
+  }
 
   console.log('\n✓ Dry run complete — no writes performed.');
 }

@@ -96,13 +96,20 @@ export type IngredientConversionResult = {
  */
 export function ingredientStockQty(
   qtySold: number,
-  itemQty: number,
+  itemQty: number | null | undefined,
   itemUnit: string,
   recipeYield: number | null | undefined,
   product: ProductDoc | null,
 ): IngredientConversionResult {
-  const serves = recipeYield ?? 1
-  const perServeQty = itemQty / serves
+  // Validate recipe yield — must be a finite number > 0
+  if (recipeYield == null || !isFinite(recipeYield) || recipeYield <= 0) {
+    return { stockQty: null, reason: 'recipe_yield_invalid' }
+  }
+  // Validate ingredient qty — must be a finite number > 0
+  if (itemQty == null || !isFinite(itemQty) || itemQty <= 0) {
+    return { stockQty: null, reason: 'ingredient_qty_missing' }
+  }
+  const perServeQty = itemQty / recipeYield
   const totalConsumed = qtySold * perServeQty // in item's unit
 
   const unitLower = (itemUnit ?? '').toLowerCase()

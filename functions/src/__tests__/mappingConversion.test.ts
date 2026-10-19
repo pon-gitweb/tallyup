@@ -100,4 +100,40 @@ describe('ingredientStockQty', () => {
     expect(r.stockQty).toBeNull()
     expect(r.reason).toMatch(/unrecognised/)
   })
+
+  it('missing itemQty (null) → stockQty null, reason ingredient_qty_missing', () => {
+    const r = ingredientStockQty(1, null as any, 'ml', 1, gin750)
+    expect(r.stockQty).toBeNull()
+    expect(r.reason).toBe('ingredient_qty_missing')
+  })
+
+  it('zero itemQty → stockQty null, reason ingredient_qty_missing', () => {
+    const r = ingredientStockQty(1, 0, 'ml', 1, gin750)
+    expect(r.stockQty).toBeNull()
+    expect(r.reason).toBe('ingredient_qty_missing')
+  })
+
+  it('negative itemQty → stockQty null, reason ingredient_qty_missing', () => {
+    const r = ingredientStockQty(1, -5, 'ml', 1, gin750)
+    expect(r.stockQty).toBeNull()
+    expect(r.reason).toBe('ingredient_qty_missing')
+  })
+
+  it('zero recipeYield → stockQty null for every ingredient, reason recipe_yield_invalid', () => {
+    const r = ingredientStockQty(1, 30, 'ml', 0, gin750)
+    expect(r.stockQty).toBeNull()
+    expect(r.reason).toBe('recipe_yield_invalid')
+  })
+
+  it('null recipeYield → stockQty null, reason recipe_yield_invalid', () => {
+    const r = ingredientStockQty(1, 30, 'ml', null, gin750)
+    expect(r.stockQty).toBeNull()
+    expect(r.reason).toBe('recipe_yield_invalid')
+  })
+
+  it('NaN recipeYield → stockQty null, reason recipe_yield_invalid', () => {
+    const r = ingredientStockQty(1, 30, 'ml', NaN, gin750)
+    expect(r.stockQty).toBeNull()
+    expect(r.reason).toBe('recipe_yield_invalid')
+  })
 })

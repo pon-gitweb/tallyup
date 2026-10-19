@@ -136,6 +136,9 @@ async function matchAndStoreSalesLines(
     const ignored: any[] = [];
     const unknowns: any[] = [];
     let unconvertibleCount = 0;
+    let recipeMissingCount = 0;
+    // Cache recipe docs to avoid re-reading the same recipe for multiple POS lines
+    const recipeCache: Record<string, any | null> = {};
 
     for (const ln of lines) {
       if (isBlankSalesLine(ln)) continue;
@@ -151,40 +154,58 @@ async function matchAndStoreSalesLines(
 
       // ── Recipe mapping ──────────────────────────────────────────────────────
       if (mapping?.recipeId) {
-        let recipeDoc: any = null;
-        try {
-          const rSnap = await db.doc(`venues/${venueId}/recipes/${mapping.recipeId}`).get();
-          if (rSnap.exists) recipeDoc = rSnap.data();
-        } catch {}
+        const recipeId = mapping.recipeId;
 
-        if (recipeDoc) {
-          const recipeYield: number = recipeDoc.yield ?? 1;
-          const items: any[] = Array.isArray(recipeDoc.items) ? recipeDoc.items : [];
-
-          for (const item of items) {
-            if (!item.productId) continue;
-            const ingProduct = productById[item.productId] ?? null;
-            const { stockQty, reason } = ingredientStockQty(
-              ln.qtySold,
-              item.qty ?? 1,
-              item.unit ?? 'each',
-              recipeYield,
-              ingProduct,
-            );
-            if (stockQty === null) unconvertibleCount++;
-            recipeDeductions.push({
-              posName:     ln.name,
-              recipeId:    mapping.recipeId,
-              recipeName:  recipeDoc.name ?? null,
-              productId:   item.productId,
-              productName: item.productName ?? ingProduct?.name ?? null,
-              qtySold:     ln.qtySold,
-              stockQty:    stockQty ?? null,
-              unconvertibleReason: reason ?? null,
-            });
+        // Load recipe doc (cached per recipeId within this call)
+        if (!(recipeId in recipeCache)) {
+          try {
+            const rSnap = await db.doc(`venues/${venueId}/recipes/${recipeId}`).get();
+            if (rSnap.exists) {
+              recipeCache[recipeId] = rSnap.data();
+            } else {
+              console.warn(`[matchAndStoreSalesLines] recipe doc missing: venues/${venueId}/recipes/${recipeId} (POS line: ${ln.name})`);
+              recipeCache[recipeId] = null;
+            }
+          } catch (e: any) {
+            console.error(`[matchAndStoreSalesLines] recipe doc load error: venues/${venueId}/recipes/${recipeId}`, e?.message);
+            recipeCache[recipeId] = null;
           }
         }
-        // Recipe lines do NOT go into matches[] or unknowns[]
+        const recipeDoc = recipeCache[recipeId];
+
+        // Missing or failed recipe doc → treat line as unknown (item 1)
+        if (!recipeDoc) {
+          recipeMissingCount++;
+          unknowns.push({ line: ln, reason: 'recipe_missing' });
+          continue;
+        }
+
+        const recipeYield: number | null = recipeDoc.yield ?? null;
+        const items: any[] = Array.isArray(recipeDoc.items) ? recipeDoc.items : [];
+
+        for (const item of items) {
+          if (!item.productId) continue;
+          const ingProduct = productById[item.productId] ?? null;
+          const { stockQty, reason } = ingredientStockQty(
+            ln.qtySold,
+            item.qty,        // no default — ingredientStockQty validates this
+            item.unit ?? 'each',
+            recipeYield,     // no default — ingredientStockQty validates this
+            ingProduct,
+          );
+          if (stockQty === null) unconvertibleCount++;
+          recipeDeductions.push({
+            posName:     ln.name,
+            recipeId,
+            recipeName:  recipeDoc.name ?? null,
+            productId:   item.productId,
+            productName: item.productName ?? ingProduct?.name ?? null,
+            qtySold:     ln.qtySold,
+            stockQty:    stockQty ?? null,
+            unconvertibleReason: reason ?? null,
+          });
+        }
+        // Recipe lines (successfully expanded) do NOT go into matches[] or unknowns[]
         continue;
       }
 
@@ -223,6 +244,7 @@ async function matchAndStoreSalesLines(
           matched:       matches.length,
           unknowns:      unknowns.length,
           recipeMatched: recipeDeductions.length > 0 ? recipeDeductions.map(r => r.posName).filter((v,i,a) => a.indexOf(v) === i).length : 0,
+          recipeMissing: recipeMissingCount,
           ignored:       ignored.length,
           unconvertible: unconvertibleCount,
         },
@@ -261,7 +283,8 @@ async function matchAndStoreSalesLines(
 
     console.log(`[matchAndStoreSalesLines] ${source} ${reportId}`, {
       total: lines.length, matched: matches.length, unknowns: unknowns.length,
-      recipeDeductions: recipeDeductions.length, ignored: ignored.length,
+      recipeDeductions: recipeDeductions.length, recipeMissing: recipeMissingCount,
+      ignored: ignored.length,
     });
     return { matched: matches.length, unknowns: unknowns.length };
   } catch (e: any) {
