@@ -31,8 +31,8 @@ import VerifyEmailPage from './pages/VerifyEmailPage'
 import CreateVenuePage from './pages/CreateVenuePage'
 import StocktakeCorrectionPage from './pages/StocktakeCorrectionPage'
 import SalesReportsPage from './pages/SalesReportsPage'
+import PosMappingPage from './pages/PosMappingPage'
 import styles from './App.module.css'
-import { theme } from './theme'
 
 // ── Stale-build banner ────────────────────────────────────────────────────────
 
@@ -310,7 +310,7 @@ function App() {
       {page === 'suitee'       && activeVenue && <SuiteePage venueId={activeVenue.id} user={user} />}
       {page === 'account'      && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} canManage={canManage} />}
       {page === 'team'         && activeVenue && <TeamPage venueId={activeVenue.id} user={user} />}
-      {page === 'import'       && activeVenue && <ImportPage venueId={activeVenue.id} />}
+      {page === 'import'       && activeVenue && <ImportPage venueId={activeVenue.id} onNavigate={(p) => setPage(p as Page)} />}
       {page === 'invoices'     && activeVenue && <InvoicesPage venueId={activeVenue.id} onNavigate={(p) => setPage(p as Page)} />}
       {page === 'stock'        && activeVenue && <StockPage venueId={activeVenue.id} />}
       {page === 'venue-setup'  && activeVenue && <VenueSetupPage venueId={activeVenue.id} />}
@@ -322,24 +322,7 @@ function App() {
         <SalesReportsPage venueId={activeVenue.id} canManage={canManage} onNavigate={(p) => setPage(p as Page)} />
       )}
       {page === 'pos-mapping'  && activeVenue && (
-        <div style={{ padding: 32, maxWidth: 480 }}>
-          <h2 style={{ fontFamily: theme.fontTitle, fontSize: 24, color: theme.navy, marginBottom: 8 }}>
-            POS Product Mapping
-          </h2>
-          <p style={{ color: theme.slateMid, fontFamily: theme.fontBody, marginBottom: 24, lineHeight: 1.6 }}>
-            Map your POS products to your Hosti catalogue to complete your sales intelligence.
-            Full desktop mapping is coming soon — for now, open the Hosti mobile app and go to
-            Settings → POS Integration → Map Products.
-          </p>
-          <div style={{ background: '#fff', border: `1px solid ${theme.border}`, borderRadius: 14, padding: 20 }}>
-            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: theme.navy, fontFamily: theme.fontBody }}>
-              📱 Open on your phone
-            </p>
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: theme.slateMid, fontFamily: theme.fontBody }}>
-              Settings → POS Integration → Map Products
-            </p>
-          </div>
-        </div>
+        <PosMappingPage venueId={activeVenue.id} canManage={canManage} onNavigate={(p) => setPage(p as Page)} />
       )}
       {noVenuePages.includes(page) && !activeVenue && (
         <p className={styles.noVenue}>

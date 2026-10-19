@@ -441,7 +441,7 @@ function DropZone({ title, description, badge, badgeColour, children, onFiles, a
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function ImportPage({ venueId }: { venueId: string }) {
+export default function ImportPage({ venueId, onNavigate }: { venueId: string; onNavigate?: (page: string) => void }) {
 
   // ── Zone A — Opening Stock Baseline ────────────────────────────────────────
   type ARow = { name: string; unit: string | null; category: string | null; costPrice: number | null; parLevel: number | null; count: number }
@@ -1501,6 +1501,11 @@ export default function ImportPage({ venueId }: { venueId: string }) {
           <div>
             <p className={styles.success}>✓ Sales data imported from PDF. Analytics will use this data.</p>
             {bSalesWarning && <p style={{ fontSize: 12, color: '#92400e', background: '#fef3c7', borderRadius: 6, padding: '8px 12px', marginTop: 6 }}>{bSalesWarning}</p>}
+            {onNavigate && (
+              <button className={styles.linkBtn} onClick={() => onNavigate('pos-mapping')}>
+                Link unmatched items →
+              </button>
+            )}
           </div>
         )}
 
@@ -1620,6 +1625,11 @@ export default function ImportPage({ venueId }: { venueId: string }) {
           <div>
             <p className={styles.success}>✓ Sales data imported. Analytics will use this data.</p>
             {bSalesWarning && <p style={{ fontSize: 12, color: '#92400e', background: '#fef3c7', borderRadius: 6, padding: '8px 12px', marginTop: 6 }}>{bSalesWarning}</p>}
+            {onNavigate && (
+              <button className={styles.linkBtn} onClick={() => onNavigate('pos-mapping')}>
+                Link unmatched items →
+              </button>
+            )}
           </div>
         )}
       </DropZone>
