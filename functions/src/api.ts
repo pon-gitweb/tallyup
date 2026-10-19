@@ -13,6 +13,7 @@ import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_F
 import { AiCallType, checkAiLimit, trackAiCall, AI_METER_EXTENSION_LOOKUP_KEY, resolveVenuePlan, PLAN_LIMITS } from './services/aiMeter';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
 import { matchSalesLine, buildProductIndex, isBlankSalesLine } from './salesMatching';
+import { stockUnitsPerSale, ingredientStockQty, MappingDoc } from './mappingConversion';
 import { isReportActive } from './isReportActive';
 import { voidSalesReportLogic } from './voidSalesReportLogic';
 import { loadSnapshotItems } from './snapshotItems';
@@ -112,25 +113,98 @@ async function matchAndStoreSalesLines(
       allProducts.push({ id: d.id, ...d.data() as any });
     });
     const productIndex = buildProductIndex(allProducts);
+    // Product lookup by id (for size/unit used in conversion)
+    const productById: Record<string, any> = {};
+    allProducts.forEach(p => { productById[p.id] = p; });
 
-    // Load confirmed mappings (operator-confirmed POS → product links)
+    // Load full mapping docs (not just posItemName → productId)
     const mappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`).get();
     const confirmedMappings: Record<string, string> = {};
+    const fullMappings: Record<string, MappingDoc & { id: string }> = {};
     mappingsSnap.forEach(d => {
       const data = d.data() as any;
-      if (data.posItemName && data.productId) {
-        confirmedMappings[data.posItemName.toLowerCase()] = data.productId;
+      const key = (data.posItemName || '').toLowerCase();
+      if (!key) return;
+      fullMappings[key] = { id: d.id, ...data };
+      if (data.productId && !data.recipeId && data.mappingType !== 'skipped') {
+        confirmedMappings[key] = data.productId;
       }
     });
 
     const matches: any[] = [];
+    const recipeDeductions: any[] = [];
+    const ignored: any[] = [];
     const unknowns: any[] = [];
+    let unconvertibleCount = 0;
 
     for (const ln of lines) {
       if (isBlankSalesLine(ln)) continue;
+
+      const lineKey = (ln.name || '').toLowerCase();
+      const mapping = fullMappings[lineKey];
+
+      // ── Skipped mapping ─────────────────────────────────────────────────────
+      if (mapping?.mappingType === 'skipped') {
+        ignored.push({ name: ln.name, qtySold: ln.qtySold });
+        continue;
+      }
+
+      // ── Recipe mapping ──────────────────────────────────────────────────────
+      if (mapping?.recipeId) {
+        let recipeDoc: any = null;
+        try {
+          const rSnap = await db.doc(`venues/${venueId}/recipes/${mapping.recipeId}`).get();
+          if (rSnap.exists) recipeDoc = rSnap.data();
+        } catch {}
+
+        if (recipeDoc) {
+          const recipeYield: number = recipeDoc.yield ?? 1;
+          const items: any[] = Array.isArray(recipeDoc.items) ? recipeDoc.items : [];
+
+          for (const item of items) {
+            if (!item.productId) continue;
+            const ingProduct = productById[item.productId] ?? null;
+            const { stockQty, reason } = ingredientStockQty(
+              ln.qtySold,
+              item.qty ?? 1,
+              item.unit ?? 'each',
+              recipeYield,
+              ingProduct,
+            );
+            if (stockQty === null) unconvertibleCount++;
+            recipeDeductions.push({
+              posName:     ln.name,
+              recipeId:    mapping.recipeId,
+              recipeName:  recipeDoc.name ?? null,
+              productId:   item.productId,
+              productName: item.productName ?? ingProduct?.name ?? null,
+              qtySold:     ln.qtySold,
+              stockQty:    stockQty ?? null,
+              unconvertibleReason: reason ?? null,
+            });
+          }
+        }
+        // Recipe lines do NOT go into matches[] or unknowns[]
+        continue;
+      }
+
+      // ── Product mapping or auto-match ───────────────────────────────────────
       const result = matchSalesLine(ln, productIndex, confirmedMappings);
       if (result) {
-        matches.push({ productId: result.product.id, productName: result.product.name ?? null, name: ln.name, qtySold: ln.qtySold, gross: ln.gross ?? null, via: result.via });
+        const product = productById[result.product.id] ?? result.product;
+        const conv = stockUnitsPerSale(mapping ?? {}, product);
+        matches.push({
+          productId:        result.product.id,
+          productName:      result.product.name ?? null,
+          name:             ln.name,
+          qtySold:          ln.qtySold,
+          gross:            ln.gross ?? null,
+          via:              result.via,
+          // Additive conversion fields (new — released apps ignore these)
+          stockQty:         ln.qtySold * conv.qty,
+          conversionSource: conv.source,
+          mappingType:      mapping?.mappingType ?? null,
+        });
       } else {
         unknowns.push({ line: ln });
       }
@@ -143,8 +217,18 @@ async function matchAndStoreSalesLines(
         reportId,
         source,
         period: period || null,
-        counts: { total: lines.length, matched: matches.length, unknowns: unknowns.length },
+        counts: {
+          total:         lines.length,
+          totalQtySold:  lines.reduce((s, l) => s + (l.qtySold ?? 0), 0),
+          matched:       matches.length,
+          unknowns:      unknowns.length,
+          recipeMatched: recipeDeductions.length > 0 ? recipeDeductions.map(r => r.posName).filter((v,i,a) => a.indexOf(v) === i).length : 0,
+          ignored:       ignored.length,
+          unconvertible: unconvertibleCount,
+        },
         matches,
+        recipeDeductions,
+        ignored,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
       if (!snap.exists) {
@@ -153,6 +237,7 @@ async function matchAndStoreSalesLines(
       tx.set(matchRef, data, { merge: true });
     });
 
+    // Create salesReportUnknowns docs only for genuinely unknown lines (not skipped ones)
     if (unknowns.length > 0) {
       const existingSnap = await db.collection(`venues/${venueId}/salesReportUnknowns`)
         .where('status', '==', 'unmapped')
@@ -176,6 +261,7 @@ async function matchAndStoreSalesLines(
 
     console.log(`[matchAndStoreSalesLines] ${source} ${reportId}`, {
       total: lines.length, matched: matches.length, unknowns: unknowns.length,
+      recipeDeductions: recipeDeductions.length, ignored: ignored.length,
     });
     return { matched: matches.length, unknowns: unknowns.length };
   } catch (e: any) {
