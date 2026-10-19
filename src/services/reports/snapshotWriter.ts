@@ -6,7 +6,6 @@ import {
 import { stripUndefinedDeep } from '../../utils/stripUndefinedDeep';
 import { getAuth } from 'firebase/auth';
 import { resolveProductChain, type ProdEntry } from '../products/resolveProduct';
-import { isReportActive } from '../sales/isReportActive';
 import { loadSnapshotItems } from '../../utils/snapshotItems';
 import { normaliseName, productKey, toProductItems } from '../../utils/productSnapshotItems';
 import { getParLevel } from '../../utils/productFields';
@@ -538,9 +537,12 @@ export async function writeDepartmentSnapshot(
       }
     } catch (e: any) { console.warn('[snapshotWriter] invoice enrichment failed:', e?.message); }
 
-    // ── STEP A2: Sales enrichment moved to cloud trigger ─────────────────────
-    // soldQty is applied post-write by onSnapshotWrittenNeutraliseSales which
-    // also handles the matchbox-report overlap bug (period=null summed all time).
+    // ── STEP A2: Sales are NOT applied to snapshots. ─────────────────────────
+    // Removed: the old step summed every salesReport with a null report.period
+    // (all Matchbox reports) into soldQty, in POS units.  A server trigger
+    // (onSnapshotWrittenNeutraliseSales) nulls soldQty if any older client still
+    // writes it.  Proper sales-to-stocktake linkage is a separate server-side
+    // design (top-level periodStart/periodEnd, trading-day windows, stockQty).
     const salesLines: SnapshotSalesLine[] = [];
 
     // ── Aggregate per-area rawItems to product-level ─────────────────────────

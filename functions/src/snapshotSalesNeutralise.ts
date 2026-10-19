@@ -23,8 +23,7 @@ export interface PlanResult {
   inlineItems?: any[];
   correctedChunks?: Array<{ id: string; index: number; items: any[] }>;
   correctedSummary?: Record<string, any>;
-  correctedFindings?: Record<string, any>;
-  correctedRecommendations?: any[];
+  correctedDataCompleteness?: Record<string, any>;
 }
 
 // ── Helper: recompute all fields derived from soldQty for a single item ───────
@@ -130,7 +129,23 @@ export function recomputeSummary(
   };
 }
 
-// ── c) planNeutralise ─────────────────────────────────────────────────────────
+// ── c) neutraliseDataCompleteness ─────────────────────────────────────────────
+//
+// Reflects that sold data is gone: hasSales → false, tier recalculated.
+// All other keys (hasBaseline, hasInvoices, hasPrices, etc.) are unchanged.
+// snapshotWriter.ts:752-763: tier = hasSales ? 3 : hasInvoices ? 2 : 1
+
+export function neutraliseDataCompleteness(
+  dc: Record<string, any>,
+): Record<string, any> {
+  return {
+    ...dc,
+    hasSales: false,
+    tier: dc.hasInvoices ? 2 : 1,
+  };
+}
+
+// ── d) planNeutralise ─────────────────────────────────────────────────────────
 
 export function planNeutralise(
   docData: Record<string, any>,
@@ -195,56 +210,26 @@ export function planNeutralise(
     correctedItems,
   );
 
-  // Recompute findings.likelyMissingInvoices (snapshotWriter.ts:287–302)
-  const likelyMissingInvoices: any[] = [];
-  for (const si of correctedItems) {
-    if (si.likelyMissingInvoice) {
-      likelyMissingInvoices.push({
-        type: 'missing_invoice',
-        productId: si.productId ?? null,
-        productName: si.name ?? null,
-        unexplainedGainQty: si.totalVarianceQty ?? 0,
-        likelySuppliers: [],
-        lastInvoiceDate: null,
-      });
-      if (likelyMissingInvoices.length >= 10) break;
-    }
-  }
-
-  const existingFindings = docData.findings ?? {};
-  const correctedFindings = {
-    ...existingFindings,
-    likelyMissingInvoices: likelyMissingInvoices.slice(0, 10),
-  };
-
-  // Recompute recommendations: remove stale missing_invoice entries, add fresh ones
-  // (snapshotWriter.ts:713–720)
-  const existingRecs: any[] = docData.recommendations ?? [];
-  const nonMissingRecs = existingRecs.filter((r: any) => r.type !== 'missing_invoice');
-  const freshMissingRecs = likelyMissingInvoices.slice(0, 5).map((mi: any) => ({
-    priority: 'medium',
-    type: 'missing_invoice',
-    productId: mi.productId,
-    message: `${mi.productName} increased ${mi.unexplainedGainQty} units — no invoice recorded`,
-    action: 'Scan missing invoice',
-  }));
-  const correctedRecommendations = [...nonMissingRecs, ...freshMissingRecs].slice(0, 20);
+  // Corrected dataCompleteness (absent → stays absent)
+  const correctedDataCompleteness = docData.dataCompleteness
+    ? neutraliseDataCompleteness(docData.dataCompleteness)
+    : undefined;
 
   // docUpdate: fields to merge into the snapshot doc
   const docUpdate: Record<string, any> = {
     summary: correctedSummary,
     items: inlineItems,
-    findings: correctedFindings,
-    recommendations: correctedRecommendations,
     // soldQtyNeutralisedAt set by caller with a server timestamp
   };
+  if (correctedDataCompleteness !== undefined) {
+    docUpdate.dataCompleteness = correctedDataCompleteness;
+  }
 
   return {
     docUpdate,
     inlineItems,
     correctedChunks,
     correctedSummary,
-    correctedFindings,
-    correctedRecommendations,
+    correctedDataCompleteness,
   };
 }
