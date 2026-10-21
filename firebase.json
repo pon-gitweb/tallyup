@@ -24,7 +24,11 @@
       "**/node_modules/**"
     ],
     "redirects": [
-      { "source": "/", "destination": "/app/", "type": 302 }
+      { "source": "/", "destination": "/app/", "type": 302 },
+      { "source": "/terms", "destination": "https://www.hosti.co.nz/legal/terms", "type": 301 },
+      { "source": "/terms/**", "destination": "https://www.hosti.co.nz/legal/terms", "type": 301 },
+      { "source": "/privacy", "destination": "https://www.hosti.co.nz/legal/privacy", "type": 301 },
+      { "source": "/privacy/**", "destination": "https://www.hosti.co.nz/legal/privacy", "type": 301 }
     ],
     "rewrites": [
       { "source": "/app/**", "destination": "/app/index.html" }
