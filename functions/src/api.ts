@@ -25,6 +25,7 @@ import {
   isStale,
   isOlderPaymentEvent,
   commitWebhookTransaction,
+  shouldRetryUnlinked,
 } from './stripeWebhookLogic';
 import { loadSnapshotItems } from './snapshotItems';
 import { flagAnomalousChanges } from './priceChangeSanity';
@@ -1688,8 +1689,13 @@ app.post("/stripe/webhook", async (req, res) => {
       const target = resolveVenueTarget(sub, await venueIdsForCustomer(customerId));
 
       if ("retry" in target) {
-        console.warn("[stripe/webhook] retrying — no venue for customer", { eventId: event.id, customerId, reason: target.retry });
-        res.status(500).json({ error: target.retry });
+        if (shouldRetryUnlinked(event.created, nowMs)) {
+          console.warn("[stripe/webhook] retrying — no venue for customer", { eventId: event.id, customerId, reason: target.retry });
+          res.status(500).json({ error: target.retry });
+        } else {
+          console.error("[stripe/webhook] unlinked customer — giving up after retry window", { eventId: event.id, eventType: event.type, customerId, subscriptionId: subPayload.id });
+          res.json({ received: true, unlinked: true });
+        }
         return;
       }
       if ("ambiguous" in target) {
@@ -1720,8 +1726,13 @@ app.post("/stripe/webhook", async (req, res) => {
       const target = resolveVenueTarget(sub, await venueIdsForCustomer(customerId));
 
       if ("retry" in target) {
-        console.warn("[stripe/webhook] retrying invoice — no venue for customer", { eventId: event.id, customerId });
-        res.status(500).json({ error: target.retry });
+        if (shouldRetryUnlinked(event.created, nowMs)) {
+          console.warn("[stripe/webhook] retrying invoice — no venue for customer", { eventId: event.id, customerId });
+          res.status(500).json({ error: target.retry });
+        } else {
+          console.error("[stripe/webhook] unlinked customer — giving up after retry window", { eventId: event.id, eventType: event.type, customerId, subscriptionId: subId });
+          res.json({ received: true, unlinked: true });
+        }
         return;
       }
       if ("ambiguous" in target) {

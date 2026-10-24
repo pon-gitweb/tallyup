@@ -97,6 +97,20 @@ export function isOlderPaymentEvent(
   return incomingCreated <= storedEventCreated;
 }
 
+// ── shouldRetryUnlinked ───────────────────────────────────────────────────────
+// Returns true only while we're still inside the short race window where a
+// subscription/invoice event may arrive before checkout.session.completed has
+// linked the venue.  Beyond the window the customer is truly orphaned and
+// Stripe should not keep retrying (to avoid endpoint suspension).
+
+export function shouldRetryUnlinked(
+  eventCreatedSec: number,
+  nowMs: number,
+  windowMs = 60 * 60 * 1000,
+): boolean {
+  return nowMs - eventCreatedSec * 1000 < windowMs;
+}
+
 // ── commitWebhookTransaction ──────────────────────────────────────────────────
 // Wraps ALL Firestore writes for one Stripe event in a single transaction.
 // Idempotent: if stripeEvents/{eventId} already exists, skips all writes.

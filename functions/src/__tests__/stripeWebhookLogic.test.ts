@@ -5,6 +5,7 @@ import {
   isStale,
   isOlderPaymentEvent,
   commitWebhookTransaction,
+  shouldRetryUnlinked,
 } from '../stripeWebhookLogic';
 
 // ── Fake Firestore helpers ────────────────────────────────────────────────────
@@ -224,6 +225,38 @@ describe('isOlderPaymentEvent', () => {
 
   test('no stored → false', () => {
     expect(isOlderPaymentEvent(undefined, 1000)).toBe(false);
+  });
+});
+
+// ── shouldRetryUnlinked ───────────────────────────────────────────────────────
+
+describe('shouldRetryUnlinked', () => {
+  const HOUR_MS = 60 * 60 * 1000;
+
+  test('inside the window → true', () => {
+    const createdSec = 1000;
+    const nowMs = createdSec * 1000 + HOUR_MS - 1; // 1 ms before window closes
+    expect(shouldRetryUnlinked(createdSec, nowMs)).toBe(true);
+  });
+
+  test('exactly at the window boundary → false', () => {
+    const createdSec = 1000;
+    const nowMs = createdSec * 1000 + HOUR_MS;
+    expect(shouldRetryUnlinked(createdSec, nowMs)).toBe(false);
+  });
+
+  test('beyond the window → false', () => {
+    const createdSec = 1000;
+    const nowMs = createdSec * 1000 + HOUR_MS + 1;
+    expect(shouldRetryUnlinked(createdSec, nowMs)).toBe(false);
+  });
+
+  test('default window is 1 hour', () => {
+    const createdSec = 1000;
+    // 59 min 59 s inside → still retrying
+    expect(shouldRetryUnlinked(createdSec, createdSec * 1000 + HOUR_MS - 1)).toBe(true);
+    // 1 h exactly → give up
+    expect(shouldRetryUnlinked(createdSec, createdSec * 1000 + HOUR_MS)).toBe(false);
   });
 });
 
