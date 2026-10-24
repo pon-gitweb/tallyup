@@ -18,6 +18,14 @@ import { classifySalesLines } from './classifySalesLines';
 import { isReportActive } from './isReportActive';
 import { voidSalesReportLogic } from './voidSalesReportLogic';
 import { SUPPLIER_REGISTRATION_OPEN } from './supplierRegistrationGate';
+import {
+  mapSubscriptionToVenueState,
+  resolveVenueTarget,
+  invoiceSubscriptionId,
+  isStale,
+  isOlderPaymentEvent,
+  commitWebhookTransaction,
+} from './stripeWebhookLogic';
 import { loadSnapshotItems } from './snapshotItems';
 import { flagAnomalousChanges } from './priceChangeSanity';
 import { detectNewProducts } from './inventoryMatching';
@@ -1448,6 +1456,7 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       client_reference_id: venueId,
       ...(existingCustomerId ? { customer: existingCustomerId } : {}),
       metadata: { venueId, uid },
+      subscription_data: { metadata: { venueId } },
       automatic_tax: { enabled: true },
       billing_address_collection: "required",
     });
@@ -1600,113 +1609,165 @@ app.post("/stripe/webhook", async (req, res) => {
     return;
   }
   const db = admin.firestore();
+  const nowMs = Date.now();
+
+  // ── Helpers shared across handlers ──────────────────────────────────────────
+
+  // Retrieve all venues for a given Stripe customer ID (no limit — need all to detect ambiguity).
+  async function venueIdsForCustomer(customerId: string): Promise<string[]> {
+    const snap = await db.collection("venues")
+      .where("subscription.stripeCustomerId", "==", customerId)
+      .get();
+    return snap.docs.map(d => d.id);
+  }
+
+  // Build the subscription writeFn for use inside commitWebhookTransaction.
+  function makeSubWriteFn(venueId: string, mappedState: any) {
+    return async (tx: any) => {
+      const venueRef = db.doc(`venues/${venueId}`);
+      const venueDoc = await tx.get(venueRef);
+      if (!isStale(venueDoc.data()?.subscription?.stripeSyncedAt, mappedState.stripeSyncedAt)) {
+        tx.set(venueRef, {
+          subscription: { ...mappedState, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        }, { merge: true });
+      }
+    };
+  }
+
   try {
+    // ── checkout.session.completed ─────────────────────────────────────────────
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as any;
-      const venueId = session.client_reference_id || (session.metadata as any)?.venueId;
+      const venueId: string | undefined = session.client_reference_id || session.metadata?.venueId;
+
       if (venueId && session.mode === "subscription") {
-        let subData: any = null;
-        if (session.subscription) {
-          try { subData = await stripe.subscriptions.retrieve(session.subscription as string); } catch {}
-        }
-        await db.doc(`venues/${venueId}`).set({
-          subscription: {
-            status: "active",
-            plan: "core",
-            modules: [],
-            stripeCustomerId: session.customer,
-            stripeSubscriptionId: session.subscription,
-            currentPeriodEnd: typeof subData?.items?.data?.[0]?.current_period_end === "number"
-              ? new Date(subData.items.data[0].current_period_end * 1000).toISOString()
-              : null,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-        }, { merge: true });
-        console.log("[api/stripe/webhook] checkout.session.completed", { venueId });
+        // Retrieve full subscription — throw on error so Stripe retries
+        const sub = await stripe.subscriptions.retrieve(session.subscription as string);
+        const mappedState = mapSubscriptionToVenueState(sub, nowMs);
+        const outcome = await commitWebhookTransaction(
+          db, event.id, event.type, venueId,
+          makeSubWriteFn(venueId, mappedState),
+          nowMs,
+        );
+        console.log("[stripe/webhook] checkout.session.completed (subscription)", { venueId, outcome });
+
       } else if (venueId && session.mode === "payment") {
-        const purchasedLookupKey = (session.metadata as any)?.lookupKey;
+        const purchasedLookupKey = session.metadata?.lookupKey;
         if (purchasedLookupKey === AI_METER_EXTENSION_LOOKUP_KEY) {
-          const now = new Date();
-          const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-          // Resolve the venue's effective plan at purchase time so the extension
-          // grants exactly one plan-limit's worth of extra calls — doubling that
-          // venue's effective total for the rest of the month, rather than a fixed
-          // number that over- or under-delivers depending on which tier they're on.
+          // Resolve plan BEFORE the transaction (transactions may retry)
           const { effectivePlan } = await resolveVenuePlan(db, venueId);
           const extensionCalls = PLAN_LIMITS[effectivePlan]?.total ?? PLAN_LIMITS.beta.total;
-          // Increment — not overwrite — so a venue can buy multiple extensions in one month.
-          // A new monthKey each month means extensionCallsPurchased resets automatically
-          // without any separate expiry logic.
-          await db.doc(`venues/${venueId}/aiUsage/${monthKey}`).set({
-            extensionCallsPurchased: admin.firestore.FieldValue.increment(extensionCalls),
-            lastExtensionPurchasedAt: admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-          console.log("[api/stripe/webhook] ai_meter_extension purchased", { venueId, effectivePlan, added: extensionCalls, monthKey });
+          const now = new Date(nowMs);
+          const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          const outcome = await commitWebhookTransaction(
+            db, event.id, event.type, venueId,
+            (tx) => {
+              tx.set(db.doc(`venues/${venueId}/aiUsage/${monthKey}`), {
+                extensionCallsPurchased: admin.firestore.FieldValue.increment(extensionCalls),
+                lastExtensionPurchasedAt: admin.firestore.FieldValue.serverTimestamp(),
+              }, { merge: true });
+            },
+            nowMs,
+          );
+          console.log("[stripe/webhook] ai_meter_extension purchased", { venueId, effectivePlan, added: extensionCalls, monthKey, outcome });
         } else {
-          console.log("[api/stripe/webhook] one-off payment completed (unrecognised lookup key)", { venueId, purchasedLookupKey, sessionId: session.id });
+          console.log("[stripe/webhook] one-off payment completed (unrecognised lookup key)", { venueId, purchasedLookupKey, sessionId: session.id });
         }
       }
-    } else if (event.type === "customer.subscription.updated") {
-      const sub = event.data.object as any;
+
+    // ── customer.subscription.created / .updated / .deleted ──────────────────
+    } else if (
+      event.type === "customer.subscription.created" ||
+      event.type === "customer.subscription.updated" ||
+      event.type === "customer.subscription.deleted"
+    ) {
+      const subPayload = event.data.object as any;
+      // Retrieve CURRENT subscription from Stripe — do not trust the stale event payload
+      const sub = await stripe.subscriptions.retrieve(subPayload.id as string);
       const customerId = typeof sub.customer === "string" ? sub.customer : (sub.customer as any)?.id;
-      const venuesSnap = await db.collection("venues").where("subscription.stripeCustomerId", "==", customerId).limit(1).get();
-      if (!venuesSnap.empty) {
-        const venueDoc = venuesSnap.docs[0];
-        const planMeta = (sub.items?.data?.[0]?.price?.metadata as any)?.plan || "core";
-        // Split comma-separated module metadata so a single price can represent multiple modules
-        // (e.g. Pro Ops Bundle stores "supplier-optimisation,ops-intelligence,performance-incentives").
-        const modules = Array.from(new Set(
-          (sub.items?.data || [])
-            .flatMap((item: any) => (item.price?.metadata?.module || "").split(","))
-            .map((m: string) => m.trim())
-            .filter(Boolean)
-        ));
-        // Capture line-item quantity so the UI can display "billing for N venues" without
-        // a separate Stripe API call (relevant for tiered Multi-Venue Command Centre price).
-        const quantity = sub.items?.data?.[0]?.quantity || 1;
-        await venueDoc.ref.set({
-          subscription: {
-            status: sub.status === "active" ? "active" : sub.status,
-            plan: planMeta,
-            modules,
-            quantity,
-            stripeCustomerId: customerId,
-            stripeSubscriptionId: sub.id,
-            currentPeriodEnd: typeof sub.items?.data?.[0]?.current_period_end === "number"
-              ? new Date(sub.items.data[0].current_period_end * 1000).toISOString()
-              : null,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-        }, { merge: true });
-        console.log("[api/stripe/webhook] subscription.updated", { venueId: venueDoc.id, status: sub.status });
+      const target = resolveVenueTarget(sub, await venueIdsForCustomer(customerId));
+
+      if ("retry" in target) {
+        console.warn("[stripe/webhook] retrying — no venue for customer", { eventId: event.id, customerId, reason: target.retry });
+        res.status(500).json({ error: target.retry });
+        return;
       }
-    } else if (event.type === "customer.subscription.deleted") {
-      const sub = event.data.object as any;
+      if ("ambiguous" in target) {
+        console.error("[stripe/webhook] ambiguous venue match — skipping write", { eventId: event.id, customerId, ids: target.ambiguous });
+        res.json({ received: true });
+        return;
+      }
+
+      const venueId = target.venueId;
+      const mappedState = mapSubscriptionToVenueState(sub, nowMs);
+      const outcome = await commitWebhookTransaction(
+        db, event.id, event.type, venueId,
+        makeSubWriteFn(venueId, mappedState),
+        nowMs,
+      );
+      console.log(`[stripe/webhook] ${event.type}`, { venueId, status: sub.status, outcome });
+
+    // ── invoice.paid / invoice.payment_failed ─────────────────────────────────
+    } else if (event.type === "invoice.paid" || event.type === "invoice.payment_failed") {
+      const invoice = event.data.object as any;
+      const subId = invoiceSubscriptionId(invoice);
+      if (!subId) {
+        res.json({ received: true });
+        return;
+      }
+      const sub = await stripe.subscriptions.retrieve(subId);
       const customerId = typeof sub.customer === "string" ? sub.customer : (sub.customer as any)?.id;
-      const venuesSnap = await db.collection("venues").where("subscription.stripeCustomerId", "==", customerId).limit(1).get();
-      if (!venuesSnap.empty) {
-        const venueDoc = venuesSnap.docs[0];
-        await venueDoc.ref.set({
-          subscription: {
-            status: "cancelled",
-            plan: null,
-            modules: [],
-            stripeCustomerId: customerId,
-            stripeSubscriptionId: sub.id,
-            currentPeriodEnd: typeof sub.items?.data?.[0]?.current_period_end === "number"
-              ? new Date(sub.items.data[0].current_period_end * 1000).toISOString()
-              : null,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-        }, { merge: true });
-        console.log("[api/stripe/webhook] subscription.deleted", { venueId: venueDoc.id });
+      const target = resolveVenueTarget(sub, await venueIdsForCustomer(customerId));
+
+      if ("retry" in target) {
+        console.warn("[stripe/webhook] retrying invoice — no venue for customer", { eventId: event.id, customerId });
+        res.status(500).json({ error: target.retry });
+        return;
       }
+      if ("ambiguous" in target) {
+        console.error("[stripe/webhook] ambiguous venue match (invoice) — skipping", { eventId: event.id, customerId, ids: target.ambiguous });
+        res.json({ received: true });
+        return;
+      }
+
+      const venueId = target.venueId;
+      const mappedState = mapSubscriptionToVenueState(sub, nowMs);
+      const paymentStatus = event.type === "invoice.paid" ? "ok" : "failed";
+      const lastPaymentAt = new Date(event.created * 1000).toISOString();
+      const eventCreated: number = event.created;
+
+      const outcome = await commitWebhookTransaction(
+        db, event.id, event.type, venueId,
+        async (tx) => {
+          const venueRef = db.doc(`venues/${venueId}`);
+          const venueDoc = await tx.get(venueRef);
+          const storedSub = venueDoc.data()?.subscription ?? {};
+          const subFields: any = {};
+          if (!isStale(storedSub.stripeSyncedAt, mappedState.stripeSyncedAt)) {
+            Object.assign(subFields, { ...mappedState, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+          }
+          if (!isOlderPaymentEvent(storedSub.lastPaymentEventCreated, eventCreated)) {
+            Object.assign(subFields, {
+              lastPaymentStatus: paymentStatus,
+              lastPaymentAt,
+              lastPaymentEventCreated: eventCreated,
+            });
+          }
+          if (Object.keys(subFields).length > 0) {
+            tx.set(venueRef, { subscription: subFields }, { merge: true });
+          }
+        },
+        nowMs,
+      );
+      console.log(`[stripe/webhook] ${event.type}`, { venueId, paymentStatus, outcome });
     }
+
   } catch (e: any) {
-    console.error("[api/stripe/webhook] Handler error", e?.message);
+    console.error("[stripe/webhook] handler error", e?.message);
     res.status(500).json({ error: "Webhook handler failed", message: e?.message });
     return;
   }
+
   res.json({ received: true });
 });
 
