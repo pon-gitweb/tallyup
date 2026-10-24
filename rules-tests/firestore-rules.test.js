@@ -365,3 +365,52 @@ describe('snapshots itemChunks access', () => {
 });
 // Full hardening coverage (new-field gap, entitlement denial, country, gpAlertSensitivity,
 // productCategories, lastFullVenueStocktakeAt, global_products) is in hardening.test.js.
+
+// ─────────────────────────────────────────────
+//  supplierRegistrations — closed feature gate
+// ─────────────────────────────────────────────
+const ADMIN_EMAIL = 'poni@hosti.co.nz';
+const REG_PAYLOAD = { companyName: 'Acme', email: 'acme@example.com', status: 'pending' };
+
+function asAdmin() {
+  return testEnv.authenticatedContext('uid-admin', { email: ADMIN_EMAIL });
+}
+function asNonAdmin() {
+  return testEnv.authenticatedContext('uid-nonadmin', { email: 'other@example.com' });
+}
+
+describe('supplierRegistrations — create denied (registration closed)', () => {
+  test('unauthenticated create is denied', async () => {
+    await assertFails(
+      testEnv.unauthenticatedContext().firestore().collection('supplierRegistrations').add(REG_PAYLOAD)
+    );
+  });
+
+  test('authenticated non-admin create is denied', async () => {
+    await assertFails(
+      asNonAdmin().firestore().collection('supplierRegistrations').add(REG_PAYLOAD)
+    );
+  });
+});
+
+describe('supplierRegistrations — read access', () => {
+  const REG_ID = 'reg-seed-1';
+
+  beforeAll(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc(`supplierRegistrations/${REG_ID}`).set(REG_PAYLOAD);
+    });
+  });
+
+  test('admin (poni@hosti.co.nz) can read a registration', async () => {
+    await assertSucceeds(
+      asAdmin().firestore().doc(`supplierRegistrations/${REG_ID}`).get()
+    );
+  });
+
+  test('non-admin read is denied', async () => {
+    await assertFails(
+      asNonAdmin().firestore().doc(`supplierRegistrations/${REG_ID}`).get()
+    );
+  });
+});
