@@ -5897,7 +5897,7 @@ app.post("/send-failing-invoice", async (req, res) => {
 // Creates a pending supplier registration in Firestore and emails poni@hosti.co.nz
 app.post("/supplier-register", async (req, res) => {
   if (!SUPPLIER_REGISTRATION_OPEN) {
-    res.status(503).json({ ok: false, error: "Supplier registration is not currently open." });
+    res.status(503).json({ ok: false, error: "Supplier registration isn't open yet. Contact support@hosti.co.nz." });
     return;
   }
   try {
