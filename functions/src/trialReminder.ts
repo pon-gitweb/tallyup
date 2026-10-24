@@ -1,8 +1,6 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
-
-const THIRTY_DAYS_MS  = 30 * 24 * 60 * 60 * 1000;
-const EIGHT_DAYS_MS   =  8 * 24 * 60 * 60 * 1000;
+import { shouldSendTrialReminder } from "./trialReminderLogic";
 
 // Resolves the owner email for a venue: checks users/{uid} first,
 // falls back to Firebase Auth.
@@ -94,7 +92,7 @@ async function sendReminderViaPostmark(
 }
 
 // ── Scheduled function ────────────────────────────────────────────────────────
-// Runs daily at 9 AM UTC. For each venue with an active trial, checks whether
+// Runs daily at 9 AM Pacific/Auckland (NZST/NZDT handled by Cloud Scheduler). For each venue with an active trial, checks whether
 // the reminder condition is met (1 stocktake remaining OR within 8 days of the
 // 30-day expiry) and fires a single nudge email if reminderSentAt is not set.
 //
@@ -104,7 +102,7 @@ async function sendReminderViaPostmark(
 export const trialReminderEmail = onSchedule(
   {
     schedule: "0 9 * * *",
-    timeZone: "UTC",
+    timeZone: "Pacific/Auckland",
     region: "australia-southeast1",
     memory: "256MiB",
     timeoutSeconds: 300,
@@ -145,16 +143,13 @@ export const trialReminderEmail = onSchedule(
         if (!trialSnap.exists) return;
 
         const trial = trialSnap.data()!;
-        if (trial.status !== "active") return;
-        if (trial.reminderSentAt) return; // already sent
-
         const startMs: number = trial.startedAt?.toMillis?.() ?? 0;
         const stocktakesUsed: number = trial.stocktakesUsed ?? 0;
 
-        const nearStocktakeLimit = stocktakesUsed === 2;
-        const nearTimeLimit = now >= startMs + THIRTY_DAYS_MS - EIGHT_DAYS_MS;
-
-        if (!nearStocktakeLimit && !nearTimeLimit) return;
+        if (!shouldSendTrialReminder(
+          { status: trial.status, reminderSentAt: trial.reminderSentAt, startMs, stocktakesUsed },
+          now,
+        )) return;
 
         const ownerUid: string | undefined = venueData.ownerUid;
         if (!ownerUid) {
