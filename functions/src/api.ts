@@ -17,6 +17,7 @@ import { MappingDoc } from './mappingConversion';
 import { classifySalesLines } from './classifySalesLines';
 import { isReportActive } from './isReportActive';
 import { voidSalesReportLogic } from './voidSalesReportLogic';
+import { SUPPLIER_REGISTRATION_OPEN } from './supplierRegistrationGate';
 import { loadSnapshotItems } from './snapshotItems';
 import { flagAnomalousChanges } from './priceChangeSanity';
 import { detectNewProducts } from './inventoryMatching';
@@ -5895,6 +5896,10 @@ app.post("/send-failing-invoice", async (req, res) => {
 // Body: { companyName, contactName, email, phone, region, abn }
 // Creates a pending supplier registration in Firestore and emails poni@hosti.co.nz
 app.post("/supplier-register", async (req, res) => {
+  if (!SUPPLIER_REGISTRATION_OPEN) {
+    res.status(503).json({ ok: false, error: "Supplier registration isn't open yet. Contact support@hosti.co.nz." });
+    return;
+  }
   try {
     // Rate limit: 20 registrations per IP per hour
     const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()

@@ -177,8 +177,9 @@ service cloud.firestore {
     }
 
     match /supplierRegistrations/{regId} {
-      // Anyone can submit a registration — no login required to apply
-      allow create: if true;
+      // Supplier registration is not open yet. Registrations are written only by
+      // the API (Admin SDK, which bypasses rules). No client may create these docs.
+      allow create: if false;
       // Only Hosti admin can read, update, or delete registrations
       allow read, update, delete: if request.auth != null
         && request.auth.token.email == 'poni@hosti.co.nz';
