@@ -6,6 +6,7 @@ import {
   applyVersionsToMappings,
   planChangeProduct,
   planUndoChange,
+  posMappingOverrideDocId,
   MappingVersion,
   VersionMappingFields,
   MappingDocSnapshot,
@@ -386,5 +387,23 @@ describe('planUndoChange', () => {
     expect(deleteOps[0].path).toContain('v2');
     const parentWrite = result.writes.find(w => w.kind === 'set' && w.path.includes('/posProductMappings/'));
     expect((parentWrite as any)?.data.productId).toBe('prod2'); // v1 fields
+  });
+});
+
+// ── posMappingOverrideDocId ───────────────────────────────────────────────────
+
+describe('posMappingOverrideDocId', () => {
+  it('"andre clouet" and "andre clouet half" produce different ids', () => {
+    const id1 = posMappingOverrideDocId('report1', 'andre clouet');
+    const id2 = posMappingOverrideDocId('report1', 'andre clouet half');
+    expect(id1).not.toBe(id2);
+  });
+
+  it('is deterministic', () => {
+    expect(posMappingOverrideDocId('r1', 'wine')).toBe(posMappingOverrideDocId('r1', 'wine'));
+  });
+
+  it('format: reportId__16hexchars', () => {
+    expect(posMappingOverrideDocId('myReport', 'wine')).toMatch(/^myReport__[0-9a-f]{16}$/);
   });
 });

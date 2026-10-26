@@ -3,6 +3,7 @@
  * No Firestore access — all data is passed in. Testable without Firebase.
  */
 
+import * as crypto from 'crypto';
 import { MappingDoc } from './mappingConversion';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -439,4 +440,11 @@ export function planUndoChange(args: {
   }
 
   return { ok: true, writes, restoredToUnversioned };
+}
+
+// ── Override doc ID ────────────────────────────────────────────────────────────
+
+export function posMappingOverrideDocId(reportId: string, mappingKey: string): string {
+  const hash = crypto.createHash('sha1').update(mappingKey).digest('hex').slice(0, 16);
+  return `${reportId}__${hash}`;
 }

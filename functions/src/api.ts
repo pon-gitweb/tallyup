@@ -19,8 +19,8 @@ import { isReportActive } from './isReportActive';
 import {
   MAPPING_FIELDS,
   MappingVersion, VersionMappingFields, MappingDocSnapshot,
-  reportDates, applyVersionsToMappings, planChangeProduct, planUndoChange,
-  mappingDocId as mappingDocIdFn,
+  reportDates, selectVersion, applyVersionsToMappings, planChangeProduct, planUndoChange,
+  mappingDocId as mappingDocIdFn, posMappingOverrideDocId,
 } from './mappingVersions';
 import { voidSalesReportLogic } from './voidSalesReportLogic';
 import { SUPPLIER_REGISTRATION_OPEN } from './supplierRegistrationGate';
@@ -7143,12 +7143,12 @@ app.post("/pos-mappings/change-product", async (req, res) => {
       }
     });
 
-    // Load existing versions for this key (sorted asc)
+    // Load existing versions for this key (sorted asc in memory — no composite index needed)
     const versionsSnap = await db.collection(`venues/${venueId}/posMappingVersions`)
-      .where('mappingKey', '==', mappingKey).orderBy('effectiveFrom', 'asc').get();
-    const existingVersions: MappingVersion[] = versionsSnap.docs.map(d =>
-      ({ id: d.id, ...(d.data() as any) }) as MappingVersion
-    );
+      .where('mappingKey', '==', mappingKey).get();
+    const existingVersions: MappingVersion[] = versionsSnap.docs
+      .map(d => ({ id: d.id, ...(d.data() as any) }) as MappingVersion)
+      .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
 
     // Today in UTC (venue tz is not critical here — effectiveFrom is user-chosen)
     const venueSnap = await db.doc(`venues/${venueId}`).get();
@@ -7265,10 +7265,10 @@ app.post("/pos-mappings/undo-change", async (req, res) => {
     });
 
     const versionsSnap = await db.collection(`venues/${venueId}/posMappingVersions`)
-      .where('mappingKey', '==', mappingKey).orderBy('effectiveFrom', 'asc').get();
-    const existingVersions: MappingVersion[] = versionsSnap.docs.map(d =>
-      ({ id: d.id, ...(d.data() as any) }) as MappingVersion
-    );
+      .where('mappingKey', '==', mappingKey).get();
+    const existingVersions: MappingVersion[] = versionsSnap.docs
+      .map(d => ({ id: d.id, ...(d.data() as any) }) as MappingVersion)
+      .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
 
     const plan = planUndoChange({ venueId, posItemName, existingMappingDocs: existingDocs, existingVersions });
     if (!plan.ok) { res.status(400).json({ ok: false, error: (plan as any).error }); return; }
@@ -7343,12 +7343,13 @@ app.get("/pos-mappings/versions", async (req, res) => {
     await verifyVenueMembership(uid, venueId);
 
     const db = admin.firestore();
-    let q: FirebaseFirestore.Query = db.collection(`venues/${venueId}/posMappingVersions`)
-      .orderBy('effectiveFrom', 'asc');
+    let q: FirebaseFirestore.Query = db.collection(`venues/${venueId}/posMappingVersions`);
     if (mappingKey) q = q.where('mappingKey', '==', mappingKey);
 
     const snap = await q.get();
-    const versions = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    const versions = snap.docs
+      .map(d => ({ id: d.id, ...(d.data() as any) }))
+      .sort((a: any, b: any) => (a.effectiveFrom || '').localeCompare(b.effectiveFrom || ''));
 
     // Also return current overrides
     const overridesSnap = await db.collection(`venues/${venueId}/posMappingOverrides`).get();
@@ -7377,9 +7378,43 @@ app.post("/pos-mappings/report-override", async (req, res) => {
 
     const db = admin.firestore();
 
-    // Override doc ID is deterministic: reportId + sha-like prefix of key
-    // Use a simple hash: encode mappingKey + reportId as base64 slice
-    const overrideId = `${reportId}__${Buffer.from(mappingKey).toString('base64').slice(0, 16).replace(/[/+=]/g, '_')}`;
+    const memberSnap = await db.doc(`venues/${venueId}/members/${uid}`).get();
+    const role = memberSnap.data()?.role;
+    if (role !== 'owner' && role !== 'manager') {
+      res.status(403).json({ ok: false, error: "Manager or owner role required" }); return;
+    }
+
+    if (versionId) {
+      const versionsSnap = await db.collection(`venues/${venueId}/posMappingVersions`)
+        .where('mappingKey', '==', mappingKey).get();
+      const versions: MappingVersion[] = versionsSnap.docs
+        .map(d => ({ id: d.id, ...(d.data() as any) }) as MappingVersion)
+        .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+
+      if (!versions.find(v => v.id === versionId)) {
+        res.status(400).json({ ok: false, error: "versionId does not belong to this mappingKey" }); return;
+      }
+
+      const rSnap = await db.doc(`venues/${venueId}/salesReports/${reportId}`).get();
+      if (!rSnap.exists) { res.status(404).json({ ok: false, error: "Report not found" }); return; }
+      const rdata = rSnap.data() as any;
+
+      const venueSnap = await db.doc(`venues/${venueId}`).get();
+      const tz: string = (venueSnap.data() as any)?.timezone || 'Pacific/Auckland';
+      const tsStart: Date | null = rdata?.periodStart?.toDate?.() ?? null;
+      const tsEnd: Date | null = rdata?.periodEnd?.toDate?.() ?? null;
+      const dates = (tsStart && tsEnd) ? reportDates(tsStart, tsEnd, tz) : [];
+      const selection = selectVersion(versions, dates);
+
+      if (!('straddle' in selection)) {
+        res.status(400).json({ ok: false, error: "Report does not straddle a version boundary" }); return;
+      }
+      if (!selection.straddle.includes(versionId)) {
+        res.status(400).json({ ok: false, error: "versionId is not one of the straddling versions" }); return;
+      }
+    }
+
+    const overrideId = posMappingOverrideDocId(reportId, mappingKey);
     const overrideRef = db.doc(`venues/${venueId}/posMappingOverrides/${overrideId}`);
 
     if (versionId) {
@@ -7395,12 +7430,12 @@ app.post("/pos-mappings/report-override", async (req, res) => {
     }
 
     // Re-match the report
-    const rSnap = await db.doc(`venues/${venueId}/salesReports/${reportId}`).get();
-    if (rSnap.exists) {
-      const rdata = rSnap.data() as any;
-      if (isReportActive(rdata)) {
-        const rawLines: any[] = rdata?.report?.lines ?? rdata?.lines ?? [];
-        const per = rdata?.report?.period || rdata?.period || null;
+    const rSnap2 = await db.doc(`venues/${venueId}/salesReports/${reportId}`).get();
+    if (rSnap2.exists) {
+      const rdata2 = rSnap2.data() as any;
+      if (isReportActive(rdata2)) {
+        const rawLines: any[] = rdata2?.report?.lines ?? rdata2?.lines ?? [];
+        const per = rdata2?.report?.period || rdata2?.period || null;
         await matchAndStoreSalesLines(db, venueId, reportId, 'report-override',
           rawLines.map((l: any) => ({
             name: l.name, qtySold: Number(l.qty ?? l.qtySold ?? 0),

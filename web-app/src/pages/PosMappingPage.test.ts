@@ -16,6 +16,7 @@ import {
   planUnlinkWrites,
   panelCanFixMistake,
   versionTimelineLabel,
+  unlinkBlockedReason,
   type NoServingRow,
   type AllMappingRow,
   type WriteOp,
@@ -864,5 +865,30 @@ describe('versionTimelineLabel', () => {
     }
     const label = versionTimelineLabel([v0, recipeV])
     expect(label).toContain('House Margarita')
+  })
+})
+
+// ── unlinkBlockedReason ───────────────────────────────────────────────────────
+
+describe('unlinkBlockedReason', () => {
+  const v0: MappingVersionData = {
+    id: 'v0', mappingKey: 'wine', posItemName: 'Wine', effectiveFrom: '0000-01-01',
+    mappingType: 'product', productId: 'p1', productName: 'Andre Clouet',
+    recipeId: null, recipeName: null, servingMl: null, conversionRatio: null,
+    servingType: null, conversionUnit: null,
+  }
+
+  it('returns null when no versions and no load error', () => {
+    expect(unlinkBlockedReason([], false)).toBeNull()
+  })
+
+  it('returns message when key has versions (unlink disabled)', () => {
+    const result = unlinkBlockedReason([v0], false)
+    expect(result).not.toBeNull()
+    expect(result).toContain('dated product changes')
+  })
+
+  it('returns message when versions failed to load (fail-safe)', () => {
+    expect(unlinkBlockedReason([], true)).not.toBeNull()
   })
 })

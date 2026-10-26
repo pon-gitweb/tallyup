@@ -448,6 +448,15 @@ export function panelCanFixMistake(versions: MappingVersionData[]): boolean {
   return versions.length === 0
 }
 
+export function unlinkBlockedReason(
+  versions: MappingVersionData[],
+  versionsLoadError: boolean,
+): string | null {
+  if (versionsLoadError) return 'Version history unavailable — cannot confirm safe to unlink.'
+  if (versions.length > 0) return 'This button has dated product changes — undo them first.'
+  return null
+}
+
 function _formatVersionDate(dateStr: string): string {
   if (dateStr === '0000-01-01') return ''
   const [y, m, d] = dateStr.split('-').map(Number)
@@ -609,6 +618,7 @@ function MappingPanel({
   existingMapping,
   affectedReports,
   versions,
+  versionsUnavailable,
   products,
   recipes,
   saving,
@@ -621,6 +631,7 @@ function MappingPanel({
   existingMapping?: Mapping | null
   affectedReports?: { count: number; dateRange: string | null } | null
   versions?: MappingVersionData[]
+  versionsUnavailable?: boolean
   products: Product[]
   recipes: Recipe[]
   saving: boolean
@@ -892,11 +903,12 @@ function MappingPanel({
           <button className={styles.btnPrimary} disabled={!canSave || saving} onClick={handleSave}>
             {saving ? 'Saving…' : 'Save mapping'}
           </button>
-          {existingMapping && onUnlink && !unlinkConfirm && (
-            <button className={styles.btnDanger} style={{ marginLeft: 'auto' }} onClick={() => setUnlinkConfirm(true)}>
-              Unlink
-            </button>
-          )}
+          {existingMapping && onUnlink && !unlinkConfirm && (() => {
+            const blocked = unlinkBlockedReason(keyVersions, versionsUnavailable ?? false)
+            return blocked
+              ? <p className={styles.errorText} style={{ marginLeft: 'auto', marginTop: 0, fontSize: 12 }}>{blocked}</p>
+              : <button className={styles.btnDanger} style={{ marginLeft: 'auto' }} onClick={() => setUnlinkConfirm(true)}>Unlink</button>
+          })()}
           {unlinkConfirm && (
             <div style={{ width: '100%', fontSize: 13, background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, padding: '10px 12px' }}>
               Delete this mapping and re-match affected reports?
@@ -1471,6 +1483,7 @@ export default function PosMappingPage({
   const [bulkServingTarget, setBulkServingTarget] = useState<NoServingRow[] | null>(null)
 
   const [versionsData, setVersionsData] = useState<Record<string, MappingVersionData[]>>({})
+  const [versionsLoadError, setVersionsLoadError] = useState(false)
 
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -1483,28 +1496,16 @@ export default function PosMappingPage({
     let cancelled = false
     setLoading(true)
     async function load() {
-      const [productsSnap, recipesSnap, mappingsSnap, reportsSnap, versionsSnap] = await Promise.all([
+      const [productsSnap, recipesSnap, mappingsSnap, reportsSnap] = await Promise.all([
         getDocs(collection(db, 'venues', venueId, 'products')),
         getDocs(collection(db, 'venues', venueId, 'recipes')),
         getDocs(collection(db, 'venues', venueId, 'posProductMappings')),
         getDocs(collection(db, 'venues', venueId, 'salesReports')),
-        getDocs(collection(db, 'venues', venueId, 'posMappingVersions')),
       ])
       if (cancelled) return
       setProducts(productsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })))
       setRecipes(recipesSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })))
       setMappings(mappingsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })))
-      const vByKey: Record<string, MappingVersionData[]> = {}
-      versionsSnap.docs.forEach(d => {
-        const v = { id: d.id, ...(d.data() as any) } as MappingVersionData
-        const k = v.mappingKey || (v.posItemName || '').toLowerCase()
-        if (!vByKey[k]) vByKey[k] = []
-        vByKey[k].push(v)
-      })
-      for (const k of Object.keys(vByKey)) {
-        vByKey[k].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
-      }
-      setVersionsData(vByKey)
       const rawDocs = reportsSnap.docs.map(d => ({ id: d.id, data: () => d.data() }))
       setAllDocs(rawDocs)
       const { reports } = partitionReports(rawDocs)
@@ -1516,6 +1517,34 @@ export default function PosMappingPage({
       if (cancelled) return
       setMatchesByReport(mByR)
       setLoading(false)
+
+      // Load versions from API (no client Firestore rule — use ID token)
+      try {
+        const token = await auth.currentUser?.getIdToken()
+        if (token) {
+          const resp = await fetch(
+            `https://us-central1-tallyup-f1463.cloudfunctions.net/api/pos-mappings/versions?venueId=${venueId}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          )
+          if (resp.ok) {
+            const json = await resp.json()
+            const vByKey: Record<string, MappingVersionData[]> = {}
+            ;(json.versions ?? []).forEach((v: MappingVersionData) => {
+              const k = v.mappingKey || (v.posItemName || '').toLowerCase()
+              if (!vByKey[k]) vByKey[k] = []
+              vByKey[k].push(v)
+            })
+            for (const k of Object.keys(vByKey)) {
+              vByKey[k].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
+            }
+            if (!cancelled) setVersionsData(vByKey)
+          } else {
+            if (!cancelled) setVersionsLoadError(true)
+          }
+        }
+      } catch {
+        if (!cancelled) setVersionsLoadError(true)
+      }
     }
     load().catch(console.error)
     return () => { cancelled = true }
@@ -1752,6 +1781,12 @@ export default function PosMappingPage({
         {notLinkedRows.length} unlinked · {noServingRows.length} missing serving size · {mappings.length} total mappings
       </p>
 
+      {versionsLoadError && (
+        <div className={`${styles.banner} ${styles.bannerAmber}`} style={{ marginBottom: 8 }}>
+          Version history unavailable. Fix a mistake and Unlink are disabled.
+        </div>
+      )}
+
       {saveError && (
         <div className={`${styles.banner} ${styles.bannerAmber}`} style={{ marginBottom: 8 }}>
           {saveError}
@@ -1831,6 +1866,7 @@ export default function PosMappingPage({
           existingMapping={panelRow.existingMapping}
           affectedReports={panelRow.affectedReports}
           versions={panelRow.versions}
+          versionsUnavailable={versionsLoadError}
           products={products}
           recipes={recipes}
           saving={saving}

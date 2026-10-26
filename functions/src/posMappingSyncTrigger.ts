@@ -26,14 +26,13 @@ export const onPosMappingWrittenSyncVersion = onDocumentWritten(
     // Load all versions for this key (sorted asc by effectiveFrom)
     const versionsSnap = await db.collection(`venues/${venueId}/posMappingVersions`)
       .where('mappingKey', '==', key)
-      .orderBy('effectiveFrom', 'asc')
       .get();
 
     if (versionsSnap.empty) return; // unversioned key — behaves exactly as today
 
-    const versions: MappingVersion[] = versionsSnap.docs.map(d =>
-      ({ id: d.id, ...(d.data() as any) }) as MappingVersion
-    );
+    const versions: MappingVersion[] = versionsSnap.docs
+      .map(d => ({ id: d.id, ...(d.data() as any) }) as MappingVersion)
+      .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
     const latest = versions[versions.length - 1];
 
     if (!diffMappingVsVersion(parentData, latest)) return; // no difference — normal case
@@ -76,10 +75,10 @@ export const onPosMappingWrittenSyncVersion = onDocumentWritten(
       }
     });
 
-    await Promise.all(toReMatch.map(async (reportId) => {
+    for (const reportId of toReMatch) {
       try {
         const rSnap = await db.doc(`venues/${venueId}/salesReports/${reportId}`).get();
-        if (!rSnap.exists) return;
+        if (!rSnap.exists) continue;
         const rdata = rSnap.data() as any;
         const rawLines: any[] = rdata?.report?.lines ?? rdata?.lines ?? [];
         const per = rdata?.report?.period || rdata?.period || null;
@@ -94,7 +93,7 @@ export const onPosMappingWrittenSyncVersion = onDocumentWritten(
       } catch (e: any) {
         console.error(`[onPosMappingWrittenSyncVersion] re-match error reportId=${reportId}`, e?.message);
       }
-    }));
+    }
 
     console.log(`[onPosMappingWrittenSyncVersion] synced key=${key} latest=${latest.id} reMatched=${toReMatch.length}`);
   }
