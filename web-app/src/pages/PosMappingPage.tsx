@@ -457,6 +457,19 @@ export function unlinkBlockedReason(
   return null
 }
 
+export function saveMappingBlockedReason(
+  isExistingMapping: boolean,
+  versions: MappingVersionData[],
+  versionsLoadError: boolean,
+): string | null {
+  if (!isExistingMapping) return null
+  if (!panelCanFixMistake(versions)) {
+    return 'Fix a mistake is disabled — this key has version history. Use Undo last change to revert.'
+  }
+  if (versionsLoadError) return 'Version history unavailable — cannot confirm safe to edit.'
+  return null
+}
+
 function _formatVersionDate(dateStr: string): string {
   if (dateStr === '0000-01-01') return ''
   const [y, m, d] = dateStr.split('-').map(Number)
@@ -723,9 +736,13 @@ function MappingPanel({
     }), posName)
   }
 
-  const canSave = mode === 'skip'
+  const saveBlockedReason = saveMappingBlockedReason(!!existingMapping, keyVersions, versionsUnavailable ?? false)
+
+  const canSave = !saveBlockedReason && (
+    mode === 'skip'
     || (mode === 'recipe' && !!selectedRecipe)
     || (mode === 'product' && !!selectedProduct && (servingPreset === 'each' || servingMl != null))
+  )
 
   return (
     <div className={styles.drawerOverlay} onClick={() => { if (!saving) onClose() }}>
@@ -903,6 +920,9 @@ function MappingPanel({
           <button className={styles.btnPrimary} disabled={!canSave || saving} onClick={handleSave}>
             {saving ? 'Saving…' : 'Save mapping'}
           </button>
+          {saveBlockedReason && (
+            <p className={styles.errorText} style={{ width: '100%', marginTop: 0, fontSize: 12 }}>{saveBlockedReason}</p>
+          )}
           {existingMapping && onUnlink && !unlinkConfirm && (() => {
             const blocked = unlinkBlockedReason(keyVersions, versionsUnavailable ?? false)
             return blocked

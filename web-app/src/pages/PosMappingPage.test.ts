@@ -17,6 +17,7 @@ import {
   panelCanFixMistake,
   versionTimelineLabel,
   unlinkBlockedReason,
+  saveMappingBlockedReason,
   type NoServingRow,
   type AllMappingRow,
   type WriteOp,
@@ -890,5 +891,32 @@ describe('unlinkBlockedReason', () => {
 
   it('returns message when versions failed to load (fail-safe)', () => {
     expect(unlinkBlockedReason([], true)).not.toBeNull()
+  })
+})
+
+// ── saveMappingBlockedReason ──────────────────────────────────────────────────
+
+describe('saveMappingBlockedReason', () => {
+  const v0: MappingVersionData = {
+    id: 'v0', mappingKey: 'wine', posItemName: 'Wine', effectiveFrom: '0000-01-01',
+    mappingType: 'product', productId: 'p1', productName: 'Andre Clouet',
+    recipeId: null, recipeName: null, servingMl: null, conversionRatio: null,
+    servingType: null, conversionUnit: null,
+  }
+
+  it('Save is disabled for a versioned existing mapping', () => {
+    expect(saveMappingBlockedReason(true, [v0], false)).not.toBeNull()
+  })
+
+  it('Save is disabled when versions are unavailable for an existing mapping', () => {
+    expect(saveMappingBlockedReason(true, [], true)).not.toBeNull()
+  })
+
+  it('Save is still enabled for a new link when versions are unavailable', () => {
+    expect(saveMappingBlockedReason(false, [], true)).toBeNull()
+  })
+
+  it('Save is enabled for an unversioned existing mapping with no load error', () => {
+    expect(saveMappingBlockedReason(true, [], false)).toBeNull()
   })
 })
