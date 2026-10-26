@@ -63,6 +63,8 @@ export type AllMappingRow = {
   docCount: number
   warningDuplicate: boolean
   allMappingIds: string[]
+  versioned: boolean
+  versionCount: number
 }
 
 type TabKey = 'not-linked' | 'no-serving' | 'all-mappings'
@@ -314,6 +316,7 @@ export function allMappingsRows(
   recipes: Recipe[],
   activeReports: ActiveReport[],
   matchesByReport: Record<string, MatchData | null>,
+  versionsDataArg: Record<string, MappingVersionData[]> = {},
 ): AllMappingRow[] {
   const productById = new Map(products.map(p => [p.id, p]))
   const recipeById  = new Map(recipes.map(r => [r.id, r]))
@@ -400,7 +403,12 @@ export function allMappingsRows(
       }
     }
 
-    rows.push({ mapping: m, targetLabel, servingLabel, ratio: m.conversionRatio ?? null, seenInReports, totalQtySold, warningMergedOrMissing, warningNoServing, docCount, warningDuplicate, allMappingIds })
+    const key = (m.posItemName || '').toLowerCase()
+    const keyVersions = versionsDataArg[key] ?? []
+    const versioned = keyVersions.length > 0
+    const versionCount = keyVersions.length
+
+    rows.push({ mapping: m, targetLabel, servingLabel, ratio: m.conversionRatio ?? null, seenInReports, totalQtySold, warningMergedOrMissing, warningNoServing, docCount, warningDuplicate, allMappingIds, versioned, versionCount })
   }
 
   return rows
@@ -410,6 +418,83 @@ export function chunkArray<T>(arr: T[], size: number): T[][] {
   const chunks: T[][] = []
   for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size))
   return chunks
+}
+
+// ── Mapping version types and pure helpers ────────────────────────────────────
+
+export type MappingVersionData = {
+  id: string
+  mappingKey: string
+  posItemName: string
+  effectiveFrom: string // YYYY-MM-DD; '0000-01-01' = v0 sentinel
+  mappingType: string | null
+  productId: string | null
+  productName: string | null
+  recipeId: string | null
+  recipeName: string | null
+  servingMl: number | null
+  conversionRatio: number | null
+  servingType: string | null
+  conversionUnit: string | null
+  updatedByTrigger?: boolean
+  createdByUid?: string
+}
+
+/**
+ * Returns true when the "Fix a mistake" action is available.
+ * Disabled once a key has any versions (use "Undo last change" instead).
+ */
+export function panelCanFixMistake(versions: MappingVersionData[]): boolean {
+  return versions.length === 0
+}
+
+export function unlinkBlockedReason(
+  versions: MappingVersionData[],
+  versionsLoadError: boolean,
+): string | null {
+  if (versionsLoadError) return 'Version history unavailable — cannot confirm safe to unlink.'
+  if (versions.length > 0) return 'This button has dated product changes — undo them first.'
+  return null
+}
+
+export function saveMappingBlockedReason(
+  isExistingMapping: boolean,
+  versions: MappingVersionData[],
+  versionsLoadError: boolean,
+): string | null {
+  if (!isExistingMapping) return null
+  if (!panelCanFixMistake(versions)) {
+    return 'Fix a mistake is disabled — this key has version history. Use Undo last change to revert.'
+  }
+  if (versionsLoadError) return 'Version history unavailable — cannot confirm safe to edit.'
+  return null
+}
+
+function _formatVersionDate(dateStr: string): string {
+  if (dateStr === '0000-01-01') return ''
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const date = new Date(Date.UTC(y, m - 1, d))
+  return date.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+}
+
+/**
+ * Returns a human-readable timeline label for the most recent version change.
+ * e.g. "Andre Clouet → Champagne Collet from 7 Oct"
+ * Returns '' when fewer than 2 versions.
+ */
+export function versionTimelineLabel(versions: MappingVersionData[]): string {
+  // Filter out v0 sentinel and get real versions
+  const real = versions.filter(v => v.effectiveFrom !== '0000-01-01')
+  if (real.length === 0) return ''
+  const latest = real[real.length - 1]
+  const prevAll = versions.filter(v => v.effectiveFrom < latest.effectiveFrom)
+  const prev = prevAll.length > 0 ? prevAll[prevAll.length - 1] : null
+  const prevLabel = prev
+    ? (prev.productName ?? prev.recipeName ?? prev.mappingType ?? '?')
+    : '?'
+  const nextLabel = latest.productName ?? latest.recipeName ?? latest.mappingType ?? '?'
+  const fromDate  = _formatVersionDate(latest.effectiveFrom)
+  return `${prevLabel} → ${nextLabel} from ${fromDate}`
 }
 
 function toTimestamp(val: unknown): number {
@@ -545,6 +630,8 @@ function MappingPanel({
   preselectedProduct,
   existingMapping,
   affectedReports,
+  versions,
+  versionsUnavailable,
   products,
   recipes,
   saving,
@@ -556,6 +643,8 @@ function MappingPanel({
   preselectedProduct?: { id: string; name: string } | null
   existingMapping?: Mapping | null
   affectedReports?: { count: number; dateRange: string | null } | null
+  versions?: MappingVersionData[]
+  versionsUnavailable?: boolean
   products: Product[]
   recipes: Recipe[]
   saving: boolean
@@ -563,6 +652,12 @@ function MappingPanel({
   onClose: () => void
   onUnlink?: () => void
 }) {
+  const keyVersions = versions ?? []
+  const isVersioned = keyVersions.length > 0
+  const timelineLabel = versionTimelineLabel(keyVersions)
+  const latestVersion = isVersioned ? keyVersions[keyVersions.length - 1] : null
+  const editedOutsideWebApp = latestVersion?.updatedByTrigger === true
+
   const init = initPanelState(existingMapping ?? null, products, recipes)
   const [mode, setMode]               = useState<'product' | 'recipe' | 'skip'>(
     preselectedProduct && !existingMapping ? 'product' : init.mode
@@ -641,9 +736,13 @@ function MappingPanel({
     }), posName)
   }
 
-  const canSave = mode === 'skip'
+  const saveBlockedReason = saveMappingBlockedReason(!!existingMapping, keyVersions, versionsUnavailable ?? false)
+
+  const canSave = !saveBlockedReason && (
+    mode === 'skip'
     || (mode === 'recipe' && !!selectedRecipe)
     || (mode === 'product' && !!selectedProduct && (servingPreset === 'each' || servingMl != null))
+  )
 
   return (
     <div className={styles.drawerOverlay} onClick={() => { if (!saving) onClose() }}>
@@ -661,6 +760,22 @@ function MappingPanel({
             This will re-match {affectedReports.count} report{affectedReports.count !== 1 ? 's' : ''}
             {affectedReports.dateRange ? ` (${affectedReports.dateRange})` : ''}.
             Past sales for this button will move to the new product.
+          </div>
+        )}
+
+        {timelineLabel && (
+          <div className={`${styles.banner} ${styles.bannerGray}`} style={{ fontSize: 12 }}>
+            {timelineLabel}
+            {editedOutsideWebApp && (
+              <span style={{ marginLeft: 8, color: '#92400e' }}>· Edited outside the web app</span>
+            )}
+          </div>
+        )}
+
+        {isVersioned && (
+          <div style={{ fontSize: 12, color: '#6b7280' }}>
+            <strong>Fix a mistake</strong> is disabled — this key has version history.
+            Use <em>Undo last change</em> to revert.
           </div>
         )}
 
@@ -805,11 +920,15 @@ function MappingPanel({
           <button className={styles.btnPrimary} disabled={!canSave || saving} onClick={handleSave}>
             {saving ? 'Saving…' : 'Save mapping'}
           </button>
-          {existingMapping && onUnlink && !unlinkConfirm && (
-            <button className={styles.btnDanger} style={{ marginLeft: 'auto' }} onClick={() => setUnlinkConfirm(true)}>
-              Unlink
-            </button>
+          {saveBlockedReason && (
+            <p className={styles.errorText} style={{ width: '100%', marginTop: 0, fontSize: 12 }}>{saveBlockedReason}</p>
           )}
+          {existingMapping && onUnlink && !unlinkConfirm && (() => {
+            const blocked = unlinkBlockedReason(keyVersions, versionsUnavailable ?? false)
+            return blocked
+              ? <p className={styles.errorText} style={{ marginLeft: 'auto', marginTop: 0, fontSize: 12 }}>{blocked}</p>
+              : <button className={styles.btnDanger} style={{ marginLeft: 'auto' }} onClick={() => setUnlinkConfirm(true)}>Unlink</button>
+          })()}
           {unlinkConfirm && (
             <div style={{ width: '100%', fontSize: 13, background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, padding: '10px 12px' }}>
               Delete this mapping and re-match affected reports?
@@ -1219,7 +1338,7 @@ function NoServingTab({
 
 // ── Tab C: All mappings ───────────────────────────────────────────────────────
 
-type AllMappingsFilter = 'all' | 'product' | 'recipe' | 'ignored' | 'merged-missing' | 'no-serving' | 'duplicate'
+type AllMappingsFilter = 'all' | 'product' | 'recipe' | 'ignored' | 'merged-missing' | 'no-serving' | 'duplicate' | 'versioned'
 
 function AllMappingsTab({
   rows,
@@ -1239,6 +1358,7 @@ function AllMappingsTab({
     else if (filter === 'merged-missing') r = r.filter(row => row.warningMergedOrMissing)
     else if (filter === 'no-serving')    r = r.filter(row => row.warningNoServing)
     else if (filter === 'duplicate')     r = r.filter(row => row.warningDuplicate)
+    else if (filter === 'versioned')     r = r.filter(row => row.versioned)
     if (search.trim()) {
       const q = search.toLowerCase()
       r = r.filter(row =>
@@ -1258,6 +1378,7 @@ function AllMappingsTab({
     { key: 'merged-missing', label: `Points to merged/missing (${rows.filter(r => r.warningMergedOrMissing).length})`, warn: true },
     { key: 'no-serving',    label: `Product, no serving size (${rows.filter(r => r.warningNoServing).length})`, warn: true },
     ...(duplicateCount > 0 ? [{ key: 'duplicate' as const, label: `Duplicate mappings (${duplicateCount})`, warn: true }] : []),
+    ...(rows.some(r => r.versioned) ? [{ key: 'versioned' as const, label: `Versioned (${rows.filter(r => r.versioned).length})` }] : []),
   ]
 
   if (rows.length === 0) return <p className={styles.emptyState}>No mappings found.</p>
@@ -1309,6 +1430,11 @@ function AllMappingsTab({
                   {row.docCount > 1 && (
                     <span className={`${styles.badge} ${styles.badgeAmber}`} style={{ marginLeft: 6 }}>
                       {row.docCount} records
+                    </span>
+                  )}
+                  {row.versioned && (
+                    <span className={`${styles.badge} ${styles.badgeBlue}`} style={{ marginLeft: 6 }}>
+                      versioned
                     </span>
                   )}
                 </td>
@@ -1368,12 +1494,16 @@ export default function PosMappingPage({
     preselectedProduct?: { id: string; name: string } | null
     existingMapping?: Mapping | null
     affectedReports?: { count: number; dateRange: string | null } | null
+    versions?: MappingVersionData[]
   } | null>(null)
   const [saving, setSaving]     = useState(false)
 
   const [notLinkedSelected, setNotLinkedSelected] = useState<Set<string>>(new Set())
   const [noServingSelected, setNoServingSelected] = useState<Set<string>>(new Set())
   const [bulkServingTarget, setBulkServingTarget] = useState<NoServingRow[] | null>(null)
+
+  const [versionsData, setVersionsData] = useState<Record<string, MappingVersionData[]>>({})
+  const [versionsLoadError, setVersionsLoadError] = useState(false)
 
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -1407,6 +1537,34 @@ export default function PosMappingPage({
       if (cancelled) return
       setMatchesByReport(mByR)
       setLoading(false)
+
+      // Load versions from API (no client Firestore rule — use ID token)
+      try {
+        const token = await auth.currentUser?.getIdToken()
+        if (token) {
+          const resp = await fetch(
+            `https://us-central1-tallyup-f1463.cloudfunctions.net/api/pos-mappings/versions?venueId=${venueId}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          )
+          if (resp.ok) {
+            const json = await resp.json()
+            const vByKey: Record<string, MappingVersionData[]> = {}
+            ;(json.versions ?? []).forEach((v: MappingVersionData) => {
+              const k = v.mappingKey || (v.posItemName || '').toLowerCase()
+              if (!vByKey[k]) vByKey[k] = []
+              vByKey[k].push(v)
+            })
+            for (const k of Object.keys(vByKey)) {
+              vByKey[k].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
+            }
+            if (!cancelled) setVersionsData(vByKey)
+          } else {
+            if (!cancelled) setVersionsLoadError(true)
+          }
+        }
+      } catch {
+        if (!cancelled) setVersionsLoadError(true)
+      }
     }
     load().catch(console.error)
     return () => { cancelled = true }
@@ -1426,7 +1584,7 @@ export default function PosMappingPage({
   const unmatchedRows = useMemo(() => buildUnmatchedRows(activeReports, matchesByReport), [activeReports, matchesByReport])
   const notLinkedRows = useMemo(() => buildNotLinkedRows(unmatchedRows, mappingsByLower), [unmatchedRows, mappingsByLower])
   const noServingRows = useMemo(() => buildNoServingRows(activeReports, matchesByReport, mappingsByLower), [activeReports, matchesByReport, mappingsByLower])
-  const allMappingsRowsList = useMemo(() => allMappingsRows(mappings, products, recipes, activeReports, matchesByReport), [mappings, products, recipes, activeReports, matchesByReport])
+  const allMappingsRowsList = useMemo(() => allMappingsRows(mappings, products, recipes, activeReports, matchesByReport, versionsData), [mappings, products, recipes, activeReports, matchesByReport, versionsData])
 
   async function reloadMatchesForReports(reportIds: string[]): Promise<Record<string, MatchData | null>> {
     const updates: Record<string, MatchData | null> = {}
@@ -1612,10 +1770,13 @@ export default function PosMappingPage({
     const dates = affectedIds.map(r => r.startStr).filter(Boolean).sort() as string[]
     const dateRange = dates.length >= 2 ? `${dates[0]} – ${dates[dates.length - 1]}`
       : dates.length === 1 ? dates[0] : null
+    const key = (row.mapping.posItemName || '').toLowerCase()
+    const keyVersions = versionsData[key] ?? []
     setPanelRow({
       posName: row.mapping.posItemName,
       existingMapping: row.mapping,
       affectedReports: { count: affectedIds.length, dateRange },
+      versions: keyVersions,
     })
   }
 
@@ -1639,6 +1800,12 @@ export default function PosMappingPage({
       <p className={styles.subheading}>
         {notLinkedRows.length} unlinked · {noServingRows.length} missing serving size · {mappings.length} total mappings
       </p>
+
+      {versionsLoadError && (
+        <div className={`${styles.banner} ${styles.bannerAmber}`} style={{ marginBottom: 8 }}>
+          Version history unavailable. Fix a mistake and Unlink are disabled.
+        </div>
+      )}
 
       {saveError && (
         <div className={`${styles.banner} ${styles.bannerAmber}`} style={{ marginBottom: 8 }}>
@@ -1718,6 +1885,8 @@ export default function PosMappingPage({
           preselectedProduct={panelRow.preselectedProduct}
           existingMapping={panelRow.existingMapping}
           affectedReports={panelRow.affectedReports}
+          versions={panelRow.versions}
+          versionsUnavailable={versionsLoadError}
           products={products}
           recipes={recipes}
           saving={saving}
