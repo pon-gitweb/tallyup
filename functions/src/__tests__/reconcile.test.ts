@@ -8,7 +8,7 @@
  * Window (pre_service, Mon closed): 2025-01-07..2025-01-12 (6 dates, Mon 01-13 excl)
  */
 
-import { windowDates } from '../reconcile/tradingWindow';
+import { windowDates, deliveryDates } from '../reconcile/tradingWindow';
 import { selectReports, ReportPeriod } from '../reconcile/selectReports';
 import { aggregateSales, SalesMatchDoc } from '../reconcile/aggregateSales';
 import { aggregateDeliveries, InvoiceInput } from '../reconcile/aggregateDeliveries';
@@ -461,6 +461,170 @@ describe('engine — fingerprint stability', () => {
     };
     const r2 = reconcileSnapshot(changed);
     expect(r1.inputsFingerprint).not.toBe(r2.inputsFingerprint);
+  });
+});
+
+// ── deliveryDates ──────────────────────────────────────────────────────────────
+
+describe('deliveryDates — all calendar dates, no closed-day removal', () => {
+  it('pre_service: includes Monday when Monday is closed for trading', () => {
+    // Window: 2025-01-07..2025-01-13 (7 dates, no filtering)
+    const dates = deliveryDates(OPENING_START, THIS_START, TZ, 'pre_service');
+    expect(dates).toHaveLength(7);
+    expect(dates).toContain('2025-01-13'); // Monday — excluded from trading window but included here
+    expect(dates).toContain('2025-01-07');
+  });
+
+  it('pre_service: day before thisCountStart is the last date', () => {
+    const dates = deliveryDates(OPENING_START, THIS_START, TZ, 'pre_service');
+    expect(dates[dates.length - 1]).toBe('2025-01-13');
+    expect(dates).not.toContain('2025-01-14'); // thisCountStart belongs to next period
+  });
+
+  it('post_service: does not include opening date', () => {
+    const dates = deliveryDates(OPENING_START, THIS_START, TZ, 'post_service');
+    expect(dates).not.toContain('2025-01-07');
+    expect(dates).toContain('2025-01-14');
+  });
+});
+
+// ── aggregateDeliveries — Monday invoice included ──────────────────────────────
+
+describe('aggregateDeliveries — Monday-dated invoice included via deliveryDates', () => {
+  it('Monday invoice counted when using deliveryDates (all calendar dates)', () => {
+    const mondayInvoice: InvoiceInput = {
+      id: 'inv-mon',
+      invoiceDateTimestamp: new Date('2025-01-13T00:00:00Z'), // Monday NZ
+      type: null,
+      lines: [{ productId: 'p-mon', qty: 5 }],
+    };
+    const delDates = deliveryDates(OPENING_START, THIS_START, TZ, 'pre_service');
+    const r = aggregateDeliveries([mondayInvoice], delDates, TZ);
+    expect(r.receivedByProductId['p-mon']).toBe(5);
+  });
+
+  it('same Monday invoice excluded when using trading window (closed Monday)', () => {
+    const mondayInvoice: InvoiceInput = {
+      id: 'inv-mon',
+      invoiceDateTimestamp: new Date('2025-01-13T00:00:00Z'),
+      type: null,
+      lines: [{ productId: 'p-mon', qty: 5 }],
+    };
+    // EXPECTED_WINDOW excludes Monday (closedWeekdays=[1])
+    const r = aggregateDeliveries([mondayInvoice], EXPECTED_WINDOW, TZ);
+    expect(r.receivedByProductId['p-mon']).toBeUndefined();
+  });
+});
+
+// ── aggregateDeliveries — mergedInto resolution ────────────────────────────────
+
+describe('aggregateDeliveries — mergedInto resolution on line productId', () => {
+  it('resolves p-old → p-new via mergedInto', () => {
+    const inv: InvoiceInput = {
+      id: 'inv-merge',
+      invoiceDateTimestamp: new Date('2025-01-09T00:00:00Z'), // Thu, in window
+      type: null,
+      lines: [{ productId: 'p-old', qty: 4 }],
+    };
+    const r = aggregateDeliveries([inv], EXPECTED_WINDOW, TZ, { 'p-old': 'p-new' });
+    expect(r.receivedByProductId['p-old']).toBeUndefined();
+    expect(r.receivedByProductId['p-new']).toBe(4);
+  });
+});
+
+// ── classifyItems — impliedDelivery with coverage incomplete ───────────────────
+
+describe('classifyItems — impliedDelivery computed even when coverageComplete=false', () => {
+  // opening=5, closing=10, sold=3, received=0 → diff = 5+0-10-3 = -8 → impliedDelivery=8
+  const item: SnapshotItemInput = {
+    productId: 'p-impl2', name: 'Implied No Cover', openingCount: 5, actualClosing: 10,
+    costPrice: 20,
+  };
+
+  it('impliedDelivery is set even when coverageComplete=false', () => {
+    const result = classifyItems({
+      items: [item],
+      soldByProductId: { 'p-impl2': 3 },
+      receivedByProductId: {},
+      flagsByProductId: {},
+      posProductMappings: [],
+      coverageComplete: false,
+    });
+    expect(result[0].impliedDelivery).toBe(8);
+    expect(result[0].shortfall).toBeNull();
+    expect(result[0].shortfallReason).toBeNull();
+  });
+});
+
+// ── classifyItems — mergedInto on directMappedIds ─────────────────────────────
+
+describe('classifyItems — mergedInto resolves mapping productId for directMappedIds', () => {
+  // Mapping points to p-old; p-old merged into p-new; snapshot item has p-new
+  const item: SnapshotItemInput = {
+    productId: 'p-new', name: 'Survivor Product', openingCount: 5, actualClosing: 3,
+  };
+
+  it('item with p-new is tracked via direct_product mapping pointing to p-old', () => {
+    const result = classifyItems({
+      items: [item],
+      soldByProductId: {},
+      receivedByProductId: {},
+      flagsByProductId: {},
+      posProductMappings: [{ productId: 'p-old', mappingType: 'direct_product' }],
+      coverageComplete: true,
+      mergedInto: { 'p-old': 'p-new' },
+    });
+    expect(result[0].status).toBe('tracked');
+    // shortfall = 5 + 0 - 3 - 0 = 2
+    expect(result[0].shortfall).toBe(2);
+  });
+});
+
+// ── engine fingerprint — invoice line details ─────────────────────────────────
+
+describe('engine — fingerprint includes invoice line details', () => {
+  const BASE_WITH_INVOICE: ReconcileInputs = {
+    tz: TZ,
+    closedWeekdays: CLOSED_MON,
+    countTiming: 'pre_service',
+    openingCountStart: OPENING_START,
+    thisCountStart: THIS_START,
+    snapshotItems: [{ productId: 'p-1', name: 'Item A', openingCount: 10, actualClosing: 8 }],
+    salesReports: [],
+    matchDocsByReportId: {},
+    invoices: [{
+      id: 'inv-fp',
+      invoiceDateTimestamp: new Date('2025-01-09T00:00:00Z'),
+      type: null,
+      lines: [{ productId: 'p-1', qty: 6, caseSize: null, unit: 'bottle' }],
+    }],
+    posProductMappings: [],
+    mergedInto: {},
+  };
+
+  it('changing a line productId changes the fingerprint', () => {
+    const r1 = reconcileSnapshot(BASE_WITH_INVOICE);
+    const changed: ReconcileInputs = {
+      ...BASE_WITH_INVOICE,
+      invoices: [{
+        ...BASE_WITH_INVOICE.invoices[0],
+        lines: [{ productId: 'p-DIFFERENT', qty: 6, caseSize: null, unit: 'bottle' }],
+      }],
+    };
+    const r2 = reconcileSnapshot(changed);
+    expect(r1.inputsFingerprint).not.toBe(r2.inputsFingerprint);
+  });
+
+  it('reordering invoices does not change the fingerprint', () => {
+    const inv2: ReconcileInputs['invoices'][0] = {
+      id: 'inv-fp2',
+      invoiceDateTimestamp: new Date('2025-01-10T00:00:00Z'),
+      type: null,
+      lines: [{ productId: 'p-2', qty: 3 }],
+    };
+    const r1 = reconcileSnapshot({ ...BASE_WITH_INVOICE, invoices: [BASE_WITH_INVOICE.invoices[0], inv2] });
+    const r2 = reconcileSnapshot({ ...BASE_WITH_INVOICE, invoices: [inv2, BASE_WITH_INVOICE.invoices[0]] });
+    expect(r1.inputsFingerprint).toBe(r2.inputsFingerprint);
   });
 });
 

@@ -1,6 +1,7 @@
 export { reconcileSnapshot } from './engine';
 export type { ReconcileInputs, ReconcileResult, ReconcileSummary } from './engine';
-export { windowDates, toTzDate, addDays } from './tradingWindow';
+export { windowDates, deliveryDates, toTzDate, addDays } from './tradingWindow';
+export { resolveId } from './resolve';
 export { selectReports } from './selectReports';
 export type { ReportPeriod, SelectResult } from './selectReports';
 export { aggregateSales } from './aggregateSales';

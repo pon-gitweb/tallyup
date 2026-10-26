@@ -3,6 +3,8 @@
  * No Firebase imports.
  */
 
+import { resolveId } from './resolve';
+
 export type SalesFlag = 'sales_unit_unknown' | 'dollar_line';
 
 export interface MatchEntry {
@@ -58,19 +60,6 @@ export function aggregateSales(
   let excludedRevenue = 0;
   let excludedLines = 0;
 
-  function resolve(id: string): string {
-    const visited = new Set<string>();
-    let cur = id;
-    for (let hop = 0; hop < 10; hop++) {
-      if (visited.has(cur)) return id;
-      visited.add(cur);
-      const next = mergedInto[cur];
-      if (!next) return cur;
-      cur = next;
-    }
-    return id;
-  }
-
   function addFlag(pid: string, flag: SalesFlag) {
     if (!flagsByProductId[pid]) flagsByProductId[pid] = [];
     if (!flagsByProductId[pid].includes(flag)) flagsByProductId[pid].push(flag);
@@ -84,7 +73,7 @@ export function aggregateSales(
         continue;
       }
 
-      const pid = resolve(m.productId);
+      const pid = resolveId(m.productId, mergedInto);
 
       // Dollar-line check: each item sold for ~$1
       if ((m.qtySold ?? 0) > 0 && m.gross != null) {
@@ -115,7 +104,7 @@ export function aggregateSales(
     for (const rd of doc.recipeDeductions ?? []) {
       if (!rd.productId) continue;
       if (rd.stockQty == null || !isFinite(rd.stockQty)) continue;
-      const pid = resolve(rd.productId);
+      const pid = resolveId(rd.productId, mergedInto);
       soldByProductId[pid] = (soldByProductId[pid] ?? 0) + rd.stockQty;
     }
   }

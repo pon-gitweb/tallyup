@@ -4,6 +4,7 @@
  */
 
 import { SalesFlag } from './aggregateSales';
+import { resolveId } from './resolve';
 
 export type ItemStatus =
   | 'tracked'
@@ -50,6 +51,8 @@ export interface ClassifyInputs {
   /** posProductMappings docs — only those with mappingType 'direct_product'. */
   posProductMappings: { productId?: string | null; mappingType?: string | null }[];
   coverageComplete: boolean;
+  /** productId → survivorId; mapping productIds are resolved before building directMappedIds. */
+  mergedInto?: Record<string, string>;
 }
 
 /**
@@ -66,12 +69,12 @@ export interface ClassifyInputs {
  */
 export function classifyItems(inputs: ClassifyInputs): ClassifiedItem[] {
   const { items, soldByProductId, receivedByProductId, flagsByProductId,
-          posProductMappings, coverageComplete } = inputs;
+          posProductMappings, coverageComplete, mergedInto = {} } = inputs;
 
   const directMappedIds = new Set<string>(
     posProductMappings
       .filter(m => m.mappingType === 'direct_product' && m.productId)
-      .map(m => m.productId as string),
+      .map(m => resolveId(m.productId as string, mergedInto)),
   );
 
   return items.map(item => {
@@ -112,13 +115,16 @@ export function classifyItems(inputs: ClassifyInputs): ClassifiedItem[] {
     if (status === 'tracked' || status === 'alarm_sold_not_counted') {
       if (opening != null) {
         const diff = opening + received - closing - sold; // positive = shortfall
-        if (!coverageComplete) {
-          shortfall = null;
-          shortfallReason = 'sales coverage incomplete';
-        } else if (diff > 0) {
-          shortfall = diff;
-          shortfallKey = 'unexplained_by_recorded_sales';
+        if (diff > 0) {
+          if (!coverageComplete) {
+            shortfall = null;
+            shortfallReason = 'sales coverage incomplete';
+          } else {
+            shortfall = diff;
+            shortfallKey = 'unexplained_by_recorded_sales';
+          }
         } else if (diff < 0) {
+          // impliedDelivery is always computed, regardless of coverageComplete
           impliedDelivery = -diff;
         }
       }

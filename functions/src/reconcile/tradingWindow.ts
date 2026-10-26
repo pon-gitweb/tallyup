@@ -51,6 +51,38 @@ export function windowDates(
   return dates;
 }
 
+/**
+ * Returns ALL calendar dates (no closed-weekday removal) in the venue timezone
+ * for the delivery window. Goods may arrive on days the venue is closed for service.
+ *
+ * pre_service: opening count date through day before this count date.
+ *   (The count day itself belongs to the next period.)
+ * post_service: day after opening count date through this count date.
+ */
+export function deliveryDates(
+  openingCountStart: Date,
+  thisCountStart: Date,
+  tz: string,
+  countTiming: 'pre_service' | 'post_service',
+): string[] {
+  const openDate = toTzDate(openingCountStart, tz);
+  const thisDate = toTzDate(thisCountStart, tz);
+
+  const startStr = countTiming === 'pre_service' ? openDate : addDays(openDate, 1);
+  const endStr   = countTiming === 'pre_service' ? addDays(thisDate, -1) : thisDate;
+
+  const dates: string[] = [];
+  let cur = new Date(startStr + 'T00:00:00Z');
+  const end = new Date(endStr + 'T00:00:00Z');
+
+  while (cur <= end) {
+    dates.push(cur.toISOString().slice(0, 10));
+    cur = new Date(cur.getTime() + 86_400_000);
+  }
+
+  return dates;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 export function toTzDate(date: Date, tz: string): string {

@@ -4,6 +4,7 @@
  */
 
 import { toTzDate } from './tradingWindow';
+import { resolveId } from './resolve';
 
 export interface InvoiceLineInput {
   productId?: string | null;
@@ -45,10 +46,11 @@ export interface AggregatedDeliveriesResult {
  */
 export function aggregateDeliveries(
   invoices: InvoiceInput[],
-  windowDates: string[],
+  deliveryDates: string[],
   tz: string,
+  mergedInto: Record<string, string> = {},
 ): AggregatedDeliveriesResult {
-  const windowSet = new Set(windowDates);
+  const windowSet = new Set(deliveryDates);
   const receivedByProductId: Record<string, number> = {};
   let ambiguousLines = 0;
   let unlinkedLines = 0;
@@ -81,8 +83,8 @@ export function aggregateDeliveries(
                 : 0;
       if (qty <= 0) continue;
 
-      receivedByProductId[line.productId] =
-        (receivedByProductId[line.productId] ?? 0) + qty;
+      const pid = resolveId(line.productId, mergedInto);
+      receivedByProductId[pid] = (receivedByProductId[pid] ?? 0) + qty;
     }
   }
 

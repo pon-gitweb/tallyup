@@ -5,7 +5,7 @@
  */
 
 import * as crypto from 'crypto';
-import { windowDates } from './tradingWindow';
+import { windowDates, deliveryDates } from './tradingWindow';
 import { selectReports, ReportPeriod, SelectResult } from './selectReports';
 import { aggregateSales, SalesMatchDoc, AggregatedSalesResult } from './aggregateSales';
 import { aggregateDeliveries, InvoiceInput, AggregatedDeliveriesResult } from './aggregateDeliveries';
@@ -40,6 +40,8 @@ export interface ReconcileSummary {
    * Matched revenue / total revenue across attached reports.
    * numerator = sum of matches[].gross in attached reports' match docs.
    * denominator = sum of salesReport.totalRevenue for attached reports.
+   * Both use the raw 'gross' field from rawLines (GST-exclusive for Bustle,
+   * GST-inclusive assumed for Square). Never mix grossIncl into the denominator.
    * null when denominator is 0 or no attached reports.
    */
   linkedSalesPct: number | null;
@@ -75,8 +77,9 @@ export function reconcileSnapshot(inputs: ReconcileInputs): ReconcileResult {
     .filter((d): d is SalesMatchDoc => !!d);
   const sales = aggregateSales(attachedMatchDocs, mergedInto);
 
-  // 4. Aggregate deliveries
-  const deliveries = aggregateDeliveries(invoices, window, tz);
+  // 4. Aggregate deliveries (all calendar dates, no closed-day filtering)
+  const delDates = deliveryDates(openingCountStart, thisCountStart, tz, countTiming);
+  const deliveries = aggregateDeliveries(invoices, delDates, tz, mergedInto);
 
   // 5. Classify items
   const items = classifyItems({
@@ -86,6 +89,7 @@ export function reconcileSnapshot(inputs: ReconcileInputs): ReconcileResult {
     flagsByProductId: sales.flagsByProductId,
     posProductMappings,
     coverageComplete: reports.coverageComplete,
+    mergedInto,
   });
 
   // 6. Summary
@@ -164,7 +168,20 @@ function computeFingerprint(inputs: ReconcileInputs): string {
       totalRevenue: r.totalRevenue ?? null,
     })),
     matchDocsByReportId: inputs.matchDocsByReportId,
-    invoiceIds: inputs.invoices.map(i => i.id).sort(),
+    invoices: inputs.invoices
+      .map(i => ({
+        id: i.id,
+        dateMs: toDateMs(i.invoiceDateTimestamp),
+        type: i.type ?? null,
+        lines: (i.lines ?? []).map(l => ({
+          productId: l.productId ?? null,
+          qty: l.qty ?? null,
+          quantity: l.quantity ?? null,
+          caseSize: l.caseSize ?? null,
+          unit: l.unit ?? null,
+        })).sort((a, b) => (a.productId ?? '').localeCompare(b.productId ?? '')),
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
     posProductMappings: inputs.posProductMappings
       .map(m => ({ id: m.id ?? '', productId: m.productId ?? null, mappingType: m.mappingType ?? null }))
       .sort((a, b) => a.id.localeCompare(b.id)),
@@ -172,6 +189,12 @@ function computeFingerprint(inputs: ReconcileInputs): string {
   };
   const json = JSON.stringify(stable, sortedReplacer);
   return crypto.createHash('sha256').update(json).digest('hex').slice(0, 16);
+}
+
+function toDateMs(ts: { toDate(): Date } | Date | null | undefined): number | null {
+  if (!ts) return null;
+  const d = typeof (ts as any).toDate === 'function' ? (ts as any).toDate() as Date : ts as Date;
+  return d.getTime();
 }
 
 function sortedReplacer(_key: string, value: any): any {

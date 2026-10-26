@@ -102,9 +102,11 @@ function buildMergedIntoMap(productsSnap) {
 }
 
 // Compute totalRevenue from a salesReport doc's rawLines.
+// Uses l.gross to match the basis of matches[].gross in salesReportMatches
+// (GST-exclusive for Bustle exports, GST-inclusive assumed for Square).
 function reportTotalRevenue(data) {
   const rawLines = data.rawLines || data.report?.lines || [];
-  return rawLines.reduce((s, l) => s + (l.grossIncl || l.gross || 0), 0);
+  return rawLines.reduce((s, l) => s + (l.gross || 0), 0);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
