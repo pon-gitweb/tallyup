@@ -402,6 +402,86 @@
   color: #9ca3af;
 }
 
+/* Filter chips */
+.filterChips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.filterChip {
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+}
+
+.filterChip:hover {
+  background: #f9fafb;
+}
+
+.filterChipActive {
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.warnChip {
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid #fbbf24;
+  background: #fff;
+  color: #92400e;
+}
+
+.warnChip:hover {
+  background: #fef3c7;
+}
+
+.warnChipActive {
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #dc2626;
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+/* Table actions row */
+.tableActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+/* Confirm panel */
+.confirmPanel {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #374151;
+}
+
 /* Bulk selection bar */
 .bulkBar {
   display: flex;
