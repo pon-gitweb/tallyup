@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   collection, doc, getDocs, getDoc, query,
-  serverTimestamp, where, writeBatch, deleteDoc,
+  serverTimestamp, where, writeBatch,
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import {
@@ -39,6 +39,7 @@ type Mapping = {
   servingType?: string | null
   conversionUnit?: string | null
   createdAt?: unknown
+  updatedAt?: unknown
 }
 
 export type NoServingRow = {
@@ -59,6 +60,9 @@ export type AllMappingRow = {
   totalQtySold: number
   warningMergedOrMissing: boolean
   warningNoServing: boolean
+  docCount: number
+  warningDuplicate: boolean
+  allMappingIds: string[]
 }
 
 type TabKey = 'not-linked' | 'no-serving' | 'all-mappings'
@@ -314,7 +318,21 @@ export function allMappingsRows(
   const productById = new Map(products.map(p => [p.id, p]))
   const recipeById  = new Map(recipes.map(r => [r.id, r]))
 
-  return mappings.map(m => {
+  const groups = new Map<string, Mapping[]>()
+  for (const m of mappings) {
+    const key = (m.posItemName || '').toLowerCase()
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(m)
+  }
+
+  const rows: AllMappingRow[] = []
+
+  for (const [, group] of groups) {
+    const m = group.reduce((a, b) => toTimestamp(b.updatedAt) > toTimestamp(a.updatedAt) ? b : a)
+    const docCount = group.length
+    const warningDuplicate = docCount > 1
+    const allMappingIds = group.map(g => g.id)
+
     let targetLabel = '—'
     let warningMergedOrMissing = false
 
@@ -382,14 +400,86 @@ export function allMappingsRows(
       }
     }
 
-    return { mapping: m, targetLabel, servingLabel, ratio: m.conversionRatio ?? null, seenInReports, totalQtySold, warningMergedOrMissing, warningNoServing }
-  })
+    rows.push({ mapping: m, targetLabel, servingLabel, ratio: m.conversionRatio ?? null, seenInReports, totalQtySold, warningMergedOrMissing, warningNoServing, docCount, warningDuplicate, allMappingIds })
+  }
+
+  return rows
 }
 
 export function chunkArray<T>(arr: T[], size: number): T[][] {
   const chunks: T[][] = []
   for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size))
   return chunks
+}
+
+function toTimestamp(val: unknown): number {
+  if (val == null) return 0
+  if (typeof val === 'number') return val
+  if (val instanceof Date) return val.getTime()
+  if (typeof val === 'object' && val !== null) {
+    if ('toMillis' in val) return (val as any).toMillis()
+    if ('seconds' in val) return (val as any).seconds * 1000
+  }
+  return 0
+}
+
+export type WriteOp =
+  | { kind: 'set'; docId: string; payload: Record<string, unknown>; existingCreatedAt: unknown | null; posName: string }
+  | { kind: 'delete'; docId: string }
+
+export function planMappingWrites(
+  entries: Array<{ posName: string; payload: Record<string, unknown> }>,
+  existingMappings: Mapping[],
+): WriteOp[][] {
+  const entryOps: WriteOp[][] = []
+
+  for (const entry of entries) {
+    const key = (entry.posName || '').toLowerCase()
+    const group = existingMappings.filter(m => (m.posItemName || '').toLowerCase() === key)
+    const ops: WriteOp[] = []
+
+    if (group.length === 0) {
+      ops.push({ kind: 'set', docId: mappingDocId(entry.posName, 'csv'), payload: entry.payload, existingCreatedAt: null, posName: entry.posName })
+    } else {
+      const preferred = group.find(m => m.id === mappingDocId(entry.posName, m.posSystem || 'csv'))
+      const canonical = preferred ?? group.reduce((a, b) => toTimestamp(b.updatedAt) > toTimestamp(a.updatedAt) ? b : a)
+      const posSystem = canonical.posSystem || 'csv'
+      const existingCreatedAt = group.reduce<unknown>((earliest, m) => {
+        if (earliest === null) return m.createdAt ?? null
+        return toTimestamp(m.createdAt) < toTimestamp(earliest) ? m.createdAt ?? null : earliest
+      }, null)
+      const finalPayload = { ...entry.payload, posSystem }
+      ops.push({ kind: 'set', docId: canonical.id, payload: finalPayload, existingCreatedAt, posName: entry.posName })
+      for (const m of group) {
+        if (m.id !== canonical.id) ops.push({ kind: 'delete', docId: m.id })
+      }
+    }
+
+    entryOps.push(ops)
+  }
+
+  const batches: WriteOp[][] = []
+  let currentBatch: WriteOp[] = []
+  for (const ops of entryOps) {
+    if (currentBatch.length > 0 && currentBatch.length + ops.length > 400) {
+      batches.push(currentBatch)
+      currentBatch = []
+    }
+    currentBatch.push(...ops)
+  }
+  if (currentBatch.length > 0) batches.push(currentBatch)
+
+  return batches
+}
+
+export function planUnlinkWrites(
+  posName: string,
+  existingMappings: Mapping[],
+): WriteOp[][] {
+  const key = (posName || '').toLowerCase()
+  const group = existingMappings.filter(m => (m.posItemName || '').toLowerCase() === key)
+  if (group.length === 0) return []
+  return [group.map(m => ({ kind: 'delete' as const, docId: m.id }))]
 }
 
 export async function rematchReports(
@@ -1129,7 +1219,7 @@ function NoServingTab({
 
 // ── Tab C: All mappings ───────────────────────────────────────────────────────
 
-type AllMappingsFilter = 'all' | 'product' | 'recipe' | 'ignored' | 'merged-missing' | 'no-serving'
+type AllMappingsFilter = 'all' | 'product' | 'recipe' | 'ignored' | 'merged-missing' | 'no-serving' | 'duplicate'
 
 function AllMappingsTab({
   rows,
@@ -1148,6 +1238,7 @@ function AllMappingsTab({
     else if (filter === 'ignored')  r = r.filter(row => row.mapping.mappingType === 'skipped')
     else if (filter === 'merged-missing') r = r.filter(row => row.warningMergedOrMissing)
     else if (filter === 'no-serving')    r = r.filter(row => row.warningNoServing)
+    else if (filter === 'duplicate')     r = r.filter(row => row.warningDuplicate)
     if (search.trim()) {
       const q = search.toLowerCase()
       r = r.filter(row =>
@@ -1158,6 +1249,7 @@ function AllMappingsTab({
     return r
   }, [rows, filter, search])
 
+  const duplicateCount = rows.filter(r => r.warningDuplicate).length
   const chips: Array<{ key: AllMappingsFilter; label: string; warn?: boolean }> = [
     { key: 'all',           label: `All (${rows.length})` },
     { key: 'product',       label: `Product (${rows.filter(r => r.mapping.mappingType === 'direct_product').length})` },
@@ -1165,6 +1257,7 @@ function AllMappingsTab({
     { key: 'ignored',       label: `Ignored (${rows.filter(r => r.mapping.mappingType === 'skipped').length})` },
     { key: 'merged-missing', label: `Points to merged/missing (${rows.filter(r => r.warningMergedOrMissing).length})`, warn: true },
     { key: 'no-serving',    label: `Product, no serving size (${rows.filter(r => r.warningNoServing).length})`, warn: true },
+    ...(duplicateCount > 0 ? [{ key: 'duplicate' as const, label: `Duplicate mappings (${duplicateCount})`, warn: true }] : []),
   ]
 
   if (rows.length === 0) return <p className={styles.emptyState}>No mappings found.</p>
@@ -1211,7 +1304,14 @@ function AllMappingsTab({
           <tbody>
             {filtered.map(row => (
               <tr key={row.mapping.id} className={styles.clickableRow} onClick={() => onRowClick(row)}>
-                <td style={{ fontWeight: 500 }}>{row.mapping.posItemName}</td>
+                <td style={{ fontWeight: 500 }}>
+                  {row.mapping.posItemName}
+                  {row.docCount > 1 && (
+                    <span className={`${styles.badge} ${styles.badgeAmber}`} style={{ marginLeft: 6 }}>
+                      {row.docCount} records
+                    </span>
+                  )}
+                </td>
                 <td>
                   <span className={`${styles.badge} ${
                     row.mapping.mappingType === 'direct_product' ? styles.badgeBlue
@@ -1363,32 +1463,36 @@ export default function PosMappingPage({
     setRematchState(s => ({ ...s, errors, coverageAfter }))
   }
 
-  type SaveEntry = { posName: string; docId: string; payload: Record<string, unknown>; existingCreatedAt?: unknown }
+  type SaveInput = { posName: string; payload: Record<string, unknown> }
 
-  async function saveMappings(entries: SaveEntry[]): Promise<{ savedNames: string[]; failed: boolean }> {
+  async function saveMappings(entries: SaveInput[]): Promise<{ savedNames: string[]; failed: boolean }> {
     if (!canManage) return { savedNames: [], failed: false }
     setSaving(true)
     setSaveError(null)
     const savedNames: string[] = []
     try {
-      const chunks = chunkArray(entries, 400)
-      for (const chunk of chunks) {
+      const batches = planMappingWrites(entries, mappings)
+      for (const ops of batches) {
         try {
           const batch = writeBatch(db)
-          for (const entry of chunk) {
-            const docRef = doc(db, 'venues', venueId, 'posProductMappings', entry.docId)
-            batch.set(docRef, {
-              ...entry.payload,
-              createdAt: entry.existingCreatedAt ?? serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            })
+          for (const op of ops) {
+            const docRef = doc(db, 'venues', venueId, 'posProductMappings', op.docId)
+            if (op.kind === 'set') {
+              batch.set(docRef, {
+                ...op.payload,
+                createdAt: op.existingCreatedAt ?? serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              })
+            } else {
+              batch.delete(docRef)
+            }
           }
           await batch.commit()
-          savedNames.push(...chunk.map(e => e.posName))
+          const batchSaved = ops.filter((op): op is Extract<WriteOp, { kind: 'set' }> => op.kind === 'set').map(op => op.posName)
+          savedNames.push(...batchSaved)
         } catch (e: any) {
           console.error('batch failed', e)
-          const total = entries.length
-          setSaveError(`Saved ${savedNames.length} of ${total}. Failed at: ${entries[savedNames.length]?.posName ?? '?'}`)
+          setSaveError(`Saved ${savedNames.length} of ${entries.length}. Failed at: ${entries[savedNames.length]?.posName ?? '?'}`)
           setSaving(false)
           return { savedNames, failed: true }
         }
@@ -1414,13 +1518,19 @@ export default function PosMappingPage({
         }
       } catch { /* best-effort */ }
 
-      // Update local mappings state
+      // Update local mappings state (apply sets and deletes)
       setMappings(prev => {
         let updated = [...prev]
-        for (const entry of entries) {
-          const filtered = updated.filter(m => m.id !== entry.docId)
-          const newMapping: Mapping = { id: entry.docId, posItemName: entry.posName, posSystem: 'csv', ...(entry.payload as any) }
-          updated = [...filtered, newMapping]
+        for (const ops of batches) {
+          for (const op of ops) {
+            if (op.kind === 'set') {
+              updated = updated.filter(m => m.id !== op.docId)
+              const newMapping: Mapping = { id: op.docId, posItemName: op.posName, posSystem: 'csv', ...(op.payload as any) }
+              updated.push(newMapping)
+            } else {
+              updated = updated.filter(m => m.id !== op.docId)
+            }
+          }
         }
         return updated
       })
@@ -1441,24 +1551,32 @@ export default function PosMappingPage({
     }
   }
 
-  async function handlePanelSave(payload: Record<string, unknown>, posName: string, existingCreatedAt?: unknown) {
+  async function handlePanelSave(payload: Record<string, unknown>, posName: string, _existingCreatedAt?: unknown) {
     if (!canManage) return
-    const docId = mappingDocId(posName, 'csv')
-    const { failed } = await saveMappings([{ posName, docId, payload, existingCreatedAt }])
+    const { failed } = await saveMappings([{ posName, payload }])
     if (!failed) setPanelRow(null)
   }
 
   async function handleUnlink(mapping: Mapping) {
     if (!canManage) return
     setSaving(true)
+    setSaveError(null)
     try {
-      await deleteDoc(doc(db, 'venues', venueId, 'posProductMappings', mapping.id))
-      setMappings(prev => prev.filter(m => m.id !== mapping.id))
+      const unlinkBatches = planUnlinkWrites(mapping.posItemName, mappings)
+      for (const ops of unlinkBatches) {
+        const batch = writeBatch(db)
+        for (const op of ops) {
+          batch.delete(doc(db, 'venues', venueId, 'posProductMappings', op.docId))
+        }
+        await batch.commit()
+      }
+      const key = (mapping.posItemName || '').toLowerCase()
+      setMappings(prev => prev.filter(m => (m.posItemName || '').toLowerCase() !== key))
       setPanelRow(null)
       const affectedIds = unionReportIds([mapping.posItemName], activeReports)
       if (affectedIds.length > 0) await runRematch(affectedIds, matchesByReport)
     } catch (e: any) {
-      console.error('unlink failed', e)
+      setSaveError(`Unlink failed: ${e?.message ?? 'unknown error'}`)
     } finally {
       setSaving(false)
     }
@@ -1466,15 +1584,18 @@ export default function PosMappingPage({
 
   async function handleBulkIgnore(posNames: string[]) {
     const payloads = buildBulkIgnorePayloads(posNames)
-    const { failed } = await saveMappings(payloads)
+    const entries = payloads.map(({ posName, payload }) => ({ posName, payload }))
+    const { failed } = await saveMappings(entries)
     if (!failed) setNotLinkedSelected(new Set())
   }
 
   async function handleBulkServing(servingPreset: string, customMl: string) {
     if (!bulkServingTarget) return
     const results = buildBulkServingPayloads(bulkServingTarget, products, servingPreset, customMl)
-    const toSave = results.filter((r): r is { posName: string; docId: string; payload: Record<string, unknown> } => !('skip' in r))
-    const { failed } = await saveMappings(toSave)
+    const entries = results
+      .filter((r): r is { posName: string; docId: string; payload: Record<string, unknown> } => !('skip' in r))
+      .map(({ posName, payload }) => ({ posName, payload }))
+    const { failed } = await saveMappings(entries)
     if (!failed) { setNoServingSelected(new Set()); setBulkServingTarget(null) }
   }
 

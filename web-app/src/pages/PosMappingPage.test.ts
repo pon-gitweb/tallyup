@@ -12,8 +12,11 @@ import {
   unionReportIds,
   allMappingsRows,
   chunkArray,
+  planMappingWrites,
+  planUnlinkWrites,
   type NoServingRow,
   type AllMappingRow,
+  type WriteOp,
 } from './PosMappingPage'
 import type { UnmatchedRow, ActiveReport, MatchData } from '../utils/weeklyLedger'
 import { mappingDocId } from '../utils/mappingId'
@@ -602,5 +605,176 @@ describe('chunkArray', () => {
     expect(chunks).toHaveLength(2)
     expect(chunks[0]).toHaveLength(400)
     expect(chunks[1]).toHaveLength(1)
+  })
+})
+
+// ── planMappingWrites ─────────────────────────────────────────────────────────
+
+type MinMapping = { id: string; posItemName: string; posSystem: string; mappingType: string; createdAt?: unknown; updatedAt?: unknown }
+
+describe('planMappingWrites', () => {
+  it('brand-new: uses mappingDocId(name, csv) and no deletes', () => {
+    const posName = 'New Item'
+    const payload = { posItemName: posName, posSystem: 'csv', mappingType: 'skipped' }
+    const batches = planMappingWrites([{ posName, payload }], [])
+    expect(batches).toHaveLength(1)
+    expect(batches[0]).toHaveLength(1)
+    expect(batches[0][0]).toMatchObject({ kind: 'set', docId: mappingDocId(posName, 'csv'), existingCreatedAt: null })
+  })
+
+  it('legacy edit in place: existing doc matches mappingDocId → single set, no deletes', () => {
+    const posName = 'House Red'
+    const docId = mappingDocId(posName, 'csv')
+    const existing: MinMapping[] = [{ id: docId, posItemName: posName, posSystem: 'csv', mappingType: 'direct_product' }]
+    const payload = { posItemName: posName, posSystem: 'csv', mappingType: 'direct_product', productId: 'p1' }
+    const batches = planMappingWrites([{ posName, payload }], existing as any)
+    expect(batches).toHaveLength(1)
+    expect(batches[0]).toHaveLength(1)
+    expect(batches[0][0]).toMatchObject({ kind: 'set', docId })
+  })
+
+  it('two duplicates collapse: preferred id is canonical, other deleted', () => {
+    const posName = 'Chardonnay'
+    const canonicalId = mappingDocId(posName, 'csv')
+    const legacyId = 'legacy_old_abc'
+    const existing: MinMapping[] = [
+      { id: legacyId,    posItemName: posName, posSystem: 'csv', mappingType: 'direct_product', updatedAt: { seconds: 100, nanoseconds: 0 } },
+      { id: canonicalId, posItemName: posName, posSystem: 'csv', mappingType: 'direct_product', updatedAt: { seconds: 200, nanoseconds: 0 } },
+    ]
+    const payload = { posItemName: posName, posSystem: 'csv', mappingType: 'direct_product', productId: 'p1' }
+    const batches = planMappingWrites([{ posName, payload }], existing as any)
+    expect(batches).toHaveLength(1)
+    expect(batches[0]).toHaveLength(2)
+    const setOp = batches[0].find(op => op.kind === 'set')!
+    const delOp = batches[0].find(op => op.kind === 'delete')!
+    expect(setOp).toMatchObject({ kind: 'set', docId: canonicalId })
+    expect(delOp).toMatchObject({ kind: 'delete', docId: legacyId })
+  })
+
+  it('no preferred id: most recently updated doc is canonical', () => {
+    const posName = 'Pinot Noir'
+    const existing: MinMapping[] = [
+      { id: 'old_id', posItemName: posName, posSystem: 'csv', mappingType: 'direct_product', updatedAt: { seconds: 100, nanoseconds: 0 } },
+      { id: 'new_id', posItemName: posName, posSystem: 'csv', mappingType: 'direct_product', updatedAt: { seconds: 200, nanoseconds: 0 } },
+    ]
+    const payload = { posItemName: posName, posSystem: 'csv', mappingType: 'direct_product' }
+    const batches = planMappingWrites([{ posName, payload }], existing as any)
+    const setOp = batches[0].find(op => op.kind === 'set')!
+    const delOp = batches[0].find(op => op.kind === 'delete')!
+    expect((setOp as any).docId).toBe('new_id')
+    expect((delOp as any).docId).toBe('old_id')
+  })
+
+  it('uses earliest createdAt from group', () => {
+    const posName = 'House Red'
+    const existing: MinMapping[] = [
+      { id: 'id1', posItemName: posName, posSystem: 'csv', mappingType: 'skipped', createdAt: { seconds: 200, nanoseconds: 0 } },
+      { id: 'id2', posItemName: posName, posSystem: 'csv', mappingType: 'skipped', createdAt: { seconds: 100, nanoseconds: 0 } },
+    ]
+    const payload = { posItemName: posName, posSystem: 'csv', mappingType: 'skipped' }
+    const batches = planMappingWrites([{ posName, payload }], existing as any)
+    const setOp = batches[0].find(op => op.kind === 'set') as Extract<WriteOp, { kind: 'set' }>
+    expect(setOp.existingCreatedAt).toEqual({ seconds: 100, nanoseconds: 0 })
+  })
+
+  it('batch chunking: deletes count toward 400 limit', () => {
+    const existing: MinMapping[] = []
+    const entries: Array<{ posName: string; payload: Record<string, unknown> }> = []
+    for (let i = 0; i < 201; i++) {
+      const posName = `Item ${i}`
+      const canonicalId = mappingDocId(posName, 'csv')
+      const legacyId = `legacy_${i}`
+      existing.push(
+        { id: canonicalId, posItemName: posName, posSystem: 'csv', mappingType: 'skipped' },
+        { id: legacyId,    posItemName: posName, posSystem: 'csv', mappingType: 'skipped' },
+      )
+      entries.push({ posName, payload: { posItemName: posName, posSystem: 'csv', mappingType: 'skipped' } })
+    }
+    const batches = planMappingWrites(entries, existing as any)
+    expect(batches).toHaveLength(2)
+    expect(batches[0].length).toBe(400) // 200 groups × 2 ops each
+    expect(batches[1].length).toBe(2)   // 1 group × 2 ops
+  })
+
+  it('keeps existing posSystem in canonical doc', () => {
+    const posName = 'Square Item'
+    const existing: MinMapping[] = [
+      { id: 'sid1', posItemName: posName, posSystem: 'square', mappingType: 'direct_product' },
+    ]
+    const payload = { posItemName: posName, posSystem: 'csv', mappingType: 'direct_product', productId: 'p1' }
+    const batches = planMappingWrites([{ posName, payload }], existing as any)
+    const setOp = batches[0].find(op => op.kind === 'set') as Extract<WriteOp, { kind: 'set' }>
+    expect((setOp.payload as any).posSystem).toBe('square')
+  })
+})
+
+// ── planUnlinkWrites ──────────────────────────────────────────────────────────
+
+describe('planUnlinkWrites', () => {
+  it('returns one batch deleting all docs in group', () => {
+    const posName = 'House Red'
+    const existing: MinMapping[] = [
+      { id: 'id1', posItemName: posName,        posSystem: 'csv', mappingType: 'direct_product' },
+      { id: 'id2', posItemName: 'House red',    posSystem: 'csv', mappingType: 'direct_product' },
+      { id: 'id3', posItemName: 'HOUSE RED',    posSystem: 'csv', mappingType: 'direct_product' },
+    ]
+    const batches = planUnlinkWrites(posName, existing as any)
+    expect(batches).toHaveLength(1)
+    expect(batches[0]).toHaveLength(3)
+    expect(batches[0].every(op => op.kind === 'delete')).toBe(true)
+    expect(batches[0].map(op => op.docId).sort()).toEqual(['id1', 'id2', 'id3'].sort())
+  })
+
+  it('returns empty array when no group found', () => {
+    const batches = planUnlinkWrites('Unknown Item', [])
+    expect(batches).toHaveLength(0)
+  })
+
+  it('deletes only docs matching the key, not others', () => {
+    const existing: MinMapping[] = [
+      { id: 'a1', posItemName: 'House Red',  posSystem: 'csv', mappingType: 'direct_product' },
+      { id: 'b1', posItemName: 'House White', posSystem: 'csv', mappingType: 'direct_product' },
+    ]
+    const batches = planUnlinkWrites('House Red', existing as any)
+    expect(batches[0]).toHaveLength(1)
+    expect(batches[0][0]).toMatchObject({ kind: 'delete', docId: 'a1' })
+  })
+})
+
+// ── allMappingsRows duplicate grouping ────────────────────────────────────────
+
+describe('allMappingsRows duplicate grouping', () => {
+  const products = [{ id: 'p1', name: 'Red Wine', size: '750', unit: 'ml', mergedInto: null }]
+  const recipes: { id: string; name: string }[] = []
+
+  it('groups duplicate docs into one row with docCount and warningDuplicate', () => {
+    const mappings = [
+      { id: 'id1', posItemName: 'House Red', posSystem: 'csv', mappingType: 'direct_product', productId: 'p1', updatedAt: { seconds: 100, nanoseconds: 0 } },
+      { id: 'id2', posItemName: 'house red', posSystem: 'csv', mappingType: 'direct_product', productId: 'p1', updatedAt: { seconds: 200, nanoseconds: 0 } },
+    ]
+    const rows = allMappingsRows(mappings as any, products as any, recipes, [], {})
+    expect(rows).toHaveLength(1)
+    expect(rows[0].docCount).toBe(2)
+    expect(rows[0].warningDuplicate).toBe(true)
+    expect(rows[0].allMappingIds).toHaveLength(2)
+    expect(rows[0].allMappingIds.sort()).toEqual(['id1', 'id2'].sort())
+  })
+
+  it('single doc: docCount=1, warningDuplicate=false', () => {
+    const mappings = [{ id: 'x1', posItemName: 'Pinot', posSystem: 'csv', mappingType: 'skipped' }]
+    const rows = allMappingsRows(mappings as any, products as any, recipes, [], {})
+    expect(rows[0].docCount).toBe(1)
+    expect(rows[0].warningDuplicate).toBe(false)
+    expect(rows[0].allMappingIds).toEqual(['x1'])
+  })
+
+  it('uses most-recently-updated doc as representative for the row', () => {
+    const mappings = [
+      { id: 'old', posItemName: 'House Red', posSystem: 'csv', mappingType: 'skipped',          updatedAt: { seconds: 100, nanoseconds: 0 } },
+      { id: 'new', posItemName: 'House Red', posSystem: 'csv', mappingType: 'direct_product', productId: 'p1', updatedAt: { seconds: 200, nanoseconds: 0 } },
+    ]
+    const rows = allMappingsRows(mappings as any, products as any, recipes, [], {})
+    expect(rows[0].mapping.id).toBe('new')
+    expect(rows[0].targetLabel).toBe('Red Wine')
   })
 })
