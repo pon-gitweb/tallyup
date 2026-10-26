@@ -16,6 +16,12 @@ import { buildProductIndex, isBlankSalesLine } from './salesMatching';
 import { MappingDoc } from './mappingConversion';
 import { classifySalesLines } from './classifySalesLines';
 import { isReportActive } from './isReportActive';
+import {
+  MAPPING_FIELDS,
+  MappingVersion, VersionMappingFields, MappingDocSnapshot,
+  reportDates, applyVersionsToMappings, planChangeProduct, planUndoChange,
+  mappingDocId as mappingDocIdFn,
+} from './mappingVersions';
 import { voidSalesReportLogic } from './voidSalesReportLogic';
 import { SUPPLIER_REGISTRATION_OPEN } from './supplierRegistrationGate';
 import {
@@ -108,8 +114,8 @@ function checkRateLimit(ip: string, limitPerHour: number): boolean {
 // ── Shared sales matching helper ──────────────────────────────────────────────
 // Matches sales report lines against venue products, writes salesReportMatches
 // and salesReportUnknowns. Called from Square webhook, pull-sales, CSV import,
-// and PDF import so all paths produce the same intelligence.
-async function matchAndStoreSalesLines(
+// PDF import, and the mapping-sync trigger so all paths produce the same output.
+export async function matchAndStoreSalesLines(
   db: admin.firestore.Firestore,
   venueId: string,
   reportId: string,
@@ -142,12 +148,64 @@ async function matchAndStoreSalesLines(
       }
     });
 
-    // Collect recipeIds referenced by lines in this batch so we can pre-load them
+    // ── Version-aware mapping overrides ──────────────────────────────────────
+    // Load versions for this venue and the report's date range, then override
+    // fullMappings/confirmedMappings for keys that have versions.
+    const versionsSnap = await db.collection(`venues/${venueId}/posMappingVersions`).get();
+    const versionsByKey: Record<string, MappingVersion[]> = {};
+    versionsSnap.forEach(d => {
+      const v = { id: d.id, ...(d.data() as any) } as MappingVersion;
+      const k = v.mappingKey || (v.posItemName || '').toLowerCase();
+      if (!versionsByKey[k]) versionsByKey[k] = [];
+      versionsByKey[k].push(v);
+    });
+    for (const k of Object.keys(versionsByKey)) {
+      versionsByKey[k].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+    }
+
+    let reportDateArr: string[] = [];
+    if (Object.keys(versionsByKey).length > 0) {
+      // Load periodStart/periodEnd from the salesReport doc (A2 confirmed: reliable)
+      const reportSnap = await db.doc(`venues/${venueId}/salesReports/${reportId}`).get();
+      const venueSnap = await db.doc(`venues/${venueId}`).get();
+      const tz: string = (venueSnap.data() as any)?.timezone || 'Pacific/Auckland';
+
+      if (reportSnap.exists) {
+        const rd = reportSnap.data() as any;
+        const tsStart: Date | null = rd?.periodStart?.toDate?.() ?? null;
+        const tsEnd:   Date | null = rd?.periodEnd?.toDate?.()   ?? null;
+        if (tsStart && tsEnd) {
+          reportDateArr = reportDates(tsStart, tsEnd, tz);
+        } else if (period?.start && period?.end) {
+          reportDateArr = reportDates(new Date(period.start), new Date(period.end), tz);
+        }
+      } else if (period?.start && period?.end) {
+        const rd = await db.doc(`venues/${venueId}`).get();
+        const tz2: string = (rd.data() as any)?.timezone || 'Pacific/Auckland';
+        reportDateArr = reportDates(new Date(period.start), new Date(period.end), tz2);
+      }
+    }
+
+    // Load per-report overrides (straddle resolution choices)
+    const overrideByKey: Record<string, string> = {};
+    if (Object.keys(versionsByKey).length > 0) {
+      const overridesSnap = await db.collection(`venues/${venueId}/posMappingOverrides`)
+        .where('reportId', '==', reportId).get();
+      overridesSnap.forEach(d => {
+        const od = d.data() as any;
+        if (od.mappingKey && od.versionId) overrideByKey[od.mappingKey] = od.versionId;
+      });
+    }
+
+    const { versionedFullMappings, versionedConfirmedMappings, versionInfoPerKey } =
+      applyVersionsToMappings(fullMappings, confirmedMappings, versionsByKey, reportDateArr, overrideByKey);
+
+    // Collect recipeIds referenced by lines — use version-aware mappings
     const neededRecipeIds = new Set<string>();
     for (const ln of lines) {
       if (isBlankSalesLine(ln)) continue;
       const key = (ln.name || '').toLowerCase();
-      const mapping = fullMappings[key];
+      const mapping = versionedFullMappings[key];
       if (mapping?.recipeId) neededRecipeIds.add(mapping.recipeId);
     }
 
@@ -169,8 +227,24 @@ async function matchAndStoreSalesLines(
     }));
 
     const { matches, recipeDeductions, ignored, unknowns, counts } = classifySalesLines(
-      lines, productIndex, confirmedMappings, fullMappings, recipesById, productById,
+      lines, productIndex, versionedConfirmedMappings, versionedFullMappings, recipesById, productById,
     );
+
+    // Annotate matches with version info
+    for (const match of (matches as any[])) {
+      const key = (match.name || '').toLowerCase();
+      const vi = versionInfoPerKey[key];
+      if (vi) {
+        match.mappingVersionId = vi.versionId;
+        if (vi.straddle) {
+          match.mappingStraddle = {
+            versionIds: vi.straddle.versionIds,
+            chosenVersionId: vi.versionId,
+            defaulted: !vi.straddle.overridden,
+          };
+        }
+      }
+    }
 
     const matchRef = db.doc(`venues/${venueId}/salesReportMatches/${reportId}`);
     await db.runTransaction(async (tx) => {
@@ -7030,6 +7104,316 @@ ${pdfText.slice(0, 8000)}`,
   } catch (e: any) {
     console.error("[process-sales-pdf]", e?.message);
     res.status(500).json({ ok: false, error: e?.message || "Sales PDF processing failed" });
+  }
+});
+
+// ── POST /pos-mappings/change-product ────────────────────────────────────────
+// Create a new mapping version: records that from effectiveFrom the POS key maps
+// to a different product. Creates v0 (snapshot of current state) if first version.
+// Requires manager or owner role.
+app.post("/pos-mappings/change-product", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, posItemName, effectiveFrom, newFields } = req.body || {};
+    if (!venueId || !posItemName || !effectiveFrom || !newFields) {
+      res.status(400).json({ ok: false, error: "Missing required fields" }); return;
+    }
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+    const memberSnap = await db.doc(`venues/${venueId}/members/${uid}`).get();
+    const role = memberSnap.data()?.role;
+    if (role !== 'owner' && role !== 'manager') {
+      res.status(403).json({ ok: false, error: "Manager or owner role required" }); return;
+    }
+
+    const mappingKey = (posItemName || '').toLowerCase();
+
+    // Load existing mapping docs for this key
+    const mappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`)
+      .where('posItemName', '==', posItemName).get();
+    // Also check lowercase match (key-based)
+    const existingDocs: MappingDocSnapshot[] = [];
+    mappingsSnap.forEach(d => {
+      const data = d.data() as any;
+      if ((data.posItemName || '').toLowerCase() === mappingKey) {
+        existingDocs.push({ id: d.id, ...data });
+      }
+    });
+
+    // Load existing versions for this key (sorted asc)
+    const versionsSnap = await db.collection(`venues/${venueId}/posMappingVersions`)
+      .where('mappingKey', '==', mappingKey).orderBy('effectiveFrom', 'asc').get();
+    const existingVersions: MappingVersion[] = versionsSnap.docs.map(d =>
+      ({ id: d.id, ...(d.data() as any) }) as MappingVersion
+    );
+
+    // Today in UTC (venue tz is not critical here — effectiveFrom is user-chosen)
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    const tz: string = (venueSnap.data() as any)?.timezone || 'Pacific/Auckland';
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+
+    const v0Id  = db.collection(`venues/${venueId}/posMappingVersions`).doc().id;
+    const newId = db.collection(`venues/${venueId}/posMappingVersions`).doc().id;
+
+    const plan = planChangeProduct({
+      venueId, posItemName, mappingKey, effectiveFrom,
+      newFields: newFields as VersionMappingFields,
+      existingMappingDocs: existingDocs,
+      existingVersions,
+      newVersionId: newId,
+      v0Id,
+      uid,
+      todayStr,
+    });
+
+    if (!plan.ok) { res.status(400).json({ ok: false, error: (plan as any).error }); return; }
+
+    // Execute all writes in a transaction
+    await db.runTransaction(async (tx) => {
+      for (const op of plan.writes) {
+        const ref = db.doc(op.path);
+        if (op.kind === 'set') {
+          const data: Record<string, unknown> = { ...op.data };
+          if (data.createdAt === '__serverTimestamp__') {
+            data.createdAt = admin.firestore.FieldValue.serverTimestamp();
+          }
+          if (!('createdAt' in data) || data.createdAt == null) {
+            data.createdAt = admin.firestore.FieldValue.serverTimestamp();
+          }
+          data.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+          tx.set(ref, data);
+        } else {
+          tx.delete(ref);
+        }
+      }
+    });
+
+    // Re-match active reports that overlap effectiveFrom
+    const reportsSnap = await db.collection(`venues/${venueId}/salesReports`).get();
+    const reMatchIds: string[] = [];
+    reportsSnap.forEach(d => {
+      const rdata = d.data() as any;
+      if (!isReportActive(rdata)) return;
+      // Include if report's periodEnd >= effectiveFrom (i.e. might overlap)
+      const periodEndTs: FirebaseFirestore.Timestamp | null = rdata?.periodEnd ?? null;
+      if (!periodEndTs) { reMatchIds.push(d.id); return; }
+      const periodEndStr = periodEndTs.toDate().toLocaleDateString('en-CA', { timeZone: tz });
+      if (periodEndStr >= effectiveFrom) reMatchIds.push(d.id);
+    });
+
+    await Promise.all(reMatchIds.map(async (reportId) => {
+      try {
+        const rSnap = await db.doc(`venues/${venueId}/salesReports/${reportId}`).get();
+        if (!rSnap.exists) return;
+        const rdata = rSnap.data() as any;
+        const rawLines: any[] = rdata?.report?.lines ?? rdata?.lines ?? [];
+        const per = rdata?.report?.period || rdata?.period || null;
+        await matchAndStoreSalesLines(db, venueId, reportId, 'change-product',
+          rawLines.map((l: any) => ({
+            name: l.name, qtySold: Number(l.qty ?? l.qtySold ?? 0),
+            gross: l.revenue ?? l.gross ?? null,
+            barcode: l.barcode ?? null, sku: l.sku ?? null,
+          })), per);
+      } catch (e: any) {
+        console.error(`[change-product] re-match error reportId=${reportId}`, e?.message);
+      }
+    }));
+
+    console.log(`[pos-mappings/change-product] venueId=${venueId} key=${mappingKey} effectiveFrom=${effectiveFrom} v0Created=${plan.v0Created} reMatched=${reMatchIds.length}`);
+    res.json({ ok: true, v0Created: plan.v0Created, reMatched: reMatchIds.length });
+  } catch (e: any) {
+    console.error("[pos-mappings/change-product] ERROR", e?.message);
+    res.status(500).json({ ok: false, error: e?.message || "Change-product failed" });
+  }
+});
+
+// ── POST /pos-mappings/undo-change ────────────────────────────────────────────
+// Delete the latest version (never v0). If only v0 remains, delete it too
+// (back to unversioned). Delete overrides for this key. Re-match active reports.
+// Requires manager or owner role.
+app.post("/pos-mappings/undo-change", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, posItemName } = req.body || {};
+    if (!venueId || !posItemName) {
+      res.status(400).json({ ok: false, error: "Missing venueId or posItemName" }); return;
+    }
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+    const memberSnap = await db.doc(`venues/${venueId}/members/${uid}`).get();
+    const role = memberSnap.data()?.role;
+    if (role !== 'owner' && role !== 'manager') {
+      res.status(403).json({ ok: false, error: "Manager or owner role required" }); return;
+    }
+
+    const mappingKey = (posItemName || '').toLowerCase();
+
+    const mappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`)
+      .where('posItemName', '==', posItemName).get();
+    const existingDocs: MappingDocSnapshot[] = [];
+    mappingsSnap.forEach(d => {
+      const data = d.data() as any;
+      if ((data.posItemName || '').toLowerCase() === mappingKey) {
+        existingDocs.push({ id: d.id, ...data });
+      }
+    });
+
+    const versionsSnap = await db.collection(`venues/${venueId}/posMappingVersions`)
+      .where('mappingKey', '==', mappingKey).orderBy('effectiveFrom', 'asc').get();
+    const existingVersions: MappingVersion[] = versionsSnap.docs.map(d =>
+      ({ id: d.id, ...(d.data() as any) }) as MappingVersion
+    );
+
+    const plan = planUndoChange({ venueId, posItemName, existingMappingDocs: existingDocs, existingVersions });
+    if (!plan.ok) { res.status(400).json({ ok: false, error: (plan as any).error }); return; }
+
+    // Load overrides for this key (to delete them)
+    const overridesSnap = await db.collection(`venues/${venueId}/posMappingOverrides`)
+      .where('mappingKey', '==', mappingKey).get();
+
+    await db.runTransaction(async (tx) => {
+      for (const op of plan.writes) {
+        const ref = db.doc(op.path);
+        if (op.kind === 'set') {
+          const data: Record<string, unknown> = { ...op.data };
+          if (data.createdAt === '__serverTimestamp__') {
+            data.createdAt = admin.firestore.FieldValue.serverTimestamp();
+          }
+          if (!('createdAt' in data) || data.createdAt == null) {
+            data.createdAt = admin.firestore.FieldValue.serverTimestamp();
+          }
+          data.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+          tx.set(ref, data);
+        } else {
+          tx.delete(ref);
+        }
+      }
+      overridesSnap.forEach(d => tx.delete(d.ref));
+    });
+
+    // Re-match all active reports
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    const tz: string = (venueSnap.data() as any)?.timezone || 'Pacific/Auckland';
+    const reportsSnap = await db.collection(`venues/${venueId}/salesReports`).get();
+    const reMatchIds: string[] = [];
+    reportsSnap.forEach(d => { if (isReportActive(d.data() as any)) reMatchIds.push(d.id); });
+
+    await Promise.all(reMatchIds.map(async (reportId) => {
+      try {
+        const rSnap = await db.doc(`venues/${venueId}/salesReports/${reportId}`).get();
+        if (!rSnap.exists) return;
+        const rdata = rSnap.data() as any;
+        const rawLines: any[] = rdata?.report?.lines ?? rdata?.lines ?? [];
+        const per = rdata?.report?.period || rdata?.period || null;
+        await matchAndStoreSalesLines(db, venueId, reportId, 'undo-change',
+          rawLines.map((l: any) => ({
+            name: l.name, qtySold: Number(l.qty ?? l.qtySold ?? 0),
+            gross: l.revenue ?? l.gross ?? null,
+            barcode: l.barcode ?? null, sku: l.sku ?? null,
+          })), per);
+      } catch (e: any) {
+        console.error(`[undo-change] re-match error reportId=${reportId}`, e?.message);
+      }
+    }));
+
+    console.log(`[pos-mappings/undo-change] venueId=${venueId} key=${mappingKey} restoredToUnversioned=${plan.restoredToUnversioned} reMatched=${reMatchIds.length}`);
+    res.json({ ok: true, restoredToUnversioned: plan.restoredToUnversioned, reMatched: reMatchIds.length });
+  } catch (e: any) {
+    console.error("[pos-mappings/undo-change] ERROR", e?.message);
+    res.status(500).json({ ok: false, error: e?.message || "Undo-change failed" });
+  }
+});
+
+// ── GET /pos-mappings/versions ────────────────────────────────────────────────
+// Returns all mapping versions for a venue (or a specific key).
+app.get("/pos-mappings/versions", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const venueId = req.query.venueId as string;
+    const mappingKey = req.query.mappingKey as string | undefined;
+    if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+    let q: FirebaseFirestore.Query = db.collection(`venues/${venueId}/posMappingVersions`)
+      .orderBy('effectiveFrom', 'asc');
+    if (mappingKey) q = q.where('mappingKey', '==', mappingKey);
+
+    const snap = await q.get();
+    const versions = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+    // Also return current overrides
+    const overridesSnap = await db.collection(`venues/${venueId}/posMappingOverrides`).get();
+    const overrides = overridesSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+    res.json({ ok: true, versions, overrides });
+  } catch (e: any) {
+    console.error("[pos-mappings/versions] ERROR", e?.message);
+    res.status(500).json({ ok: false, error: e?.message || "Failed to load versions" });
+  }
+});
+
+// ── POST /pos-mappings/report-override ────────────────────────────────────────
+// Set or clear the manual version override for a straddling report.
+// Body: { venueId, reportId, mappingKey, versionId } (versionId null = clear)
+app.post("/pos-mappings/report-override", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, reportId, mappingKey, versionId } = req.body || {};
+    if (!venueId || !reportId || !mappingKey) {
+      res.status(400).json({ ok: false, error: "Missing required fields" }); return;
+    }
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+
+    // Override doc ID is deterministic: reportId + sha-like prefix of key
+    // Use a simple hash: encode mappingKey + reportId as base64 slice
+    const overrideId = `${reportId}__${Buffer.from(mappingKey).toString('base64').slice(0, 16).replace(/[/+=]/g, '_')}`;
+    const overrideRef = db.doc(`venues/${venueId}/posMappingOverrides/${overrideId}`);
+
+    if (versionId) {
+      await overrideRef.set({
+        reportId,
+        mappingKey,
+        versionId,
+        createdByUid: uid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } else {
+      await overrideRef.delete();
+    }
+
+    // Re-match the report
+    const rSnap = await db.doc(`venues/${venueId}/salesReports/${reportId}`).get();
+    if (rSnap.exists) {
+      const rdata = rSnap.data() as any;
+      if (isReportActive(rdata)) {
+        const rawLines: any[] = rdata?.report?.lines ?? rdata?.lines ?? [];
+        const per = rdata?.report?.period || rdata?.period || null;
+        await matchAndStoreSalesLines(db, venueId, reportId, 'report-override',
+          rawLines.map((l: any) => ({
+            name: l.name, qtySold: Number(l.qty ?? l.qtySold ?? 0),
+            gross: l.revenue ?? l.gross ?? null,
+            barcode: l.barcode ?? null, sku: l.sku ?? null,
+          })), per);
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("[pos-mappings/report-override] ERROR", e?.message);
+    res.status(500).json({ ok: false, error: e?.message || "Override failed" });
   }
 });
 

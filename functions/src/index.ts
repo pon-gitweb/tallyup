@@ -65,6 +65,9 @@ export { onProductPriceChanged } from "./priceCascade";
 // === Snapshot sales neutralise — corrects soldQty summed from matchbox reports ===
 export { onSnapshotWrittenNeutraliseSales, onLatestSnapshotWrittenSync } from "./snapshotNeutraliseTrigger";
 
+// === POS mapping sync — keeps posMappingVersions current when mobile writes parent ===
+export { onPosMappingWrittenSyncVersion } from "./posMappingSyncTrigger";
+
 // === Soft-deleted venue hard-delete sweep ===
 // Runs hourly — for any venue past its 48h recovery window (set by
 // POST /deleteVenue), permanently removes all its data. Venues restored via

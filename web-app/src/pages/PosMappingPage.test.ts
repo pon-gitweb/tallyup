@@ -14,9 +14,12 @@ import {
   chunkArray,
   planMappingWrites,
   planUnlinkWrites,
+  panelCanFixMistake,
+  versionTimelineLabel,
   type NoServingRow,
   type AllMappingRow,
   type WriteOp,
+  type MappingVersionData,
 } from './PosMappingPage'
 import type { UnmatchedRow, ActiveReport, MatchData } from '../utils/weeklyLedger'
 import { mappingDocId } from '../utils/mappingId'
@@ -776,5 +779,90 @@ describe('allMappingsRows duplicate grouping', () => {
     const rows = allMappingsRows(mappings as any, products as any, recipes, [], {})
     expect(rows[0].mapping.id).toBe('new')
     expect(rows[0].targetLabel).toBe('Red Wine')
+  })
+})
+
+// ── panelCanFixMistake ────────────────────────────────────────────────────────
+
+describe('panelCanFixMistake', () => {
+  it('returns true when no versions exist (unversioned key)', () => {
+    expect(panelCanFixMistake([])).toBe(true)
+  })
+
+  it('returns false when the key has any versions', () => {
+    const v: MappingVersionData = {
+      id: 'v0', mappingKey: 'wine', posItemName: 'Wine', effectiveFrom: '0000-01-01',
+      mappingType: 'product', productId: 'p1', productName: 'Product One',
+      recipeId: null, recipeName: null, servingMl: null, conversionRatio: null,
+      servingType: null, conversionUnit: null,
+    }
+    expect(panelCanFixMistake([v])).toBe(false)
+  })
+
+  it('returns false with two versions (v0 + change)', () => {
+    const v0: MappingVersionData = {
+      id: 'v0', mappingKey: 'wine', posItemName: 'Wine', effectiveFrom: '0000-01-01',
+      mappingType: 'product', productId: 'p1', productName: 'Andre Clouet',
+      recipeId: null, recipeName: null, servingMl: null, conversionRatio: null,
+      servingType: null, conversionUnit: null,
+    }
+    const v1: MappingVersionData = {
+      id: 'v1', mappingKey: 'wine', posItemName: 'Wine', effectiveFrom: '2026-10-07',
+      mappingType: 'product', productId: 'p2', productName: 'Champagne Collet',
+      recipeId: null, recipeName: null, servingMl: null, conversionRatio: null,
+      servingType: null, conversionUnit: null,
+    }
+    expect(panelCanFixMistake([v0, v1])).toBe(false)
+  })
+})
+
+// ── versionTimelineLabel ──────────────────────────────────────────────────────
+
+describe('versionTimelineLabel', () => {
+  const v0: MappingVersionData = {
+    id: 'v0', mappingKey: 'wine', posItemName: 'Wine', effectiveFrom: '0000-01-01',
+    mappingType: 'product', productId: 'p1', productName: 'Andre Clouet',
+    recipeId: null, recipeName: null, servingMl: null, conversionRatio: null,
+    servingType: null, conversionUnit: null,
+  }
+  const v1: MappingVersionData = {
+    id: 'v1', mappingKey: 'wine', posItemName: 'Wine', effectiveFrom: '2026-10-07',
+    mappingType: 'product', productId: 'p2', productName: 'Champagne Collet',
+    recipeId: null, recipeName: null, servingMl: null, conversionRatio: null,
+    servingType: null, conversionUnit: null,
+  }
+
+  it('returns empty string when no versions', () => {
+    expect(versionTimelineLabel([])).toBe('')
+  })
+
+  it('returns empty string when only v0 exists (no real change yet)', () => {
+    expect(versionTimelineLabel([v0])).toBe('')
+  })
+
+  it('returns formatted label for v0 + v1', () => {
+    const label = versionTimelineLabel([v0, v1])
+    expect(label).toContain('Andre Clouet')
+    expect(label).toContain('Champagne Collet')
+    expect(label).toContain('→')
+    // Date format: "7 Oct" (en-NZ)
+    expect(label).toMatch(/7\s+Oct/)
+  })
+
+  it('includes "from <date>" phrasing', () => {
+    const label = versionTimelineLabel([v0, v1])
+    expect(label).toContain('from')
+  })
+
+  it('uses productName when available, falls back to recipeName', () => {
+    const recipeV: MappingVersionData = {
+      id: 'v2', mappingKey: 'cocktail', posItemName: 'Cocktail',
+      effectiveFrom: '2026-10-20',
+      mappingType: 'recipe', productId: null, productName: null,
+      recipeId: 'r1', recipeName: 'House Margarita',
+      servingMl: null, conversionRatio: null, servingType: null, conversionUnit: null,
+    }
+    const label = versionTimelineLabel([v0, recipeV])
+    expect(label).toContain('House Margarita')
   })
 })
