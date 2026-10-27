@@ -470,6 +470,102 @@ export function saveMappingBlockedReason(
   return null
 }
 
+const API_BASE = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api'
+
+export type StraddleDecision = {
+  reportId: string
+  period: string | null
+  mappingKey: string
+  versionIds: string[]
+  chosenVersionId: string
+}
+
+export function buildChangeProductBody(
+  posItemName: string,
+  effectiveFrom: string,
+  product: Product,
+  servingPreset: string,
+  customMl: string,
+): { posItemName: string; effectiveFrom: string; newFields: Record<string, unknown> } {
+  const szMl = productSizeInMl(product)
+  const serving = computeServingFields(servingPreset, customMl, szMl)
+  const newFields: Record<string, unknown> = {
+    mappingType: 'direct_product',
+    productId: product.id,
+    productName: product.name,
+    recipeId: null,
+    recipeName: null,
+    servingMl: 'skip' in serving ? null : serving.servingMl,
+    conversionRatio: 'skip' in serving ? null : serving.conversionRatio,
+    servingType: 'skip' in serving ? null : serving.servingType,
+    conversionUnit: 'skip' in serving ? null : serving.conversionUnit,
+  }
+  return { posItemName, effectiveFrom, newFields }
+}
+
+export function changeProductPreview(
+  effectiveFrom: string,
+  oldProductName: string | null,
+  newProductName: string,
+): string {
+  if (!effectiveFrom) return ''
+  const [y, m, d] = effectiveFrom.split('-').map(Number)
+  const date = new Date(Date.UTC(y, m - 1, d))
+  const fmt = date.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' })
+  const old = oldProductName ?? 'old product'
+  return `Sales before ${fmt} stay with ${old}. Sales from ${fmt} go to ${newProductName}.`
+}
+
+export function firstDeliveryDate(
+  lines: Array<{ date: string | null; productId: string | null }>,
+  productId: string,
+): string | null {
+  const matches = lines
+    .filter(l => l.productId === productId && l.date)
+    .map(l => l.date!)
+    .sort()
+  return matches[0] ?? null
+}
+
+export function undoConfirmText(versions: MappingVersionData[]): string {
+  const real = versions.filter(v => v.effectiveFrom !== '0000-01-01')
+  if (real.length < 2) {
+    const prev = versions.find(v => v.effectiveFrom === '0000-01-01')
+    const prevName = prev?.productName ?? prev?.recipeName ?? 'previous product'
+    return `Restore ${prevName} for all dates?`
+  }
+  const prev = real[real.length - 2]
+  const prevName = prev.productName ?? prev.recipeName ?? 'previous product'
+  return `Restore ${prevName} for all dates?`
+}
+
+export function buildStraddleDecisions(
+  matchesByReport: Record<string, MatchData | null>,
+  activeReports: ActiveReport[],
+): StraddleDecision[] {
+  const decisions: StraddleDecision[] = []
+  for (const r of activeReports) {
+    const md = matchesByReport[r.id]
+    if (!md) continue
+    const seenKeys = new Set<string>()
+    for (const match of md.matches) {
+      const straddle = (match as any).mappingStraddle
+      if (!straddle?.defaulted) continue
+      const key = (match.name ?? '').toLowerCase()
+      if (!key || seenKeys.has(key)) continue
+      seenKeys.add(key)
+      decisions.push({
+        reportId: r.id,
+        period: r.startStr && r.endStr ? `${r.startStr} – ${r.endStr}` : r.startStr ?? null,
+        mappingKey: key,
+        versionIds: straddle.versionIds ?? [],
+        chosenVersionId: straddle.chosenVersionId ?? '',
+      })
+    }
+  }
+  return decisions
+}
+
 function _formatVersionDate(dateStr: string): string {
   if (dateStr === '0000-01-01') return ''
   const [y, m, d] = dateStr.split('-').map(Number)
@@ -635,9 +731,12 @@ function MappingPanel({
   products,
   recipes,
   saving,
+  venueId,
+  canManage,
   onSave,
   onClose,
   onUnlink,
+  onVersionReload,
 }: {
   posName: string
   preselectedProduct?: { id: string; name: string } | null
@@ -648,9 +747,12 @@ function MappingPanel({
   products: Product[]
   recipes: Recipe[]
   saving: boolean
+  venueId: string
+  canManage: boolean
   onSave: (payload: Record<string, unknown>, posName: string, existingCreatedAt?: unknown) => void
   onClose: () => void
   onUnlink?: () => void
+  onVersionReload: () => Promise<void>
 }) {
   const keyVersions = versions ?? []
   const isVersioned = keyVersions.length > 0
@@ -674,6 +776,28 @@ function MappingPanel({
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(init.selectedRecipe)
   const [unlinkConfirm, setUnlinkConfirm] = useState(false)
 
+  // Two-choice gate: null = not chosen, 'fix-mistake' = existing editor, 'change-product' = new sub-form
+  const [editMode, setEditMode] = useState<'fix-mistake' | 'change-product' | null>(
+    existingMapping ? null : 'fix-mistake'
+  )
+
+  // Change-product sub-form state
+  const [cpProductSearch, setCpProductSearch] = useState('')
+  const [cpProduct, setCpProduct] = useState<Product | null>(null)
+  const [cpServingPreset, setCpServingPreset] = useState('each')
+  const [cpCustomMl, setCpCustomMl] = useState('')
+  const [cpDate, setCpDate] = useState('')
+  const [cpSuggestion, setCpSuggestion] = useState<string | null>(null)
+  const [cpSubmitting, setCpSubmitting] = useState(false)
+  const [cpError, setCpError] = useState<string | null>(null)
+
+  // Undo state
+  const [undoConfirm, setUndoConfirm] = useState(false)
+  const [undoSubmitting, setUndoSubmitting] = useState(false)
+  const [undoError, setUndoError] = useState<string | null>(null)
+
+  const todayNZ = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' })
+
   const filteredProducts = useMemo(() => {
     const q = productSearch.toLowerCase()
     return q ? products.filter(p => p.name.toLowerCase().includes(q)).slice(0, 12) : []
@@ -683,6 +807,104 @@ function MappingPanel({
     const q = recipeSearch.toLowerCase()
     return q ? recipes.filter(r => r.name.toLowerCase().includes(q)).slice(0, 12) : []
   }, [recipes, recipeSearch])
+
+  const cpFilteredProducts = useMemo(() => {
+    const q = cpProductSearch.toLowerCase()
+    return q ? products.filter(p => p.name.toLowerCase().includes(q)).slice(0, 12) : []
+  }, [products, cpProductSearch])
+
+  useEffect(() => {
+    if (!cpProduct) { setCpSuggestion(null); return }
+    let cancelled = false
+    async function load() {
+      try {
+        const snap = await getDocs(collection(db, 'venues', venueId, 'invoices'))
+        const lines: Array<{ date: string | null; productId: string | null }> = []
+        snap.docs.forEach(d => {
+          const data = d.data() as any
+          const ts = data.invoiceDateTimestamp ?? data.date ?? data.createdAt
+          const dateStr: string | null = ts?.toDate
+            ? ts.toDate().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' })
+            : null
+          const rawLines = Array.isArray(data.lines) ? data.lines : []
+          rawLines.forEach((l: any) => {
+            lines.push({ date: dateStr, productId: l.productId ?? null })
+          })
+        })
+        const earliest = firstDeliveryDate(lines, cpProduct!.id)
+        if (!cancelled) setCpSuggestion(earliest)
+      } catch {
+        if (!cancelled) setCpSuggestion(null)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [cpProduct, venueId])
+
+  const cpSizeMl = cpProduct ? productSizeInMl(cpProduct) : null
+  const cpServingMl: number | null = useMemo(() => {
+    if (cpServingPreset === 'each' || !cpProduct) return null
+    if (cpServingPreset === 'full_bottle') return cpSizeMl
+    const preset = SERVING_PRESETS.find(p => p.type === cpServingPreset)
+    if (preset?.ml != null) return preset.ml
+    if (cpServingPreset === 'custom') {
+      const v = parseFloat(cpCustomMl); return isNaN(v) || v <= 0 ? null : v
+    }
+    return null
+  }, [cpServingPreset, cpSizeMl, cpCustomMl, cpProduct])
+
+  const cpCanSave = !!cpProduct && !!cpDate && (cpServingPreset === 'each' || cpServingMl != null)
+
+  const cpPreview = useMemo(() => {
+    if (!cpProduct || !cpDate) return null
+    const oldName = existingMapping?.productName ?? existingMapping?.recipeName ?? null
+    return changeProductPreview(cpDate, oldName, cpProduct.name)
+  }, [cpProduct, cpDate, existingMapping])
+
+  async function handleChangeProductSave() {
+    if (!canManage || !cpProduct || !cpDate || cpSubmitting) return
+    setCpSubmitting(true)
+    setCpError(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) { setCpError('Not authenticated'); setCpSubmitting(false); return }
+      const body = buildChangeProductBody(posName, cpDate, cpProduct, cpServingPreset, cpCustomMl)
+      const resp = await fetch(`${API_BASE}/pos-mappings/change-product`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ venueId, ...body }),
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json.ok) { setCpError(json.error ?? 'Change failed'); setCpSubmitting(false); return }
+      await onVersionReload()
+      onClose()
+    } catch (e: any) {
+      setCpError(e?.message ?? 'Change failed')
+      setCpSubmitting(false)
+    }
+  }
+
+  async function handleUndoConfirm() {
+    if (!canManage || undoSubmitting) return
+    setUndoSubmitting(true)
+    setUndoError(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) { setUndoError('Not authenticated'); setUndoSubmitting(false); return }
+      const resp = await fetch(`${API_BASE}/pos-mappings/undo-change`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ venueId, posItemName: posName }),
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json.ok) { setUndoError(json.error ?? 'Undo failed'); setUndoSubmitting(false); return }
+      await onVersionReload()
+      onClose()
+    } catch (e: any) {
+      setUndoError(e?.message ?? 'Undo failed')
+      setUndoSubmitting(false)
+    }
+  }
 
   const sizeMl = selectedProduct ? productSizeInMl(selectedProduct) : null
   const servingMl: number | null = useMemo(() => {
@@ -745,17 +967,17 @@ function MappingPanel({
   )
 
   return (
-    <div className={styles.drawerOverlay} onClick={() => { if (!saving) onClose() }}>
+    <div className={styles.drawerOverlay} onClick={() => { if (!saving && !cpSubmitting && !undoSubmitting) onClose() }}>
       <div className={styles.drawer} onClick={e => e.stopPropagation()}>
         <div>
-          <button className={styles.drawerClose} onClick={() => { if (!saving) onClose() }}>×</button>
+          <button className={styles.drawerClose} onClick={() => { if (!saving && !cpSubmitting && !undoSubmitting) onClose() }}>×</button>
           <p className={styles.drawerTitle}>{posName}</p>
           <p className={styles.drawerSubtitle}>
             {existingMapping ? 'Edit this POS mapping' : 'Set how this POS name maps to your catalogue'}
           </p>
         </div>
 
-        {affectedReports && affectedReports.count > 0 && (
+        {affectedReports && affectedReports.count > 0 && editMode === 'fix-mistake' && (
           <div className={`${styles.banner} ${styles.bannerAmber}`}>
             This will re-match {affectedReports.count} report{affectedReports.count !== 1 ? 's' : ''}
             {affectedReports.dateRange ? ` (${affectedReports.dateRange})` : ''}.
@@ -772,173 +994,304 @@ function MappingPanel({
           </div>
         )}
 
-        {isVersioned && (
-          <div style={{ fontSize: 12, color: '#6b7280' }}>
-            <strong>Fix a mistake</strong> is disabled — this key has version history.
-            Use <em>Undo last change</em> to revert.
+        {/* Two-choice gate for existing mappings */}
+        {existingMapping && editMode === null && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <p style={{ fontSize: 13, color: '#374151', marginBottom: 4 }}>What would you like to do?</p>
+            <button
+              className={styles.btnSecondary}
+              style={{ textAlign: 'left' }}
+              disabled={!!saveBlockedReason}
+              onClick={() => setEditMode('fix-mistake')}
+            >
+              <strong>Fix a mistake</strong>
+              <span style={{ fontSize: 12, color: '#6b7280', display: 'block' }}>Rewrites all history — use when you mapped the wrong product from the start</span>
+            </button>
+            {saveBlockedReason && (
+              <p className={styles.errorText} style={{ fontSize: 12, marginTop: 0 }}>{saveBlockedReason}</p>
+            )}
+            <button
+              className={styles.btnSecondary}
+              style={{ textAlign: 'left' }}
+              disabled={!canManage}
+              onClick={() => setEditMode('change-product')}
+            >
+              <strong>Product changed from a date…</strong>
+              <span style={{ fontSize: 12, color: '#6b7280', display: 'block' }}>Records that this POS button switched to a different product on a specific date</span>
+            </button>
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 6 }}>
-          {(['product', 'recipe', 'skip'] as const).map(m => (
-            <button
-              key={m}
-              className={`${styles.btnSmall} ${mode === m ? styles.btnPrimary : styles.btnOutline}`}
-              onClick={() => setMode(m)}
-            >
-              {m === 'product' ? 'Product' : m === 'recipe' ? 'Recipe' : 'Ignore'}
-            </button>
-          ))}
-        </div>
-
-        {mode === 'product' && (
+        {/* Fix a mistake mode — existing form */}
+        {editMode === 'fix-mistake' && (
           <>
-            <div className={styles.drawerSection}>
-              <p className={styles.drawerSectionTitle}>Product</p>
-              {selectedProduct
-                ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                    <span style={{ flex: 1, fontWeight: 600, color: '#1a2332' }}>{selectedProduct.name}</span>
-                    <button className={`${styles.btnSmall} ${styles.btnOutline}`} onClick={() => { setSelectedProduct(null); setProductSearch('') }}>Change</button>
-                  </div>
-                )
-                : (
-                  <>
-                    <input
-                      className={styles.searchInput}
-                      placeholder="Search products…"
-                      value={productSearch}
-                      onChange={e => setProductSearch(e.target.value)}
-                      autoFocus
-                    />
-                    {filteredProducts.length > 0 && (
-                      <div className={styles.searchResults}>
-                        {filteredProducts.map(p => (
-                          <div
-                            key={p.id}
-                            className={styles.searchResultItem}
-                            onClick={() => { setSelectedProduct(p); setProductSearch('') }}
-                          >
-                            {p.name}
-                            {p.size && p.unit && <span style={{ color: '#9ca3af', fontSize: 11, marginLeft: 6 }}>{p.size}{p.unit}</span>}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )
-              }
+            {existingMapping && (
+              <button className={styles.btnSecondary} style={{ marginBottom: 4 }} onClick={() => setEditMode(null)}>← Back</button>
+            )}
+
+            <div style={{ display: 'flex', gap: 6 }}>
+              {(['product', 'recipe', 'skip'] as const).map(m => (
+                <button
+                  key={m}
+                  className={`${styles.btnSmall} ${mode === m ? styles.btnPrimary : styles.btnOutline}`}
+                  onClick={() => setMode(m)}
+                >
+                  {m === 'product' ? 'Product' : m === 'recipe' ? 'Recipe' : 'Ignore'}
+                </button>
+              ))}
             </div>
 
-            {selectedProduct && (
-              <div className={styles.drawerSection}>
-                <p className={styles.drawerSectionTitle}>Serving size</p>
-                <div className={styles.servingTypeTabs}>
-                  {SERVING_PRESETS.map(p => (
-                    <button
-                      key={p.type}
-                      className={`${styles.servingTypeBtn} ${servingPreset === p.type ? styles.servingTypeBtnActive : ''}`}
-                      onClick={() => setServingPreset(p.type)}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                  {sizeMl != null && (
-                    <button
-                      className={`${styles.servingTypeBtn} ${servingPreset === 'full_bottle' ? styles.servingTypeBtnActive : ''}`}
-                      onClick={() => setServingPreset('full_bottle')}
-                    >
-                      Full bottle ({sizeMl}ml)
-                    </button>
-                  )}
+            {mode === 'product' && (
+              <>
+                <div className={styles.drawerSection}>
+                  <p className={styles.drawerSectionTitle}>Product</p>
+                  {selectedProduct
+                    ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                        <span style={{ flex: 1, fontWeight: 600, color: '#1a2332' }}>{selectedProduct.name}</span>
+                        <button className={`${styles.btnSmall} ${styles.btnOutline}`} onClick={() => { setSelectedProduct(null); setProductSearch('') }}>Change</button>
+                      </div>
+                    )
+                    : (
+                      <>
+                        <input
+                          className={styles.searchInput}
+                          placeholder="Search products…"
+                          value={productSearch}
+                          onChange={e => setProductSearch(e.target.value)}
+                          autoFocus
+                        />
+                        {filteredProducts.length > 0 && (
+                          <div className={styles.searchResults}>
+                            {filteredProducts.map(p => (
+                              <div
+                                key={p.id}
+                                className={styles.searchResultItem}
+                                onClick={() => { setSelectedProduct(p); setProductSearch('') }}
+                              >
+                                {p.name}
+                                {p.size && p.unit && <span style={{ color: '#9ca3af', fontSize: 11, marginLeft: 6 }}>{p.size}{p.unit}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )
+                  }
                 </div>
-                {servingPreset === 'custom' && (
-                  <input
-                    className={styles.searchInput}
-                    style={{ marginTop: 8, width: 120 }}
-                    type="number"
-                    min="0"
-                    placeholder="ml e.g. 200"
-                    value={customMl}
-                    onChange={e => setCustomMl(e.target.value)}
-                  />
+
+                {selectedProduct && (
+                  <div className={styles.drawerSection}>
+                    <p className={styles.drawerSectionTitle}>Serving size</p>
+                    <div className={styles.servingTypeTabs}>
+                      {SERVING_PRESETS.map(p => (
+                        <button
+                          key={p.type}
+                          className={`${styles.servingTypeBtn} ${servingPreset === p.type ? styles.servingTypeBtnActive : ''}`}
+                          onClick={() => setServingPreset(p.type)}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                      {sizeMl != null && (
+                        <button
+                          className={`${styles.servingTypeBtn} ${servingPreset === 'full_bottle' ? styles.servingTypeBtnActive : ''}`}
+                          onClick={() => setServingPreset('full_bottle')}
+                        >
+                          Full bottle ({sizeMl}ml)
+                        </button>
+                      )}
+                    </div>
+                    {servingPreset === 'custom' && (
+                      <input
+                        className={styles.searchInput}
+                        style={{ marginTop: 8, width: 120 }}
+                        type="number"
+                        min="0"
+                        placeholder="ml e.g. 200"
+                        value={customMl}
+                        onChange={e => setCustomMl(e.target.value)}
+                      />
+                    )}
+                    {previewText && (
+                      <p className={styles.previewText} style={{ marginTop: 8 }}>{previewText}</p>
+                    )}
+                  </div>
                 )}
-                {previewText && (
-                  <p className={styles.previewText} style={{ marginTop: 8 }}>{previewText}</p>
-                )}
+              </>
+            )}
+
+            {mode === 'recipe' && (
+              <div className={styles.drawerSection}>
+                <p className={styles.drawerSectionTitle}>Recipe</p>
+                {selectedRecipe
+                  ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                      <span style={{ flex: 1, fontWeight: 600, color: '#1a2332' }}>{selectedRecipe.name}</span>
+                      <button className={`${styles.btnSmall} ${styles.btnOutline}`} onClick={() => { setSelectedRecipe(null); setRecipeSearch('') }}>Change</button>
+                    </div>
+                  )
+                  : (
+                    <>
+                      <input
+                        className={styles.searchInput}
+                        placeholder="Search recipes…"
+                        value={recipeSearch}
+                        onChange={e => setRecipeSearch(e.target.value)}
+                        autoFocus
+                      />
+                      {filteredRecipes.length > 0 && (
+                        <div className={styles.searchResults}>
+                          {filteredRecipes.map(r => (
+                            <div
+                              key={r.id}
+                              className={styles.searchResultItem}
+                              onClick={() => { setSelectedRecipe(r); setRecipeSearch('') }}
+                            >
+                              {r.name}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )
+                }
               </div>
             )}
+
+            {mode === 'skip' && (
+              <p style={{ fontSize: 13, color: '#6b7280' }}>
+                This POS name will be ignored in future match runs and won't appear in unmatched lists.
+              </p>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 'auto', paddingTop: 8, flexWrap: 'wrap' }}>
+              <button className={styles.btnSecondary} onClick={() => { if (!saving) onClose() }}>Cancel</button>
+              <button className={styles.btnPrimary} disabled={!canSave || saving} onClick={handleSave}>
+                {saving ? 'Saving…' : 'Save mapping'}
+              </button>
+              {existingMapping && onUnlink && !unlinkConfirm && (() => {
+                const blocked = unlinkBlockedReason(keyVersions, versionsUnavailable ?? false)
+                return blocked
+                  ? <p className={styles.errorText} style={{ marginLeft: 'auto', marginTop: 0, fontSize: 12 }}>{blocked}</p>
+                  : <button className={styles.btnDanger} style={{ marginLeft: 'auto' }} onClick={() => setUnlinkConfirm(true)}>Unlink</button>
+              })()}
+              {unlinkConfirm && (
+                <div style={{ width: '100%', fontSize: 13, background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, padding: '10px 12px' }}>
+                  Delete this mapping and re-match affected reports?
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <button className={styles.btnDanger} onClick={onUnlink}>Delete</button>
+                    <button className={styles.btnSecondary} onClick={() => setUnlinkConfirm(false)}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
           </>
         )}
 
-        {mode === 'recipe' && (
-          <div className={styles.drawerSection}>
-            <p className={styles.drawerSectionTitle}>Recipe</p>
-            {selectedRecipe
-              ? (
+        {/* Change-product sub-form */}
+        {editMode === 'change-product' && (
+          <>
+            <button className={styles.btnSecondary} style={{ marginBottom: 4 }} onClick={() => setEditMode(null)}>← Back</button>
+
+            <div className={styles.drawerSection}>
+              <p className={styles.drawerSectionTitle}>New product from date</p>
+              {cpProduct ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                  <span style={{ flex: 1, fontWeight: 600, color: '#1a2332' }}>{selectedRecipe.name}</span>
-                  <button className={`${styles.btnSmall} ${styles.btnOutline}`} onClick={() => { setSelectedRecipe(null); setRecipeSearch('') }}>Change</button>
+                  <span style={{ flex: 1, fontWeight: 600 }}>{cpProduct.name}</span>
+                  <button className={`${styles.btnSmall} ${styles.btnOutline}`} onClick={() => { setCpProduct(null); setCpProductSearch('') }}>Change</button>
                 </div>
-              )
-              : (
+              ) : (
                 <>
-                  <input
-                    className={styles.searchInput}
-                    placeholder="Search recipes…"
-                    value={recipeSearch}
-                    onChange={e => setRecipeSearch(e.target.value)}
-                    autoFocus
-                  />
-                  {filteredRecipes.length > 0 && (
+                  <input className={styles.searchInput} placeholder="Search products…" value={cpProductSearch} onChange={e => setCpProductSearch(e.target.value)} autoFocus />
+                  {cpFilteredProducts.length > 0 && (
                     <div className={styles.searchResults}>
-                      {filteredRecipes.map(r => (
-                        <div
-                          key={r.id}
-                          className={styles.searchResultItem}
-                          onClick={() => { setSelectedRecipe(r); setRecipeSearch('') }}
-                        >
-                          {r.name}
+                      {cpFilteredProducts.map(p => (
+                        <div key={p.id} className={styles.searchResultItem} onClick={() => { setCpProduct(p); setCpProductSearch('') }}>
+                          {p.name}
+                          {p.size && p.unit && <span style={{ color: '#9ca3af', fontSize: 11, marginLeft: 6 }}>{p.size}{p.unit}</span>}
                         </div>
                       ))}
                     </div>
                   )}
                 </>
-              )
-            }
+              )}
+            </div>
+
+            {cpProduct && (
+              <div className={styles.drawerSection}>
+                <p className={styles.drawerSectionTitle}>Serving size</p>
+                <div className={styles.servingTypeTabs}>
+                  {SERVING_PRESETS.map(p => (
+                    <button key={p.type} className={`${styles.servingTypeBtn} ${cpServingPreset === p.type ? styles.servingTypeBtnActive : ''}`} onClick={() => setCpServingPreset(p.type)}>
+                      {p.label}
+                    </button>
+                  ))}
+                  {cpSizeMl != null && (
+                    <button className={`${styles.servingTypeBtn} ${cpServingPreset === 'full_bottle' ? styles.servingTypeBtnActive : ''}`} onClick={() => setCpServingPreset('full_bottle')}>
+                      Full bottle ({cpSizeMl}ml)
+                    </button>
+                  )}
+                </div>
+                {cpServingPreset === 'custom' && (
+                  <input className={styles.searchInput} style={{ marginTop: 8, width: 120 }} type="number" min="0" placeholder="ml e.g. 200" value={cpCustomMl} onChange={e => setCpCustomMl(e.target.value)} />
+                )}
+              </div>
+            )}
+
+            <div className={styles.drawerSection}>
+              <p className={styles.drawerSectionTitle}>Effective from (date of first sale under new product)</p>
+              <input
+                type="date"
+                max={todayNZ}
+                value={cpDate}
+                onChange={e => setCpDate(e.target.value)}
+                className={styles.searchInput}
+                style={{ width: 160 }}
+              />
+              {cpSuggestion && cpSuggestion !== cpDate && (
+                <p style={{ fontSize: 12, color: '#2563eb', marginTop: 6, cursor: 'pointer' }} onClick={() => setCpDate(cpSuggestion!)}>
+                  First delivery of {cpProduct?.name}: {cpSuggestion} — click to use
+                </p>
+              )}
+            </div>
+
+            {cpPreview && (
+              <p className={styles.previewText}>{cpPreview}</p>
+            )}
+
+            {cpError && <p className={styles.errorText}>{cpError}</p>}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 'auto', paddingTop: 8 }}>
+              <button className={styles.btnSecondary} onClick={() => { if (!cpSubmitting) onClose() }}>Cancel</button>
+              <button className={styles.btnPrimary} disabled={!cpCanSave || cpSubmitting} onClick={handleChangeProductSave}>
+                {cpSubmitting ? 'Saving…' : 'Save change'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Undo last change — shown when versioned, regardless of editMode */}
+        {isVersioned && canManage && (
+          <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, marginTop: 8 }}>
+            {!undoConfirm ? (
+              <button className={styles.btnSecondary} onClick={() => setUndoConfirm(true)}>
+                Undo last change
+              </button>
+            ) : (
+              <div style={{ fontSize: 13 }}>
+                <p style={{ marginBottom: 8 }}>{undoConfirmText(keyVersions)}</p>
+                {undoError && <p className={styles.errorText}>{undoError}</p>}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className={styles.btnDanger} disabled={undoSubmitting} onClick={handleUndoConfirm}>
+                    {undoSubmitting ? 'Restoring…' : 'Yes, restore'}
+                  </button>
+                  <button className={styles.btnSecondary} onClick={() => { setUndoConfirm(false); setUndoError(null) }}>Cancel</button>
+                </div>
+              </div>
+            )}
           </div>
         )}
-
-        {mode === 'skip' && (
-          <p style={{ fontSize: 13, color: '#6b7280' }}>
-            This POS name will be ignored in future match runs and won't appear in unmatched lists.
-          </p>
-        )}
-
-        <div style={{ display: 'flex', gap: 10, marginTop: 'auto', paddingTop: 8, flexWrap: 'wrap' }}>
-          <button className={styles.btnSecondary} onClick={() => { if (!saving) onClose() }}>Cancel</button>
-          <button className={styles.btnPrimary} disabled={!canSave || saving} onClick={handleSave}>
-            {saving ? 'Saving…' : 'Save mapping'}
-          </button>
-          {saveBlockedReason && (
-            <p className={styles.errorText} style={{ width: '100%', marginTop: 0, fontSize: 12 }}>{saveBlockedReason}</p>
-          )}
-          {existingMapping && onUnlink && !unlinkConfirm && (() => {
-            const blocked = unlinkBlockedReason(keyVersions, versionsUnavailable ?? false)
-            return blocked
-              ? <p className={styles.errorText} style={{ marginLeft: 'auto', marginTop: 0, fontSize: 12 }}>{blocked}</p>
-              : <button className={styles.btnDanger} style={{ marginLeft: 'auto' }} onClick={() => setUnlinkConfirm(true)}>Unlink</button>
-          })()}
-          {unlinkConfirm && (
-            <div style={{ width: '100%', fontSize: 13, background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, padding: '10px 12px' }}>
-              Delete this mapping and re-match affected reports?
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button className={styles.btnDanger} onClick={onUnlink}>Delete</button>
-                <button className={styles.btnSecondary} onClick={() => setUnlinkConfirm(false)}>Cancel</button>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   )
@@ -1338,14 +1691,22 @@ function NoServingTab({
 
 // ── Tab C: All mappings ───────────────────────────────────────────────────────
 
-type AllMappingsFilter = 'all' | 'product' | 'recipe' | 'ignored' | 'merged-missing' | 'no-serving' | 'duplicate' | 'versioned'
+type AllMappingsFilter = 'all' | 'product' | 'recipe' | 'ignored' | 'merged-missing' | 'no-serving' | 'duplicate' | 'versioned' | 'needs-decision'
 
 function AllMappingsTab({
   rows,
   onRowClick,
+  straddlesByKey,
+  versionsData,
+  canManage,
+  onOverride,
 }: {
   rows: AllMappingRow[]
   onRowClick: (row: AllMappingRow) => void
+  straddlesByKey: Record<string, StraddleDecision[]>
+  versionsData: Record<string, MappingVersionData[]>
+  canManage: boolean
+  onOverride: (reportId: string, mappingKey: string, versionId: string) => Promise<void>
 }) {
   const [search, setSearch]   = useState('')
   const [filter, setFilter]   = useState<AllMappingsFilter>('all')
@@ -1359,6 +1720,10 @@ function AllMappingsTab({
     else if (filter === 'no-serving')    r = r.filter(row => row.warningNoServing)
     else if (filter === 'duplicate')     r = r.filter(row => row.warningDuplicate)
     else if (filter === 'versioned')     r = r.filter(row => row.versioned)
+    else if (filter === 'needs-decision') r = r.filter(row => {
+      const key = (row.mapping.posItemName || '').toLowerCase()
+      return (straddlesByKey[key]?.length ?? 0) > 0
+    })
     if (search.trim()) {
       const q = search.toLowerCase()
       r = r.filter(row =>
@@ -1367,9 +1732,10 @@ function AllMappingsTab({
       )
     }
     return r
-  }, [rows, filter, search])
+  }, [rows, filter, search, straddlesByKey])
 
   const duplicateCount = rows.filter(r => r.warningDuplicate).length
+  const totalStraddling = Object.values(straddlesByKey).reduce((s, d) => s + d.length, 0)
   const chips: Array<{ key: AllMappingsFilter; label: string; warn?: boolean }> = [
     { key: 'all',           label: `All (${rows.length})` },
     { key: 'product',       label: `Product (${rows.filter(r => r.mapping.mappingType === 'direct_product').length})` },
@@ -1379,6 +1745,7 @@ function AllMappingsTab({
     { key: 'no-serving',    label: `Product, no serving size (${rows.filter(r => r.warningNoServing).length})`, warn: true },
     ...(duplicateCount > 0 ? [{ key: 'duplicate' as const, label: `Duplicate mappings (${duplicateCount})`, warn: true }] : []),
     ...(rows.some(r => r.versioned) ? [{ key: 'versioned' as const, label: `Versioned (${rows.filter(r => r.versioned).length})` }] : []),
+    ...(totalStraddling > 0 ? [{ key: 'needs-decision' as const, label: `Needs a decision (${totalStraddling})`, warn: true }] : []),
   ]
 
   if (rows.length === 0) return <p className={styles.emptyState}>No mappings found.</p>
@@ -1423,46 +1790,79 @@ function AllMappingsTab({
             </tr>
           </thead>
           <tbody>
-            {filtered.map(row => (
-              <tr key={row.mapping.id} className={styles.clickableRow} onClick={() => onRowClick(row)}>
-                <td style={{ fontWeight: 500 }}>
-                  {row.mapping.posItemName}
-                  {row.docCount > 1 && (
-                    <span className={`${styles.badge} ${styles.badgeAmber}`} style={{ marginLeft: 6 }}>
-                      {row.docCount} records
+            {filtered.map(row => {
+              const rowKey = (row.mapping.posItemName || '').toLowerCase()
+              const straddleDecisions = straddlesByKey[rowKey] ?? []
+              const keyVersions = versionsData[rowKey] ?? []
+              return [
+                <tr key={row.mapping.id} className={styles.clickableRow} onClick={() => onRowClick(row)}>
+                  <td style={{ fontWeight: 500 }}>
+                    {row.mapping.posItemName}
+                    {row.docCount > 1 && (
+                      <span className={`${styles.badge} ${styles.badgeAmber}`} style={{ marginLeft: 6 }}>
+                        {row.docCount} records
+                      </span>
+                    )}
+                    {row.versioned && (
+                      <span className={`${styles.badge} ${styles.badgeBlue}`} style={{ marginLeft: 6 }}>
+                        versioned
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    <span className={`${styles.badge} ${
+                      row.mapping.mappingType === 'direct_product' ? styles.badgeBlue
+                      : row.mapping.mappingType === 'recipe' ? styles.badgeGreen
+                      : styles.badgeGray
+                    }`}>
+                      {row.mapping.mappingType === 'direct_product' ? 'product'
+                        : row.mapping.mappingType === 'recipe' ? 'recipe' : 'ignored'}
                     </span>
-                  )}
-                  {row.versioned && (
-                    <span className={`${styles.badge} ${styles.badgeBlue}`} style={{ marginLeft: 6 }}>
-                      versioned
-                    </span>
-                  )}
-                </td>
-                <td>
-                  <span className={`${styles.badge} ${
-                    row.mapping.mappingType === 'direct_product' ? styles.badgeBlue
-                    : row.mapping.mappingType === 'recipe' ? styles.badgeGreen
-                    : styles.badgeGray
-                  }`}>
-                    {row.mapping.mappingType === 'direct_product' ? 'product'
-                      : row.mapping.mappingType === 'recipe' ? 'recipe' : 'ignored'}
-                  </span>
-                </td>
-                <td style={{ color: row.warningMergedOrMissing ? '#92400e' : '#374151', fontSize: 12 }}>
-                  {row.targetLabel}
-                </td>
-                <td style={{ fontSize: 12, color: '#6b7280' }}>{row.servingLabel}</td>
-                <td style={{ fontSize: 12, color: '#6b7280' }}>
-                  {row.ratio != null ? row.ratio.toFixed(3).replace(/\.?0+$/, '') : '—'}
-                </td>
-                <td style={{ fontSize: 12, color: '#6b7280' }}>
-                  {row.seenInReports > 0 ? `${row.seenInReports} report${row.seenInReports !== 1 ? 's' : ''}, ${row.totalQtySold} qty` : '—'}
-                </td>
-                <td>
-                  <button className={`${styles.btnSmall} ${styles.btnOutline}`} onClick={e => { e.stopPropagation(); onRowClick(row) }}>Edit</button>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td style={{ color: row.warningMergedOrMissing ? '#92400e' : '#374151', fontSize: 12 }}>
+                    {row.targetLabel}
+                  </td>
+                  <td style={{ fontSize: 12, color: '#6b7280' }}>{row.servingLabel}</td>
+                  <td style={{ fontSize: 12, color: '#6b7280' }}>
+                    {row.ratio != null ? row.ratio.toFixed(3).replace(/\.?0+$/, '') : '—'}
+                  </td>
+                  <td style={{ fontSize: 12, color: '#6b7280' }}>
+                    {row.seenInReports > 0 ? `${row.seenInReports} report${row.seenInReports !== 1 ? 's' : ''}, ${row.totalQtySold} qty` : '—'}
+                  </td>
+                  <td>
+                    <button className={`${styles.btnSmall} ${styles.btnOutline}`} onClick={e => { e.stopPropagation(); onRowClick(row) }}>Edit</button>
+                  </td>
+                </tr>,
+                ...(filter === 'needs-decision' && straddleDecisions.length > 0 ? [
+                  <tr key={`${row.mapping.id}-straddle`}>
+                    <td colSpan={7} style={{ background: '#fffbeb', padding: '8px 12px', fontSize: 12 }}>
+                      {straddleDecisions.map(d => {
+                        const period = d.period ?? d.reportId
+                        return (
+                          <div key={d.reportId} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                            <span style={{ color: '#374151' }}>{period}:</span>
+                            {d.versionIds.map(vid => {
+                              const v = keyVersions.find(kv => kv.id === vid)
+                              const label = v?.productName ?? v?.recipeName ?? vid.slice(0, 8)
+                              return (
+                                <button
+                                  key={vid}
+                                  className={`${styles.btnSmall} ${vid === d.chosenVersionId ? styles.btnPrimary : styles.btnOutline}`}
+                                  disabled={!canManage}
+                                  onClick={e => { e.stopPropagation(); if (canManage) onOverride(d.reportId, d.mappingKey, vid) }}
+                                >
+                                  {label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )
+                      })}
+                    </td>
+                  </tr>
+                ] : []),
+              ]
+            })}
           </tbody>
         </table>
       </div>
@@ -1504,6 +1904,7 @@ export default function PosMappingPage({
 
   const [versionsData, setVersionsData] = useState<Record<string, MappingVersionData[]>>({})
   const [versionsLoadError, setVersionsLoadError] = useState(false)
+  const [straddleDecisions, setStraddleDecisions] = useState<StraddleDecision[]>([])
 
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -1536,6 +1937,8 @@ export default function PosMappingPage({
       }))
       if (cancelled) return
       setMatchesByReport(mByR)
+      const { reports: initialReports } = partitionReports(rawDocs)
+      setStraddleDecisions(buildStraddleDecisions(mByR, initialReports))
       setLoading(false)
 
       // Load versions from API (no client Firestore rule — use ID token)
@@ -1585,6 +1988,79 @@ export default function PosMappingPage({
   const notLinkedRows = useMemo(() => buildNotLinkedRows(unmatchedRows, mappingsByLower), [unmatchedRows, mappingsByLower])
   const noServingRows = useMemo(() => buildNoServingRows(activeReports, matchesByReport, mappingsByLower), [activeReports, matchesByReport, mappingsByLower])
   const allMappingsRowsList = useMemo(() => allMappingsRows(mappings, products, recipes, activeReports, matchesByReport, versionsData), [mappings, products, recipes, activeReports, matchesByReport, versionsData])
+
+  const straddlesByKey = useMemo(() => {
+    const byKey: Record<string, StraddleDecision[]> = {}
+    for (const d of straddleDecisions) {
+      if (!byKey[d.mappingKey]) byKey[d.mappingKey] = []
+      byKey[d.mappingKey].push(d)
+    }
+    return byKey
+  }, [straddleDecisions])
+
+  async function loadVersions(): Promise<void> {
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) return
+      const resp = await fetch(
+        `${API_BASE}/pos-mappings/versions?venueId=${venueId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      if (resp.ok) {
+        const json = await resp.json()
+        const vByKey: Record<string, MappingVersionData[]> = {}
+        ;(json.versions ?? []).forEach((v: MappingVersionData) => {
+          const k = v.mappingKey || (v.posItemName || '').toLowerCase()
+          if (!vByKey[k]) vByKey[k] = []
+          vByKey[k].push(v)
+        })
+        for (const k of Object.keys(vByKey)) {
+          vByKey[k].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
+        }
+        setVersionsData(vByKey)
+      } else {
+        setVersionsLoadError(true)
+      }
+    } catch {
+      setVersionsLoadError(true)
+    }
+  }
+
+  async function handleVersionReload(): Promise<void> {
+    const mSnap = await getDocs(collection(db, 'venues', venueId, 'posProductMappings'))
+    setMappings(mSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })))
+    await loadVersions()
+    const updated = await reloadMatchesForReports(activeReports.map(r => r.id))
+    setMatchesByReport(prev => {
+      const next = { ...prev, ...updated }
+      setStraddleDecisions(buildStraddleDecisions(next, activeReports))
+      return next
+    })
+  }
+
+  async function handleOverride(reportId: string, mappingKey: string, versionId: string): Promise<void> {
+    if (!canManage) return
+    setSaveError(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) { setSaveError('Not authenticated'); return }
+      const resp = await fetch(`${API_BASE}/pos-mappings/report-override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ venueId, reportId, mappingKey, versionId }),
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json.ok) { setSaveError(json.error ?? 'Override failed'); return }
+      const updated = await reloadMatchesForReports([reportId])
+      setMatchesByReport(prev => {
+        const next = { ...prev, ...updated }
+        setStraddleDecisions(buildStraddleDecisions(next, activeReports))
+        return next
+      })
+    } catch (e: any) {
+      setSaveError(e?.message ?? 'Override failed')
+    }
+  }
 
   async function reloadMatchesForReports(reportIds: string[]): Promise<Record<string, MatchData | null>> {
     const updates: Record<string, MatchData | null> = {}
@@ -1876,7 +2352,14 @@ export default function PosMappingPage({
       )}
 
       {tab === 'all-mappings' && (
-        <AllMappingsTab rows={allMappingsRowsList} onRowClick={openAllMappingRow} />
+        <AllMappingsTab
+          rows={allMappingsRowsList}
+          onRowClick={openAllMappingRow}
+          straddlesByKey={straddlesByKey}
+          versionsData={versionsData}
+          canManage={canManage}
+          onOverride={handleOverride}
+        />
       )}
 
       {panelRow && (
@@ -1890,9 +2373,12 @@ export default function PosMappingPage({
           products={products}
           recipes={recipes}
           saving={saving}
+          venueId={venueId}
+          canManage={canManage}
           onSave={handlePanelSave}
           onClose={() => setPanelRow(null)}
           onUnlink={panelRow.existingMapping ? () => handleUnlink(panelRow.existingMapping!) : undefined}
+          onVersionReload={handleVersionReload}
         />
       )}
 
