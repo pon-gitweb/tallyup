@@ -18,10 +18,16 @@ import {
   versionTimelineLabel,
   unlinkBlockedReason,
   saveMappingBlockedReason,
+  buildChangeProductBody,
+  changeProductPreview,
+  firstDeliveryDate,
+  undoConfirmText,
+  buildStraddleDecisions,
   type NoServingRow,
   type AllMappingRow,
   type WriteOp,
   type MappingVersionData,
+  type StraddleDecision,
 } from './PosMappingPage'
 import type { UnmatchedRow, ActiveReport, MatchData } from '../utils/weeklyLedger'
 import { mappingDocId } from '../utils/mappingId'
@@ -918,5 +924,204 @@ describe('saveMappingBlockedReason', () => {
 
   it('Save is enabled for an unversioned existing mapping with no load error', () => {
     expect(saveMappingBlockedReason(true, [], false)).toBeNull()
+  })
+})
+
+// ── Two-choice gate ───────────────────────────────────────────────────────────
+
+describe('two-choice gate (saveMappingBlockedReason)', () => {
+  const v: MappingVersionData = {
+    id: 'v0', mappingKey: 'k', posItemName: 'W', effectiveFrom: '0000-01-01',
+    mappingType: 'direct_product', productId: 'p1', productName: 'X',
+    recipeId: null, recipeName: null, servingMl: null, conversionRatio: null,
+    servingType: null, conversionUnit: null,
+  }
+
+  it('blocks Save (fix-mistake) for existing mapping with version history', () => {
+    expect(saveMappingBlockedReason(true, [v], false)).not.toBeNull()
+  })
+
+  it('does not block Save for new mapping even with versions present', () => {
+    expect(saveMappingBlockedReason(false, [v], false)).toBeNull()
+  })
+})
+
+// ── buildChangeProductBody ────────────────────────────────────────────────────
+
+describe('buildChangeProductBody', () => {
+  const product: any = { id: 'p1', name: 'Andre Clouet', size: '750', unit: 'ml' }
+
+  it('builds correct body with each serving', () => {
+    const body = buildChangeProductBody('Wine', '2026-10-01', product, 'each', '')
+    expect(body.posItemName).toBe('Wine')
+    expect(body.effectiveFrom).toBe('2026-10-01')
+    expect(body.newFields.productId).toBe('p1')
+    expect(body.newFields.productName).toBe('Andre Clouet')
+    expect(body.newFields.mappingType).toBe('direct_product')
+    expect(body.newFields.conversionUnit).toBe('each')
+    expect(body.newFields.recipeId).toBeNull()
+    expect(body.newFields.recipeName).toBeNull()
+  })
+
+  it('builds body with shot serving', () => {
+    const body = buildChangeProductBody('Wine', '2026-10-01', product, 'shot', '')
+    expect(body.newFields.servingMl).toBe(30)
+    expect(body.newFields.conversionUnit).toBe('ml')
+    expect(body.newFields.servingType).toBe('shot')
+  })
+
+  it('builds body with custom ml', () => {
+    const body = buildChangeProductBody('Wine', '2026-10-01', product, 'custom', '200')
+    expect(body.newFields.servingMl).toBe(200)
+  })
+})
+
+// ── changeProductPreview ──────────────────────────────────────────────────────
+
+describe('changeProductPreview', () => {
+  it('builds preview text with old and new product', () => {
+    const text = changeProductPreview('2026-10-01', 'Champagne Collet', 'Andre Clouet')
+    expect(text).toContain('Champagne Collet')
+    expect(text).toContain('Andre Clouet')
+    expect(text).toContain('1 Oct 2026')
+    expect(text).toMatch(/Sales before.*stay with.*Sales from.*go to/)
+  })
+
+  it('returns empty string when no date', () => {
+    expect(changeProductPreview('', 'A', 'B')).toBe('')
+  })
+
+  it('uses "old product" when oldProductName is null', () => {
+    const text = changeProductPreview('2026-10-01', null, 'New Product')
+    expect(text).toContain('old product')
+    expect(text).toContain('New Product')
+  })
+})
+
+// ── firstDeliveryDate ─────────────────────────────────────────────────────────
+
+describe('firstDeliveryDate', () => {
+  it('picks the earliest date when multiple matches exist', () => {
+    const lines = [
+      { date: '2026-10-05', productId: 'p1' },
+      { date: '2026-09-01', productId: 'p1' },
+      { date: '2026-10-01', productId: 'p1' },
+    ]
+    expect(firstDeliveryDate(lines, 'p1')).toBe('2026-09-01')
+  })
+
+  it('returns null when no lines match the productId', () => {
+    expect(firstDeliveryDate([{ date: '2026-10-01', productId: 'other' }], 'p1')).toBeNull()
+  })
+
+  it('returns null for empty lines array', () => {
+    expect(firstDeliveryDate([], 'p1')).toBeNull()
+  })
+
+  it('ignores lines with null date', () => {
+    const lines = [
+      { date: null, productId: 'p1' },
+      { date: '2026-10-01', productId: 'p1' },
+    ]
+    expect(firstDeliveryDate(lines, 'p1')).toBe('2026-10-01')
+  })
+})
+
+// ── undoConfirmText ───────────────────────────────────────────────────────────
+
+describe('undoConfirmText', () => {
+  it('names the v0 product when only one real version', () => {
+    const versions: MappingVersionData[] = [
+      { id: 'v0', mappingKey: 'wine', posItemName: 'Wine', effectiveFrom: '0000-01-01', mappingType: 'direct_product', productId: 'p1', productName: 'Collet', recipeId: null, recipeName: null, servingMl: null, conversionRatio: null, servingType: null, conversionUnit: null },
+      { id: 'v1', mappingKey: 'wine', posItemName: 'Wine', effectiveFrom: '2026-10-01', mappingType: 'direct_product', productId: 'p2', productName: 'Andre Clouet', recipeId: null, recipeName: null, servingMl: null, conversionRatio: null, servingType: null, conversionUnit: null },
+    ]
+    expect(undoConfirmText(versions)).toContain('Collet')
+    expect(undoConfirmText(versions)).toContain('Restore')
+  })
+
+  it('names the second-to-last real version when multiple real versions', () => {
+    const versions: MappingVersionData[] = [
+      { id: 'v0', mappingKey: 'w', posItemName: 'W', effectiveFrom: '0000-01-01', mappingType: 'direct_product', productId: 'p0', productName: 'Original', recipeId: null, recipeName: null, servingMl: null, conversionRatio: null, servingType: null, conversionUnit: null },
+      { id: 'v1', mappingKey: 'w', posItemName: 'W', effectiveFrom: '2026-09-01', mappingType: 'direct_product', productId: 'p1', productName: 'Middle', recipeId: null, recipeName: null, servingMl: null, conversionRatio: null, servingType: null, conversionUnit: null },
+      { id: 'v2', mappingKey: 'w', posItemName: 'W', effectiveFrom: '2026-10-01', mappingType: 'direct_product', productId: 'p2', productName: 'Latest', recipeId: null, recipeName: null, servingMl: null, conversionRatio: null, servingType: null, conversionUnit: null },
+    ]
+    expect(undoConfirmText(versions)).toContain('Middle')
+  })
+
+  it('falls back to "previous product" when no v0 name', () => {
+    const versions: MappingVersionData[] = [
+      { id: 'v1', mappingKey: 'w', posItemName: 'W', effectiveFrom: '2026-10-01', mappingType: 'direct_product', productId: 'p2', productName: 'Latest', recipeId: null, recipeName: null, servingMl: null, conversionRatio: null, servingType: null, conversionUnit: null },
+    ]
+    expect(undoConfirmText(versions)).toContain('previous product')
+  })
+})
+
+// ── buildStraddleDecisions ────────────────────────────────────────────────────
+
+describe('buildStraddleDecisions', () => {
+  function makeReport(id: string): ActiveReport {
+    return {
+      id, source: 'csv', startStr: '2026-10-01', endStr: '2026-10-07', startMs: 0,
+      days: 7, lineCount: 1, totalRevenue: 0, totalQtySold: 5,
+      rawLines: [{ name: 'wine', qtySold: 5 }],
+      overlappingCycles: [], allocationMethod: 'none', status: null,
+    }
+  }
+
+  it('returns decisions for reports with defaulted straddle', () => {
+    const mockMatch: any = {
+      matched: 1, total: 1, matchedRevenue: 0, matchedQty: 1,
+      matches: [{
+        name: 'wine',
+        qtySold: 5,
+        mappingStraddle: { versionIds: ['v0', 'v1'], chosenVersionId: 'v0', defaulted: true },
+      }],
+    }
+    const reports = [makeReport('r1')]
+    const result = buildStraddleDecisions({ r1: mockMatch }, reports)
+    expect(result).toHaveLength(1)
+    expect(result[0].reportId).toBe('r1')
+    expect(result[0].mappingKey).toBe('wine')
+    expect(result[0].versionIds).toEqual(['v0', 'v1'])
+    expect(result[0].chosenVersionId).toBe('v0')
+    expect(result[0].period).toBe('2026-10-01 – 2026-10-07')
+  })
+
+  it('ignores non-defaulted straddle (user already decided)', () => {
+    const mockMatch: any = {
+      matched: 1, total: 1, matchedRevenue: 0, matchedQty: 1,
+      matches: [{
+        name: 'wine',
+        mappingStraddle: { versionIds: ['v0', 'v1'], chosenVersionId: 'v1', defaulted: false },
+      }],
+    }
+    const reports = [makeReport('r1')]
+    expect(buildStraddleDecisions({ r1: mockMatch }, reports)).toHaveLength(0)
+  })
+
+  it('ignores matches with no straddle data', () => {
+    const mockMatch: any = {
+      matched: 1, total: 1, matchedRevenue: 0, matchedQty: 1,
+      matches: [{ name: 'wine', qtySold: 5 }],
+    }
+    const reports = [makeReport('r1')]
+    expect(buildStraddleDecisions({ r1: mockMatch }, reports)).toHaveLength(0)
+  })
+
+  it('returns empty for no reports', () => {
+    expect(buildStraddleDecisions({}, [])).toHaveLength(0)
+  })
+
+  it('deduplicates by (reportId, mappingKey)', () => {
+    const mockMatch: any = {
+      matched: 2, total: 2, matchedRevenue: 0, matchedQty: 2,
+      matches: [
+        { name: 'wine', qtySold: 3, mappingStraddle: { versionIds: ['v0', 'v1'], chosenVersionId: 'v0', defaulted: true } },
+        { name: 'wine', qtySold: 2, mappingStraddle: { versionIds: ['v0', 'v1'], chosenVersionId: 'v0', defaulted: true } },
+      ],
+    }
+    const reports = [makeReport('r1')]
+    const result = buildStraddleDecisions({ r1: mockMatch }, reports)
+    expect(result).toHaveLength(1)
   })
 })
