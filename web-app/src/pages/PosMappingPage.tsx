@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  collection, doc, getDocs, getDoc, query,
-  serverTimestamp, where, writeBatch,
+  collection, collectionGroup, doc, getDocs, getDoc, query, where,
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import {
@@ -539,6 +538,16 @@ export function undoConfirmText(versions: MappingVersionData[]): string {
   return `Restore ${prevName} for all dates?`
 }
 
+export function undoConfirmTextFromChange(
+  change: { kind: string; before: Record<string, unknown> | null } | null,
+  versions: MappingVersionData[],
+): string {
+  if (!change) return undoConfirmText(versions)
+  if (change.kind === 'link') return 'Remove this link?'
+  const prevName = (change.before as any)?.productName ?? (change.before as any)?.recipeName ?? 'previous'
+  return `Restore ${prevName} for this button?`
+}
+
 export function buildStraddleDecisions(
   matchesByReport: Record<string, MatchData | null>,
   activeReports: ActiveReport[],
@@ -749,7 +758,7 @@ function MappingPanel({
   saving: boolean
   venueId: string
   canManage: boolean
-  onSave: (payload: Record<string, unknown>, posName: string, existingCreatedAt?: unknown) => void
+  onSave: (payload: Record<string, unknown>, posName: string, existingCreatedAt?: unknown, kind?: 'link' | 'fix') => void
   onClose: () => void
   onUnlink?: () => void
   onVersionReload: () => Promise<void>
@@ -796,6 +805,57 @@ function MappingPanel({
   const [undoSubmitting, setUndoSubmitting] = useState(false)
   const [undoError, setUndoError] = useState<string | null>(null)
 
+  // Change log for this key (loaded from server)
+  const [changeLog, setChangeLog] = useState<Array<{ id: string; kind: string; before: Record<string, unknown> | null; after: Record<string, unknown> | null; at: { toDate?: () => Date } | null; undone: boolean }>>([])
+  useEffect(() => {
+    if (!posName) return
+    const mappingKey = posName.toLowerCase()
+    let cancelled = false
+    async function loadLog() {
+      try {
+        const token = await auth.currentUser?.getIdToken()
+        if (!token) return
+        const resp = await fetch(`${API_BASE}/pos-mappings/changes?venueId=${encodeURIComponent(venueId)}&mappingKey=${encodeURIComponent(mappingKey)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!resp.ok) return
+        const json = await resp.json()
+        if (!cancelled && json.ok) setChangeLog(json.changes ?? [])
+      } catch { /* non-critical */ }
+    }
+    loadLog()
+    return () => { cancelled = true }
+  }, [posName, venueId])
+
+  const hasAnyHistory = isVersioned || changeLog.length > 0
+  const latestChange = changeLog.find(c => !c.undone) ?? null
+
+  function undoConfirmTextForChange(): string {
+    return undoConfirmTextFromChange(latestChange, keyVersions)
+  }
+
+  function formatChangeDate(at: { toDate?: () => Date } | null): string {
+    if (!at?.toDate) return ''
+    const d = at.toDate()
+    const now = new Date()
+    const sameYear = d.getFullYear() === now.getFullYear()
+    return d.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: sameYear ? undefined : 'numeric' })
+  }
+
+  function changeLogLabel(c: { kind: string; before: Record<string, unknown> | null; after: Record<string, unknown> | null; at: { toDate?: () => Date } | null }): string {
+    const date = formatChangeDate(c.at)
+    const name = (c.after as any)?.productName ?? (c.after as any)?.recipeName ?? null
+    const prevName = (c.before as any)?.productName ?? (c.before as any)?.recipeName ?? null
+    const effectiveFrom = (c as any)?.versionId ? '' : ''
+    switch (c.kind) {
+      case 'link': return `Linked to ${name ?? 'Ignored'}${date ? ` · ${date}` : ''}`
+      case 'fix': return `Fixed to ${name ?? 'Ignored'}${date ? ` · ${date}` : ''}`
+      case 'unlink': return `Unlinked${prevName ? ` from ${prevName}` : ''}${date ? ` · ${date}` : ''}`
+      case 'dated_change': return `Changed to ${name ?? '?'}${effectiveFrom ? ` from ${effectiveFrom}` : ''}${date ? ` · ${date}` : ''}`
+      default: return `Change${date ? ` · ${date}` : ''}`
+    }
+  }
+
   const todayNZ = new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' })
 
   const filteredProducts = useMemo(() => {
@@ -831,7 +891,29 @@ function MappingPanel({
             lines.push({ date: dateStr, productId: l.productId ?? null })
           })
         })
-        const earliest = firstDeliveryDate(lines, cpProduct!.id)
+        let earliest = firstDeliveryDate(lines, cpProduct!.id)
+        // Fallback: collectionGroup query on invoice lines subcollection
+        if (!earliest) {
+          try {
+            const lineSnap = await getDocs(query(collectionGroup(db, 'lines'), where('productId', '==', cpProduct!.id)))
+            const subcollLines: Array<{ date: string | null; productId: string | null }> = []
+            await Promise.all(lineSnap.docs.slice(0, 20).map(async ld => {
+              try {
+                const invoiceRef = ld.ref.parent.parent
+                if (!invoiceRef) return
+                const invSnap = await getDoc(invoiceRef)
+                if (!invSnap.exists()) return
+                const invData = invSnap.data() as any
+                const ts2 = invData.invoiceDateTimestamp ?? invData.date ?? invData.createdAt
+                const dateStr2: string | null = ts2?.toDate
+                  ? ts2.toDate().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' })
+                  : null
+                subcollLines.push({ date: dateStr2, productId: cpProduct!.id })
+              } catch { /* skip */ }
+            }))
+            earliest = firstDeliveryDate(subcollLines, cpProduct!.id)
+          } catch { /* collectionGroup may not have index */ }
+        }
         if (!cancelled) setCpSuggestion(earliest)
       } catch {
         if (!cancelled) setCpSuggestion(null)
@@ -891,7 +973,7 @@ function MappingPanel({
     try {
       const token = await auth.currentUser?.getIdToken()
       if (!token) { setUndoError('Not authenticated'); setUndoSubmitting(false); return }
-      const resp = await fetch(`${API_BASE}/pos-mappings/undo-change`, {
+      const resp = await fetch(`${API_BASE}/pos-mappings/undo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ venueId, posItemName: posName }),
@@ -928,20 +1010,21 @@ function MappingPanel({
   }, [mode, selectedProduct, servingPreset, servingMl, sizeMl])
 
   function handleSave() {
+    const kind = existingMapping ? 'fix' : 'link'
     if (existingMapping) {
       const { payload, createdAt } = buildEditPayload(existingMapping, {
         mode, product: selectedProduct, recipe: selectedRecipe, servingPreset, customMl,
       })
-      onSave(payload, posName, createdAt)
+      onSave(payload, posName, createdAt, kind)
       return
     }
     if (mode === 'skip') {
-      onSave(buildSavePayload(posName, 'csv', 'skipped', {}), posName)
+      onSave(buildSavePayload(posName, 'csv', 'skipped', {}), posName, undefined, kind)
       return
     }
     if (mode === 'recipe') {
       if (!selectedRecipe) return
-      onSave(buildSavePayload(posName, 'csv', 'recipe', { recipeId: selectedRecipe.id, recipeName: selectedRecipe.name }), posName)
+      onSave(buildSavePayload(posName, 'csv', 'recipe', { recipeId: selectedRecipe.id, recipeName: selectedRecipe.name }), posName, undefined, kind)
       return
     }
     if (!selectedProduct) return
@@ -955,7 +1038,7 @@ function MappingPanel({
       conversionRatio: serving.conversionRatio,
       servingType:     serving.servingType,
       conversionUnit:  serving.conversionUnit,
-    }), posName)
+    }), posName, undefined, kind)
   }
 
   const saveBlockedReason = saveMappingBlockedReason(!!existingMapping, keyVersions, versionsUnavailable ?? false)
@@ -966,22 +1049,40 @@ function MappingPanel({
     || (mode === 'product' && !!selectedProduct && (servingPreset === 'each' || servingMl != null))
   )
 
+  // Serving label for current mapping
+  const currentServingLabel = (() => {
+    if (!existingMapping) return null
+    if (existingMapping.mappingType === 'skipped') return 'Ignored'
+    if (existingMapping.mappingType === 'recipe') return existingMapping.recipeName ?? null
+    const pName = existingMapping.productName ?? null
+    const sType = existingMapping.servingType ?? (existingMapping.conversionUnit === 'each' ? 'each' : null)
+    if (!pName) return null
+    const sLabel = sType === 'each' ? 'each' : existingMapping.servingMl ? `${existingMapping.servingMl}ml` : null
+    return sLabel ? `${pName}, ${sLabel}` : pName
+  })()
+
   return (
     <div className={styles.drawerOverlay} onClick={() => { if (!saving && !cpSubmitting && !undoSubmitting) onClose() }}>
       <div className={styles.drawer} onClick={e => e.stopPropagation()}>
         <div>
           <button className={styles.drawerClose} onClick={() => { if (!saving && !cpSubmitting && !undoSubmitting) onClose() }}>×</button>
-          <p className={styles.drawerTitle}>{posName}</p>
-          <p className={styles.drawerSubtitle}>
-            {existingMapping ? 'Edit this POS mapping' : 'Set how this POS name maps to your catalogue'}
-          </p>
+          <p className={styles.drawerTitle}>Till button: {posName}</p>
+          {existingMapping
+            ? <p className={styles.drawerSubtitle}>Currently: {currentServingLabel ?? '—'}</p>
+            : <p className={styles.drawerSubtitle}>Not linked yet</p>
+          }
         </div>
 
         {affectedReports && affectedReports.count > 0 && editMode === 'fix-mistake' && (
           <div className={`${styles.banner} ${styles.bannerAmber}`}>
-            This will re-match {affectedReports.count} report{affectedReports.count !== 1 ? 's' : ''}
-            {affectedReports.dateRange ? ` (${affectedReports.dateRange})` : ''}.
-            Past sales for this button will move to the new product.
+            <strong style={{ color: '#b45309' }}>Changes all past sales history — affects {affectedReports.count} report{affectedReports.count !== 1 ? 's' : ''}.</strong>
+            {affectedReports.dateRange ? ` (${affectedReports.dateRange})` : ''}
+          </div>
+        )}
+
+        {!existingMapping && affectedReports && affectedReports.count > 0 && (
+          <div className={`${styles.banner} ${styles.bannerGray}`} style={{ fontSize: 12 }}>
+            This also applies to {affectedReports.count} past report{affectedReports.count !== 1 ? 's' : ''} where this button appeared.
           </div>
         )}
 
@@ -1005,7 +1106,12 @@ function MappingPanel({
               onClick={() => setEditMode('fix-mistake')}
             >
               <strong>Fix a mistake</strong>
-              <span style={{ fontSize: 12, color: '#6b7280', display: 'block' }}>Rewrites all history — use when you mapped the wrong product from the start</span>
+              <span style={{ fontSize: 12, color: '#6b7280', display: 'block' }}>It was set up wrong from the start.</span>
+              {affectedReports && affectedReports.count > 0 && (
+                <span style={{ fontSize: 12, color: '#dc2626', display: 'block', marginTop: 2 }}>
+                  Changes all past sales history — affects {affectedReports.count} report{affectedReports.count !== 1 ? 's' : ''}.
+                </span>
+              )}
             </button>
             {saveBlockedReason && (
               <p className={styles.errorText} style={{ fontSize: 12, marginTop: 0 }}>{saveBlockedReason}</p>
@@ -1016,8 +1122,8 @@ function MappingPanel({
               disabled={!canManage}
               onClick={() => setEditMode('change-product')}
             >
-              <strong>Product changed from a date…</strong>
-              <span style={{ fontSize: 12, color: '#6b7280', display: 'block' }}>Records that this POS button switched to a different product on a specific date</span>
+              <strong>Change from a date</strong>
+              <span style={{ fontSize: 12, color: '#6b7280', display: 'block' }}>It now pours something different — a new product or a new pour size. Sales before that date stay as they were.</span>
             </button>
           </div>
         )}
@@ -1029,14 +1135,20 @@ function MappingPanel({
               <button className={styles.btnSecondary} style={{ marginBottom: 4 }} onClick={() => setEditMode(null)}>← Back</button>
             )}
 
-            <div style={{ display: 'flex', gap: 6 }}>
-              {(['product', 'recipe', 'skip'] as const).map(m => (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {([
+                { key: 'product', label: 'Product', desc: 'One bottle, keg or item from your shelf.' },
+                { key: 'recipe', label: 'Recipe', desc: 'A drink made from set amounts of several products.' },
+                { key: 'skip', label: 'Ignore', desc: 'Not stock — food, fees, service charges.' },
+              ] as const).map(({ key: m, label, desc }) => (
                 <button
                   key={m}
-                  className={`${styles.btnSmall} ${mode === m ? styles.btnPrimary : styles.btnOutline}`}
+                  className={styles.btnSecondary}
+                  style={{ textAlign: 'left', background: mode === m ? '#eff6ff' : undefined, borderColor: mode === m ? '#3b82f6' : undefined }}
                   onClick={() => setMode(m)}
                 >
-                  {m === 'product' ? 'Product' : m === 'recipe' ? 'Recipe' : 'Ignore'}
+                  <strong style={{ color: mode === m ? '#1d4ed8' : undefined }}>{label}</strong>
+                  <span style={{ fontSize: 12, color: '#6b7280', display: 'block' }}>{desc}</span>
                 </button>
               ))}
             </div>
@@ -1271,8 +1383,8 @@ function MappingPanel({
           </>
         )}
 
-        {/* Undo last change — shown when versioned, regardless of editMode */}
-        {isVersioned && canManage && (
+        {/* Undo last change — shown when any history exists */}
+        {hasAnyHistory && canManage && (
           <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, marginTop: 8 }}>
             {!undoConfirm ? (
               <button className={styles.btnSecondary} onClick={() => setUndoConfirm(true)}>
@@ -1280,7 +1392,7 @@ function MappingPanel({
               </button>
             ) : (
               <div style={{ fontSize: 13 }}>
-                <p style={{ marginBottom: 8 }}>{undoConfirmText(keyVersions)}</p>
+                <p style={{ marginBottom: 8 }}>{undoConfirmTextForChange()}</p>
                 {undoError && <p className={styles.errorText}>{undoError}</p>}
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button className={styles.btnDanger} disabled={undoSubmitting} onClick={handleUndoConfirm}>
@@ -1290,6 +1402,18 @@ function MappingPanel({
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Timeline — change log entries, newest first (B6) */}
+        {changeLog.length > 0 && (
+          <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: 10, marginTop: 6 }}>
+            <p style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>History</p>
+            {changeLog.map(c => (
+              <p key={c.id} style={{ fontSize: 12, color: c.undone ? '#d1d5db' : '#6b7280', margin: '2px 0', textDecoration: c.undone ? 'line-through' : undefined }}>
+                {changeLogLabel(c)}
+              </p>
+            ))}
           </div>
         )}
       </div>
@@ -2099,96 +2223,44 @@ export default function PosMappingPage({
 
   type SaveInput = { posName: string; payload: Record<string, unknown> }
 
-  async function saveMappings(entries: SaveInput[]): Promise<{ savedNames: string[]; failed: boolean }> {
+  async function saveMappings(entries: SaveInput[], kind: 'link' | 'fix' | 'unlink' = 'link'): Promise<{ savedNames: string[]; failed: boolean }> {
     if (!canManage) return { savedNames: [], failed: false }
     setSaving(true)
     setSaveError(null)
-    const savedNames: string[] = []
     try {
-      const batches = planMappingWrites(entries, mappings)
-      for (const ops of batches) {
-        try {
-          const batch = writeBatch(db)
-          for (const op of ops) {
-            const docRef = doc(db, 'venues', venueId, 'posProductMappings', op.docId)
-            if (op.kind === 'set') {
-              batch.set(docRef, {
-                ...op.payload,
-                createdAt: op.existingCreatedAt ?? serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              })
-            } else {
-              batch.delete(docRef)
-            }
-          }
-          await batch.commit()
-          const batchSaved = ops.filter((op): op is Extract<WriteOp, { kind: 'set' }> => op.kind === 'set').map(op => op.posName)
-          savedNames.push(...batchSaved)
-        } catch (e: any) {
-          console.error('batch failed', e)
-          setSaveError(`Saved ${savedNames.length} of ${entries.length}. Failed at: ${entries[savedNames.length]?.posName ?? '?'}`)
-          setSaving(false)
-          return { savedNames, failed: true }
-        }
-      }
-
-      // Mark salesReportUnknowns as mapped (best-effort, batched)
-      const savedNorms = new Set(savedNames.map(n => wlNormName(n)))
-      try {
-        const unknownsSnap = await getDocs(
-          query(collection(db, 'venues', venueId, 'salesReportUnknowns'), where('status', '==', 'unmapped'))
-        )
-        const toMark = unknownsSnap.docs.filter(d => {
-          const lineName = (d.data()?.line?.name as string | undefined) ?? ''
-          return savedNorms.has(wlNormName(lineName))
-        })
-        if (toMark.length > 0) {
-          const unknownChunks = chunkArray(toMark, 400)
-          for (const chunk of unknownChunks) {
-            const batch = writeBatch(db)
-            chunk.forEach(d => batch.update(d.ref, { status: 'mapped' }))
-            await batch.commit()
-          }
-        }
-      } catch { /* best-effort */ }
-
-      // Update local mappings state (apply sets and deletes)
-      setMappings(prev => {
-        let updated = [...prev]
-        for (const ops of batches) {
-          for (const op of ops) {
-            if (op.kind === 'set') {
-              updated = updated.filter(m => m.id !== op.docId)
-              const newMapping: Mapping = { id: op.docId, posItemName: op.posName, posSystem: 'csv', ...(op.payload as any) }
-              updated.push(newMapping)
-            } else {
-              updated = updated.filter(m => m.id !== op.docId)
-            }
-          }
-        }
-        return updated
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) { setSaveError('Not authenticated'); setSaving(false); return { savedNames: [], failed: true } }
+      const apiEntries = entries.map(e => ({ posItemName: e.posName, mapping: kind === 'unlink' ? null : e.payload }))
+      const resp = await fetch(`${API_BASE}/pos-mappings/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ venueId, kind, entries: apiEntries }),
       })
-
-      // Re-match affected reports once
-      const affectedIds = unionReportIds(savedNames, activeReports)
-      if (affectedIds.length > 0) {
-        await runRematch(affectedIds, matchesByReport)
+      const json = await resp.json()
+      if (!resp.ok || !json.ok) {
+        setSaveError(json.error ?? 'Save failed')
+        setSaving(false)
+        return { savedNames: [], failed: true }
       }
-
+      const savedNames = kind === 'unlink' ? entries.map(e => e.posName) : entries.map(e => e.posName)
+      // Reload mappings from Firestore to reflect server-side writes
+      await handleVersionReload()
       return { savedNames, failed: false }
     } catch (e: any) {
       console.error('saveMappings failed', e)
       setSaveError(`Save failed: ${e?.message ?? 'unknown error'}`)
-      return { savedNames, failed: true }
+      return { savedNames: [], failed: true }
     } finally {
       setSaving(false)
     }
   }
 
-  async function handlePanelSave(payload: Record<string, unknown>, posName: string, _existingCreatedAt?: unknown) {
+  async function handlePanelSave(payload: Record<string, unknown>, posName: string, _existingCreatedAt?: unknown, kind: 'link' | 'fix' = 'link') {
     if (!canManage) return
-    const { failed } = await saveMappings([{ posName, payload }])
-    if (!failed) setPanelRow(null)
+    const { failed } = await saveMappings([{ posName, payload }], kind)
+    if (!failed) {
+      setPanelRow(null)
+    }
   }
 
   async function handleUnlink(mapping: Mapping) {
@@ -2196,19 +2268,17 @@ export default function PosMappingPage({
     setSaving(true)
     setSaveError(null)
     try {
-      const unlinkBatches = planUnlinkWrites(mapping.posItemName, mappings)
-      for (const ops of unlinkBatches) {
-        const batch = writeBatch(db)
-        for (const op of ops) {
-          batch.delete(doc(db, 'venues', venueId, 'posProductMappings', op.docId))
-        }
-        await batch.commit()
-      }
-      const key = (mapping.posItemName || '').toLowerCase()
-      setMappings(prev => prev.filter(m => (m.posItemName || '').toLowerCase() !== key))
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) { setSaveError('Not authenticated'); return }
+      const resp = await fetch(`${API_BASE}/pos-mappings/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ venueId, kind: 'unlink', entries: [{ posItemName: mapping.posItemName, mapping: null }] }),
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json.ok) { setSaveError(json.error ?? 'Unlink failed'); return }
       setPanelRow(null)
-      const affectedIds = unionReportIds([mapping.posItemName], activeReports)
-      if (affectedIds.length > 0) await runRematch(affectedIds, matchesByReport)
+      await handleVersionReload()
     } catch (e: any) {
       setSaveError(`Unlink failed: ${e?.message ?? 'unknown error'}`)
     } finally {

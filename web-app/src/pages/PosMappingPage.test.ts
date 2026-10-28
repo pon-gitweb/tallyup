@@ -22,6 +22,7 @@ import {
   changeProductPreview,
   firstDeliveryDate,
   undoConfirmText,
+  undoConfirmTextFromChange,
   buildStraddleDecisions,
   type NoServingRow,
   type AllMappingRow,
@@ -1123,5 +1124,90 @@ describe('buildStraddleDecisions', () => {
     const reports = [makeReport('r1')]
     const result = buildStraddleDecisions({ r1: mockMatch }, reports)
     expect(result).toHaveLength(1)
+  })
+})
+
+// ── undoConfirmTextFromChange ─────────────────────────────────────────────────
+
+describe('undoConfirmTextFromChange', () => {
+  const noVersions: MappingVersionData[] = []
+  const withVersions: MappingVersionData[] = [
+    { id: 'v0', effectiveFrom: '0000-01-01', productName: 'House Red', recipeName: null, mappingType: 'direct_product', productId: 'p1', recipeId: null, servingMl: null, conversionRatio: null },
+    { id: 'v1', effectiveFrom: '2024-01-01', productName: 'Pinot Noir', recipeName: null, mappingType: 'direct_product', productId: 'p2', recipeId: null, servingMl: null, conversionRatio: null },
+  ]
+
+  it('returns "Remove this link?" for kind=link', () => {
+    const change = { kind: 'link', before: null }
+    expect(undoConfirmTextFromChange(change, noVersions)).toBe('Remove this link?')
+  })
+
+  it('returns restore text for kind=fix with productName', () => {
+    const change = { kind: 'fix', before: { productName: 'Sav Blanc', recipeName: null } }
+    expect(undoConfirmTextFromChange(change, noVersions)).toBe('Restore Sav Blanc for this button?')
+  })
+
+  it('returns restore text for kind=unlink with recipeName fallback', () => {
+    const change = { kind: 'unlink', before: { productName: null, recipeName: 'Spritz Mix' } }
+    expect(undoConfirmTextFromChange(change, noVersions)).toBe('Restore Spritz Mix for this button?')
+  })
+
+  it('falls back to "previous" when before has no name', () => {
+    const change = { kind: 'fix', before: {} }
+    expect(undoConfirmTextFromChange(change, noVersions)).toBe('Restore previous for this button?')
+  })
+
+  it('delegates to undoConfirmText when change is null and versions exist', () => {
+    const result = undoConfirmTextFromChange(null, withVersions)
+    expect(result).toBe(undoConfirmText(withVersions))
+  })
+})
+
+// ── planMappingWrites: consolidation + versioned guard ────────────────────────
+
+describe('planMappingWrites consolidation', () => {
+  it('consolidates two docs for the same key, deleting the non-canonical', () => {
+    const existing: any[] = [
+      { id: 'house_red_csv', posItemName: 'House Red', posSystem: 'csv', createdAt: { seconds: 100, nanoseconds: 0 }, updatedAt: { seconds: 200, nanoseconds: 0 } },
+      { id: 'house_red_square', posItemName: 'House Red', posSystem: 'square', createdAt: { seconds: 50, nanoseconds: 0 }, updatedAt: { seconds: 150, nanoseconds: 0 } },
+    ]
+    const entries = [{ posName: 'House Red', payload: { mappingType: 'direct_product', productId: 'p1' } }]
+    const batches = planMappingWrites(entries, existing)
+    const ops = batches.flat()
+    const sets = ops.filter(o => o.kind === 'set')
+    const deletes = ops.filter(o => o.kind === 'delete')
+    expect(sets).toHaveLength(1)
+    expect(deletes).toHaveLength(1)
+  })
+
+  it('creates a new doc when no existing mapping', () => {
+    const entries = [{ posName: 'New Item', payload: { mappingType: 'direct_product', productId: 'p2' } }]
+    const batches = planMappingWrites(entries, [])
+    const ops = batches.flat()
+    expect(ops).toHaveLength(1)
+    expect(ops[0].kind).toBe('set')
+  })
+})
+
+describe('saveMappingBlockedReason: fix rejected when versioned', () => {
+  it('returns block reason when mapping is existing and versioned', () => {
+    const versions: MappingVersionData[] = [
+      { id: 'v1', effectiveFrom: '2024-06-01', productName: 'Pils', recipeName: null, mappingType: 'direct_product', productId: 'p1', recipeId: null, servingMl: null, conversionRatio: null },
+    ]
+    const reason = saveMappingBlockedReason(true, versions, false)
+    expect(reason).not.toBeNull()
+    expect(reason).toContain('Fix a mistake is disabled')
+  })
+
+  it('allows fix when no version history', () => {
+    const reason = saveMappingBlockedReason(true, [], false)
+    expect(reason).toBeNull()
+  })
+
+  it('allows save for a new (non-existing) mapping regardless of versions', () => {
+    const versions: MappingVersionData[] = [
+      { id: 'v1', effectiveFrom: '2024-06-01', productName: 'Pils', recipeName: null, mappingType: 'direct_product', productId: 'p1', recipeId: null, servingMl: null, conversionRatio: null },
+    ]
+    const reason = saveMappingBlockedReason(false, versions, false)
+    expect(reason).toBeNull()
   })
 })

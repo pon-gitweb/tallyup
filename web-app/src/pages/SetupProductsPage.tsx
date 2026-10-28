@@ -128,6 +128,76 @@ export function computeGpPercent(
   return Math.round(((sellPriceExGst - costPrice) / sellPriceExGst) * 100)
 }
 
+// ── Category merge suggestions ────────────────────────────────────────────────
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)])
+  for (let j = 0; j <= n; j++) dp[0][j] = j
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+    }
+  }
+  return dp[m][n]
+}
+
+function isSingularPlural(a: string, b: string): boolean {
+  const [lo, hi] = a.length < b.length ? [a, b] : [b, a]
+  return hi === lo + 's' || hi === lo + 'es'
+}
+
+export function suggestCategoryMerges(
+  categoryCounts: Record<string, number>,
+  venueList: string[],
+): Array<{ from: string[]; to: string; count: number }> {
+  const names = Object.keys(categoryCounts)
+  const groups: number[] = names.map((_, i) => i)  // union-find
+
+  function root(i: number): number { return groups[i] === i ? i : (groups[i] = root(groups[i])) }
+  function union(i: number, j: number) { groups[root(i)] = root(j) }
+
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      const a = names[i].toLowerCase().trim()
+      const b = names[j].toLowerCase().trim()
+      if (a === b) { union(i, j); continue }
+      if (isSingularPlural(a, b)) { union(i, j); continue }
+      if (a.length >= 5 && b.length >= 5 && levenshtein(a, b) <= 2) { union(i, j); continue }
+    }
+  }
+
+  const groupMap: Map<number, number[]> = new Map()
+  for (let i = 0; i < names.length; i++) {
+    const r = root(i)
+    if (!groupMap.has(r)) groupMap.set(r, [])
+    groupMap.get(r)!.push(i)
+  }
+
+  const result: Array<{ from: string[]; to: string; count: number }> = []
+  for (const [, members] of groupMap) {
+    if (members.length < 2) continue
+    // Choose canonical: most products, ties to venueList, ties to alphabetical
+    const sorted = [...members].sort((a, b) => {
+      const cntA = categoryCounts[names[a]], cntB = categoryCounts[names[b]]
+      if (cntB !== cntA) return cntB - cntA
+      const inVenueA = venueList.includes(names[a]) ? 0 : 1
+      const inVenueB = venueList.includes(names[b]) ? 0 : 1
+      if (inVenueA !== inVenueB) return inVenueA - inVenueB
+      return names[a].localeCompare(names[b])
+    })
+    const canonicalIdx = sorted[0]
+    const canonical = names[canonicalIdx]
+    const fromNames = sorted.slice(1).map(i => names[i])
+    const totalCount = members.reduce((s, i) => s + categoryCounts[names[i]], 0)
+    result.push({ from: fromNames, to: canonical, count: totalCount })
+  }
+
+  return result
+}
+
 const COLUMNS: { field: EditableField; label: string }[] = [
   { field: 'name',         label: 'Name' },
   { field: 'category',     label: 'Category' },
@@ -1352,6 +1422,102 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
   const [csvError, setCsvError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // ── Category tidy-up state ────────────────────────────────────────────────
+  const [catOverview, setCatOverview] = useState<{ categoryCounts: Record<string, number>; venueList: string[]; missing: string[] } | null>(null)
+  const [catTidyOpen, setCatTidyOpen] = useState(false)
+  const [catError, setCatError] = useState<string | null>(null)
+  const [catLoading, setCatLoading] = useState(false)
+  const [catMoveTo, setCatMoveTo] = useState('')
+
+  const catSuggestions = catOverview ? suggestCategoryMerges(catOverview.categoryCounts, catOverview.venueList) : []
+
+  async function loadCatOverview() {
+    setCatLoading(true)
+    setCatError(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) { setCatError('Not authenticated'); return }
+      const resp = await fetch(`https://us-central1-tallyup-f1463.cloudfunctions.net/api/categories/overview?venueId=${encodeURIComponent(venueId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json.ok) { setCatError(json.error ?? 'Load failed'); return }
+      setCatOverview(json)
+    } catch (e: any) {
+      setCatError(e?.message ?? 'Load failed')
+    } finally {
+      setCatLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (catTidyOpen && canManage && !catOverview) loadCatOverview()
+  }, [catTidyOpen])  // eslint-disable-line
+
+  async function handleCatMerge(from: string[], to: string) {
+    setCatError(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) { setCatError('Not authenticated'); return }
+      const resp = await fetch('https://us-central1-tallyup-f1463.cloudfunctions.net/api/categories/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ venueId, from, to }),
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json.ok) { setCatError(json.error ?? 'Merge failed'); return }
+      await loadCatOverview()
+    } catch (e: any) { setCatError(e?.message ?? 'Merge failed') }
+  }
+
+  async function handleCatMoveProducts(productIds: string[], to: string) {
+    setCatError(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) { setCatError('Not authenticated'); return }
+      const resp = await fetch('https://us-central1-tallyup-f1463.cloudfunctions.net/api/categories/move-products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ venueId, productIds, to }),
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json.ok) { setCatError(json.error ?? 'Move failed'); return }
+      await loadCatOverview()
+    } catch (e: any) { setCatError(e?.message ?? 'Move failed') }
+  }
+
+  async function handleCatSyncList() {
+    setCatError(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) { setCatError('Not authenticated'); return }
+      const resp = await fetch('https://us-central1-tallyup-f1463.cloudfunctions.net/api/categories/sync-list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ venueId }),
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json.ok) { setCatError(json.error ?? 'Sync failed'); return }
+      await loadCatOverview()
+    } catch (e: any) { setCatError(e?.message ?? 'Sync failed') }
+  }
+
+  async function handleCatUndo() {
+    setCatError(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) { setCatError('Not authenticated'); return }
+      const resp = await fetch('https://us-central1-tallyup-f1463.cloudfunctions.net/api/categories/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ venueId }),
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json.ok) { setCatError(json.error ?? 'Undo failed'); return }
+      await loadCatOverview()
+    } catch (e: any) { setCatError(e?.message ?? 'Undo failed') }
+  }
 
   // ── GP alert state (owner/manager only) ───────────────────────────────────
   const [gpAlerts, setGpAlerts] = useState<GpAlert[]>([])
@@ -3044,6 +3210,110 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
             setMergingCandidateId(null)
           } : undefined}
         />
+      )}
+
+      {/* Tidy categories section (C4) */}
+      {canManage && (
+        <div style={{ marginTop: 32, borderTop: '1px solid #e5e7eb', paddingTop: 16 }}>
+          <button
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 600, color: '#374151', padding: '4px 0' }}
+            onClick={() => setCatTidyOpen(v => !v)}
+          >
+            {catTidyOpen ? '▾' : '▸'} Tidy categories
+          </button>
+
+          {catTidyOpen && (
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 600 }}>
+              {catLoading && <p style={{ fontSize: 13, color: '#6b7280' }}>Loading…</p>}
+              {catError && <p style={{ fontSize: 13, color: '#dc2626' }}>{catError}</p>}
+
+              {catSuggestions.length > 0 && (
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Suggested merges</p>
+                  {catSuggestions.map((s, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13 }}>
+                      <span style={{ flex: 1 }}>
+                        {s.count} product{s.count !== 1 ? 's' : ''} will move from{' '}
+                        {s.from.map(f => `'${f}'`).join(', ')} to '{s.to}'
+                      </span>
+                      <button
+                        style={{ padding: '3px 10px', fontSize: 12, borderRadius: 4, border: '1px solid #3b82f6', color: '#1d4ed8', background: '#eff6ff', cursor: 'pointer' }}
+                        onClick={() => handleCatMerge(s.from, s.to)}
+                      >
+                        Merge
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {catOverview && Object.keys(catOverview.categoryCounts).length > 0 && (
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>All categories</p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {Object.entries(catOverview.categoryCounts).sort((a, b) => b[1] - a[1]).map(([cat, count]) => (
+                      <span key={cat} style={{ fontSize: 12, background: '#f3f4f6', borderRadius: 12, padding: '2px 8px', color: '#374151' }}>
+                        {cat} ({count})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {catOverview && catOverview.missing.length > 0 && (
+                <div>
+                  <p style={{ fontSize: 13, color: '#92400e' }}>
+                    {catOverview.missing.length} categor{catOverview.missing.length !== 1 ? 'ies' : 'y'} used by products but missing from venue list:{' '}
+                    {catOverview.missing.map(c => `'${c}'`).join(', ')}
+                  </p>
+                  <button
+                    style={{ marginTop: 6, padding: '4px 12px', fontSize: 12, borderRadius: 4, border: '1px solid #d97706', color: '#92400e', background: '#fffbeb', cursor: 'pointer' }}
+                    onClick={handleCatSyncList}
+                  >
+                    Sync category list
+                  </button>
+                </div>
+              )}
+
+              {/* Move to category for selected products */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  style={{ padding: '4px 8px', fontSize: 13, border: '1px solid #d1d5db', borderRadius: 4 }}
+                  placeholder="Category name…"
+                  value={catMoveTo}
+                  onChange={e => setCatMoveTo(e.target.value)}
+                />
+                <button
+                  style={{ padding: '4px 12px', fontSize: 12, borderRadius: 4, border: '1px solid #6b7280', color: '#374151', background: '#f9fafb', cursor: 'pointer' }}
+                  disabled={!catMoveTo.trim()}
+                  onClick={() => {
+                    const selected = products.filter(p => (p as any)._selected).map(p => p.id)
+                    if (selected.length === 0) { setCatError('Select products in the table first'); return }
+                    handleCatMoveProducts(selected, catMoveTo.trim())
+                    setCatMoveTo('')
+                  }}
+                >
+                  Move selected to category
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  style={{ padding: '4px 12px', fontSize: 12, borderRadius: 4, border: '1px solid #d1d5db', color: '#374151', background: '#f9fafb', cursor: 'pointer' }}
+                  onClick={loadCatOverview}
+                >
+                  Refresh
+                </button>
+                <button
+                  style={{ padding: '4px 12px', fontSize: 12, borderRadius: 4, border: '1px solid #d97706', color: '#92400e', background: '#fffbeb', cursor: 'pointer' }}
+                  onClick={handleCatUndo}
+                >
+                  Undo last category change
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
