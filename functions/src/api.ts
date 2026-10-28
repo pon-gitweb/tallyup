@@ -22,6 +22,7 @@ import {
   reportDates, selectVersion, applyVersionsToMappings, planChangeProduct, planUndoChange,
   mappingDocId as mappingDocIdFn, posMappingOverrideDocId,
 } from './mappingVersions';
+import { planServerMappingWrite } from './mappingWrite';
 import { voidSalesReportLogic } from './voidSalesReportLogic';
 import { SUPPLIER_REGISTRATION_OPEN } from './supplierRegistrationGate';
 import {
@@ -7187,12 +7188,10 @@ app.post("/pos-mappings/change-product", async (req, res) => {
 
     const mappingKey = (posItemName || '').toLowerCase();
 
-    // Load existing mapping docs for this key
-    const mappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`)
-      .where('posItemName', '==', posItemName).get();
-    // Also check lowercase match (key-based)
+    // Load ALL mapping docs and filter in memory (case-insensitive, no composite index)
+    const allMappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`).get();
     const existingDocs: MappingDocSnapshot[] = [];
-    mappingsSnap.forEach(d => {
+    allMappingsSnap.forEach(d => {
       const data = d.data() as any;
       if ((data.posItemName || '').toLowerCase() === mappingKey) {
         existingDocs.push({ id: d.id, ...data });
@@ -7300,10 +7299,10 @@ app.post("/pos-mappings/undo-change", async (req, res) => {
 
     const mappingKey = (posItemName || '').toLowerCase();
 
-    const mappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`)
-      .where('posItemName', '==', posItemName).get();
+    // Load ALL mapping docs and filter in memory (case-insensitive)
+    const allMappingsSnap2 = await db.collection(`venues/${venueId}/posProductMappings`).get();
     const existingDocs: MappingDocSnapshot[] = [];
-    mappingsSnap.forEach(d => {
+    allMappingsSnap2.forEach(d => {
       const data = d.data() as any;
       if ((data.posItemName || '').toLowerCase() === mappingKey) {
         existingDocs.push({ id: d.id, ...data });
@@ -7323,6 +7322,18 @@ app.post("/pos-mappings/undo-change", async (req, res) => {
     const overridesSnap = await db.collection(`venues/${venueId}/posMappingOverrides`)
       .where('mappingKey', '==', mappingKey).get();
 
+    // Find the latest non-undone dated_change entry to mark undone (Fix 1: no new entry added)
+    const changesSnap2 = await db.collection(`venues/${venueId}/posMappingChanges`)
+      .where('mappingKey', '==', mappingKey).get();
+    const latestUndoableChange = changesSnap2.docs
+      .map(d => ({ id: d.id, ...(d.data() as any) }))
+      .filter((c: any) => !c.undone && c.kind === 'dated_change')
+      .sort((a: any, b: any) => {
+        const aMs = a.at?.toMillis ? a.at.toMillis() : 0;
+        const bMs = b.at?.toMillis ? b.at.toMillis() : 0;
+        return bMs - aMs;
+      })[0] as any ?? null;
+
     await db.runTransaction(async (tx) => {
       for (const op of plan.writes) {
         const ref = db.doc(op.path);
@@ -7341,22 +7352,15 @@ app.post("/pos-mappings/undo-change", async (req, res) => {
         }
       }
       overridesSnap.forEach(d => tx.delete(d.ref));
+      // Mark the latest change as undone in the same transaction (no new entry)
+      if (latestUndoableChange) {
+        tx.update(db.doc(`venues/${venueId}/posMappingChanges/${latestUndoableChange.id}`), {
+          undone: true,
+          undoneAt: admin.firestore.FieldValue.serverTimestamp(),
+          undoneByUid: uid,
+        });
+      }
     });
-
-    // Write change-log entry for this undo-change action
-    const latestVersion = existingVersions[existingVersions.length - 1];
-    const prevVersion = existingVersions.length >= 2 ? existingVersions[existingVersions.length - 2] : null;
-    const undoChangeEntry: MappingChangeDoc = {
-      mappingKey,
-      posItemName,
-      kind: 'dated_change',
-      before: latestVersion ? { ...latestVersion } as Record<string, unknown> : null,
-      after: prevVersion ? { ...prevVersion } as Record<string, unknown> : null,
-      at: admin.firestore.FieldValue.serverTimestamp(),
-      byUid: uid,
-      undone: false,
-    };
-    await db.collection(`venues/${venueId}/posMappingChanges`).add(undoChangeEntry);
 
     // Re-match all active reports
     const reMatched = await rematchReportsForKeys(db, venueId, [mappingKey]);
@@ -7519,12 +7523,29 @@ app.post("/pos-mappings/save", async (req, res) => {
     const savedNames: string[] = [];
     const allKeys: string[] = [];
 
-    // Process entries in batches (≤400 ops per batch)
-    let batchOps: Array<{ ref: FirebaseFirestore.DocumentReference; kind: 'set' | 'delete'; data?: Record<string, unknown> }> = [];
-    const batches: typeof batchOps[] = [];
+    // Load ALL mapping docs once (Fix 2: in-memory filter, no posItemName query)
+    const allMappingsSnap3 = await db.collection(`venues/${venueId}/posProductMappings`).get();
+    const allMappingDocs: Array<{ id: string; data: Record<string, unknown> }> = [];
+    allMappingsSnap3.forEach(d => allMappingDocs.push({ id: d.id, data: d.data() as Record<string, unknown> }));
 
-    function flushBatch() {
-      if (batchOps.length > 0) { batches.push(batchOps); batchOps = []; }
+    // Fix 5: Allowed fields whitelist + valid mapping types
+    const ALLOWED_MAPPING_FIELDS = [
+      'mappingType', 'productId', 'productName', 'recipeId', 'recipeName',
+      'servingMl', 'conversionRatio', 'servingType', 'conversionUnit',
+    ];
+    const VALID_MAPPING_TYPES = ['direct_product', 'recipe', 'skipped'];
+
+    // Fix 4: Per-key batch packing — never split a key across batches
+    let currentBatch = db.batch();
+    let currentBatchOps = 0;
+    const pendingBatches: FirebaseFirestore.WriteBatch[] = [];
+
+    function flushCurrentBatch() {
+      if (currentBatchOps > 0) {
+        pendingBatches.push(currentBatch);
+        currentBatch = db.batch();
+        currentBatchOps = 0;
+      }
     }
 
     for (const entry of entries) {
@@ -7533,16 +7554,10 @@ app.post("/pos-mappings/save", async (req, res) => {
       const mappingKey = posItemName.toLowerCase();
       allKeys.push(mappingKey);
 
-      // Load existing docs for this key
-      const existingSnap = await db.collection(`venues/${venueId}/posProductMappings`)
-        .where('posItemName', '==', posItemName).get();
-      const existingDocs: Array<{ id: string; [k: string]: unknown }> = [];
-      existingSnap.forEach(d => {
-        const data = d.data() as any;
-        if ((data.posItemName || '').toLowerCase() === mappingKey) {
-          existingDocs.push({ id: d.id, ...data });
-        }
-      });
+      // Fix 2: filter in memory (case-insensitive)
+      const existingDocs = allMappingDocs.filter(
+        d => ((d.data.posItemName as string) || '').toLowerCase() === mappingKey
+      );
 
       // Reject fix/unlink for versioned keys
       if (kind === 'fix' || kind === 'unlink') {
@@ -7553,66 +7568,64 @@ app.post("/pos-mappings/save", async (req, res) => {
         }
       }
 
-      const beforeDoc = existingDocs.length > 0 ? { ...existingDocs[0] } as Record<string, unknown> : null;
-      if (beforeDoc) delete (beforeDoc as any).id;
-      const afterDoc = mapping ? { ...(mapping as Record<string, unknown>) } : null;
-
-      if (kind === 'unlink') {
-        // Delete all docs for this key
-        for (const existing of existingDocs) {
-          const ref = db.doc(`venues/${venueId}/posProductMappings/${existing.id}`);
-          batchOps.push({ ref, kind: 'delete' });
-          if (batchOps.length >= 390) flushBatch();
+      // Fix 5: whitelist + validate payload
+      let sanitized: Record<string, unknown> | null = null;
+      if (mapping !== null && mapping !== undefined) {
+        sanitized = {};
+        for (const f of ALLOWED_MAPPING_FIELDS) {
+          if (f in (mapping as object)) (sanitized as any)[f] = (mapping as any)[f];
         }
-      } else {
-        // link or fix: apply planMappingWrites-equivalent logic
-        const normName = (s: string) => (s || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
-        const mappingDocIdFn2 = (name: string, sys: string) => `${normName(name).replace(/\s+/g, '_')}_${sys}`.slice(0, 500);
-
-        let canonicalId: string;
-        let posSystem = 'csv';
-        let existingCreatedAt: unknown = null;
-
-        if (existingDocs.length === 0) {
-          canonicalId = mappingDocIdFn2(posItemName, 'csv');
-        } else {
-          const toTimestamp = (v: unknown): number => {
-            if (!v) return 0;
-            if (typeof v === 'object' && (v as any).toMillis) return (v as any).toMillis();
-            return 0;
-          };
-          const preferred = existingDocs.find(m => m.id === mappingDocIdFn2(posItemName, (m.posSystem as string) || 'csv'));
-          const canonical = preferred ?? existingDocs.reduce((a, b) => toTimestamp(b.updatedAt) > toTimestamp(a.updatedAt) ? b : a);
-          canonicalId = canonical.id as string;
-          posSystem = (canonical.posSystem as string) || 'csv';
-          existingCreatedAt = existingDocs.reduce<unknown>((earliest, m) => {
-            if (earliest === null) return m.createdAt ?? null;
-            return toTimestamp(m.createdAt) < toTimestamp(earliest) ? m.createdAt ?? null : earliest;
-          }, null);
-          // Delete duplicates
-          for (const m of existingDocs) {
-            if (m.id !== canonicalId) {
-              const ref = db.doc(`venues/${venueId}/posProductMappings/${m.id}`);
-              batchOps.push({ ref, kind: 'delete' });
-              if (batchOps.length >= 390) flushBatch();
-            }
-          }
+        const mt = (sanitized as any).mappingType as string | undefined;
+        if (!mt || !VALID_MAPPING_TYPES.includes(mt)) {
+          res.status(400).json({ ok: false, error: `mappingType must be one of ${VALID_MAPPING_TYPES.join(', ')}` }); return;
         }
-
-        const payload: Record<string, unknown> = {
-          ...(mapping as Record<string, unknown>),
-          posItemName,
-          posSystem,
-          createdAt: existingCreatedAt ?? admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        };
-        const ref = db.doc(`venues/${venueId}/posProductMappings/${canonicalId}`);
-        batchOps.push({ ref, kind: 'set', data: payload });
-        if (batchOps.length >= 390) flushBatch();
-        savedNames.push(posItemName);
+        if (mt === 'direct_product') {
+          const productId = (sanitized as any).productId as string | undefined;
+          if (!productId) { res.status(400).json({ ok: false, error: 'direct_product requires productId' }); return; }
+          const productSnap = await db.doc(`venues/${venueId}/products/${productId}`).get();
+          if (!productSnap.exists) { res.status(400).json({ ok: false, error: `Product ${productId} not found` }); return; }
+          const productData = productSnap.data() as any;
+          if (productData.mergedIntoId) { res.status(400).json({ ok: false, error: `Product ${productId} has been merged` }); return; }
+          sanitized.productName = productData.name ?? productData.productName ?? sanitized.productName;
+        }
+        if (mt === 'recipe') {
+          const recipeId = (sanitized as any).recipeId as string | undefined;
+          if (!recipeId) { res.status(400).json({ ok: false, error: 'recipe requires recipeId' }); return; }
+          const recipeSnap = await db.doc(`venues/${venueId}/recipes/${recipeId}`).get();
+          if (!recipeSnap.exists) { res.status(400).json({ ok: false, error: `Recipe ${recipeId} not found` }); return; }
+          const recipeData = recipeSnap.data() as any;
+          sanitized.recipeName = recipeData.name ?? recipeData.recipeName ?? sanitized.recipeName;
+        }
       }
 
-      // Change-log entry in same batch group
+      const beforeDoc = existingDocs.length > 0 ? (() => {
+        const b = { ...existingDocs[0].data }; delete (b as any).id; return b;
+      })() : null;
+      const afterDoc = sanitized ?? null;
+
+      // Fix 3: planServerMappingWrite determines canonical id + ops
+      const planResult = planServerMappingWrite(existingDocs, sanitized, posItemName);
+
+      // Fix 4: compute ops count for this key, flush if needed
+      const opsForKey = (planResult.fields !== null ? 1 : 0) + planResult.deleteIds.length + 1;
+      if (currentBatchOps + opsForKey > 400) {
+        flushCurrentBatch();
+      }
+
+      // Write all ops for this key to the SAME batch
+      if (planResult.fields !== null) {
+        currentBatch.set(db.doc(`venues/${venueId}/posProductMappings/${planResult.canonicalId}`), {
+          ...planResult.fields,
+          createdAt: planResult.existingCreatedAt ?? admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        currentBatchOps++;
+        savedNames.push(posItemName);
+      }
+      for (const deleteId of planResult.deleteIds) {
+        currentBatch.delete(db.doc(`venues/${venueId}/posProductMappings/${deleteId}`));
+        currentBatchOps++;
+      }
       const changeEntry: MappingChangeDoc = {
         mappingKey,
         posItemName,
@@ -7623,23 +7636,17 @@ app.post("/pos-mappings/save", async (req, res) => {
         byUid: uid,
         undone: false,
       };
-      const changeRef = db.collection(`venues/${venueId}/posMappingChanges`).doc();
-      batchOps.push({ ref: changeRef, kind: 'set', data: changeEntry as unknown as Record<string, unknown> });
-      if (batchOps.length >= 390) flushBatch();
+      currentBatch.set(
+        db.collection(`venues/${venueId}/posMappingChanges`).doc(),
+        changeEntry as unknown as Record<string, unknown>
+      );
+      currentBatchOps++;
     }
-    flushBatch();
+    flushCurrentBatch();
 
     // Commit all batches
-    for (const ops of batches) {
-      const batch = db.batch();
-      for (const op of ops) {
-        if (op.kind === 'set' && op.data) {
-          batch.set(op.ref, op.data);
-        } else {
-          batch.delete(op.ref);
-        }
-      }
-      await batch.commit();
+    for (const b of pendingBatches) {
+      await b.commit();
     }
 
     // Mark salesReportUnknowns as mapped (best-effort)
@@ -7710,26 +7717,29 @@ app.post("/pos-mappings/undo", async (req, res) => {
 
     let restoredTo = '';
 
+    // Fix 2: load ALL mapping docs for in-memory filter
+    const allMappingsSnap4 = await db.collection(`venues/${venueId}/posProductMappings`).get();
+    const allDocsForUndo: Array<{ id: string; data: Record<string, unknown> }> = [];
+    allMappingsSnap4.forEach(d => allDocsForUndo.push({ id: d.id, data: d.data() as Record<string, unknown> }));
+    const existingDocsForUndo = allDocsForUndo.filter(
+      d => ((d.data.posItemName as string) || '').toLowerCase() === mappingKey
+    );
+
+    const changeRef4 = db.doc(`venues/${venueId}/posMappingChanges/${latest.id}`);
+
     if (latest.kind === 'dated_change') {
       // Delegate to existing undo-change logic
-      const mappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`)
-        .where('posItemName', '==', posItemName).get();
-      const existingDocs: MappingDocSnapshot[] = [];
-      mappingsSnap.forEach(d => {
-        const data = d.data() as any;
-        if ((data.posItemName || '').toLowerCase() === mappingKey) {
-          existingDocs.push({ id: d.id, ...data });
-        }
-      });
+      const existingMappingDocs4: MappingDocSnapshot[] = existingDocsForUndo.map(d => ({ id: d.id, ...d.data }) as any);
       const versionsSnap = await db.collection(`venues/${venueId}/posMappingVersions`)
         .where('mappingKey', '==', mappingKey).get();
       const existingVersions: MappingVersion[] = versionsSnap.docs
         .map(d => ({ id: d.id, ...(d.data() as any) }) as MappingVersion)
         .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
-      const plan = planUndoChange({ venueId, posItemName, existingMappingDocs: existingDocs, existingVersions });
+      const plan = planUndoChange({ venueId, posItemName, existingMappingDocs: existingMappingDocs4, existingVersions });
       if (!plan.ok) { res.status(400).json({ ok: false, error: (plan as any).error }); return; }
       const overridesSnap = await db.collection(`venues/${venueId}/posMappingOverrides`)
         .where('mappingKey', '==', mappingKey).get();
+      // Fix 1: mark undone in same transaction as restore
       await db.runTransaction(async (tx) => {
         for (const op of plan.writes) {
           const ref = db.doc(op.path);
@@ -7742,38 +7752,36 @@ app.post("/pos-mappings/undo", async (req, res) => {
           } else { tx.delete(ref); }
         }
         overridesSnap.forEach(d => tx.delete(d.ref));
+        tx.update(changeRef4, { undone: true, undoneAt: admin.firestore.FieldValue.serverTimestamp(), undoneByUid: uid });
       });
       const after = latest.before as Record<string, unknown> | null;
       restoredTo = (after as any)?.productName ?? (after as any)?.recipeName ?? 'previous version';
     } else {
-      // link / fix / unlink: restore before state
+      // link / fix / unlink: restore before state using planServerMappingWrite (Fix 3)
       const before = latest.before as Record<string, unknown> | null;
-      if (!before) {
-        // Was a link with no previous state — delete the mapping docs
-        const mappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`)
-          .where('posItemName', '==', posItemName).get();
-        const batch = db.batch();
-        mappingsSnap.forEach(d => batch.delete(d.ref));
-        await batch.commit();
-        restoredTo = 'unlinked';
-      } else {
-        // Restore the before state
-        const normName = (s: string) => (s || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
-        const docId = `${normName(posItemName).replace(/\s+/g, '_')}_${(before.posSystem as string) || 'csv'}`.slice(0, 500);
-        const ref = db.doc(`venues/${venueId}/posProductMappings/${docId}`);
-        const restoreData: Record<string, unknown> = {
-          ...before,
-          posItemName,
+      const planRestore = planServerMappingWrite(existingDocsForUndo, before, posItemName);
+      const restoreBatch = db.batch();
+      if (planRestore.fields !== null) {
+        restoreBatch.set(db.doc(`venues/${venueId}/posProductMappings/${planRestore.canonicalId}`), {
+          ...planRestore.fields,
+          createdAt: planRestore.existingCreatedAt ?? admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        };
-        if (!restoreData.createdAt) restoreData.createdAt = admin.firestore.FieldValue.serverTimestamp();
-        await ref.set(restoreData);
-        restoredTo = (before as any).productName ?? (before as any).recipeName ?? 'previous mapping';
+        });
+        restoredTo = (before as any)?.productName ?? (before as any)?.recipeName ?? 'previous mapping';
+      } else {
+        // before === null: delete all docs for key
+        for (const d of existingDocsForUndo) {
+          restoreBatch.delete(db.doc(`venues/${venueId}/posProductMappings/${d.id}`));
+        }
+        restoredTo = 'unlinked';
       }
+      for (const deleteId of planRestore.deleteIds) {
+        restoreBatch.delete(db.doc(`venues/${venueId}/posProductMappings/${deleteId}`));
+      }
+      // Fix 1: mark undone in same batch as restore
+      restoreBatch.update(changeRef4, { undone: true, undoneAt: admin.firestore.FieldValue.serverTimestamp(), undoneByUid: uid });
+      await restoreBatch.commit();
     }
-
-    // Mark the change as undone
-    await db.doc(`venues/${venueId}/posMappingChanges/${latest.id}`).update({ undone: true });
 
     // Re-match all active reports
     const reMatched = await rematchReportsForKeys(db, venueId, [mappingKey]);
@@ -7842,7 +7850,20 @@ app.get("/categories/overview", async (req, res) => {
       : [];
     const missing = Object.keys(categoryCounts).filter(c => !venueList.includes(c));
 
-    res.json({ ok: true, categoryCounts, venueList, missing });
+    // Fix 7: detect 'applying' records older than 10 minutes
+    const changesSnap7 = await db.collection(`venues/${venueId}/categoryChanges`)
+      .where('undone', '==', false).get();
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    const incompleteChanges = changesSnap7.docs
+      .filter(d => {
+        const data = d.data() as any;
+        if (data.status !== 'applying') return false;
+        const ms = data.at?.toMillis ? data.at.toMillis() : Date.now();
+        return ms < tenMinutesAgo;
+      })
+      .map(d => ({ id: d.id, kind: (d.data() as any).kind, at: (d.data() as any).at }));
+
+    res.json({ ok: true, categoryCounts, venueList, missing, incompleteChanges });
   } catch (e: any) {
     console.error("[categories/overview] ERROR", e?.message);
     res.status(500).json({ ok: false, error: e?.message || "Failed" });
@@ -7875,6 +7896,23 @@ app.post("/categories/merge", async (req, res) => {
       if (cat && (from as string[]).includes(cat)) toUpdate.push({ id: d.id, before: cat });
     });
 
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    const venueList: string[] = Array.isArray((venueSnap.data() as any)?.productCategories)
+      ? [...(venueSnap.data() as any).productCategories]
+      : [];
+    const venueListBefore = [...venueList];
+
+    // Fix 7: write 'applying' record first, apply updates, then set 'applied'
+    const changeDocRef = db.collection(`venues/${venueId}/categoryChanges`).doc();
+    await changeDocRef.set({
+      kind: 'merge', from, to,
+      products: toUpdate,
+      venueListBefore,
+      status: 'applying',
+      at: admin.firestore.FieldValue.serverTimestamp(),
+      byUid: uid, undone: false,
+    });
+
     // Batched product updates (≤400 per batch)
     for (let i = 0; i < toUpdate.length; i += 400) {
       const chunk = toUpdate.slice(i, i + 400);
@@ -7884,23 +7922,11 @@ app.post("/categories/merge", async (req, res) => {
     }
 
     // Update venue list
-    const venueSnap = await db.doc(`venues/${venueId}`).get();
-    const venueList: string[] = Array.isArray((venueSnap.data() as any)?.productCategories)
-      ? [...(venueSnap.data() as any).productCategories]
-      : [];
-    const venueListBefore = [...venueList];
     const updated = venueList.filter(c => !(from as string[]).includes(c));
     if (!updated.includes(to)) updated.push(to);
     await db.doc(`venues/${venueId}`).update({ productCategories: updated });
 
-    // Write change log
-    await db.collection(`venues/${venueId}/categoryChanges`).add({
-      kind: 'merge', from, to,
-      products: toUpdate,
-      venueListBefore,
-      at: admin.firestore.FieldValue.serverTimestamp(),
-      byUid: uid, undone: false,
-    });
+    await changeDocRef.update({ status: 'applied' });
 
     res.json({ ok: true, moved: toUpdate.length });
   } catch (e: any) {
@@ -7937,6 +7963,20 @@ app.post("/categories/move-products", async (req, res) => {
       }
     }
 
+    const venueSnapMove = await db.doc(`venues/${venueId}`).get();
+    const venueListBeforeMove: string[] = Array.isArray((venueSnapMove.data() as any)?.productCategories)
+      ? (venueSnapMove.data() as any).productCategories : [];
+
+    // Fix 7: write 'applying' first
+    const moveCdRef = db.collection(`venues/${venueId}/categoryChanges`).doc();
+    await moveCdRef.set({
+      kind: 'move', from: [...new Set(products.map(p => p.before).filter(Boolean))], to,
+      products, venueListBefore: venueListBeforeMove,
+      status: 'applying',
+      at: admin.firestore.FieldValue.serverTimestamp(),
+      byUid: uid, undone: false,
+    });
+
     for (let i = 0; i < products.length; i += 400) {
       const chunk = products.slice(i, i + 400);
       const batch = db.batch();
@@ -7944,16 +7984,7 @@ app.post("/categories/move-products", async (req, res) => {
       await batch.commit();
     }
 
-    const venueSnap = await db.doc(`venues/${venueId}`).get();
-    const venueListBefore: string[] = Array.isArray((venueSnap.data() as any)?.productCategories)
-      ? (venueSnap.data() as any).productCategories : [];
-
-    await db.collection(`venues/${venueId}/categoryChanges`).add({
-      kind: 'move', from: [...new Set(products.map(p => p.before).filter(Boolean))], to,
-      products, venueListBefore,
-      at: admin.firestore.FieldValue.serverTimestamp(),
-      byUid: uid, undone: false,
-    });
+    await moveCdRef.update({ status: 'applied' });
 
     res.json({ ok: true, moved: products.length });
   } catch (e: any) {
@@ -7996,14 +8027,19 @@ app.post("/categories/sync-list", async (req, res) => {
     }
 
     const updated = [...venueList, ...missing];
-    await db.doc(`venues/${venueId}`).update({ productCategories: updated });
 
-    await db.collection(`venues/${venueId}/categoryChanges`).add({
+    // Fix 7: write 'applying' first, update list, then 'applied'
+    const syncCdRef = db.collection(`venues/${venueId}/categoryChanges`).doc();
+    await syncCdRef.set({
       kind: 'sync', from: missing, to: '<added to list>',
       products: [], venueListBefore,
+      status: 'applying',
       at: admin.firestore.FieldValue.serverTimestamp(),
       byUid: uid, undone: false,
     });
+
+    await db.doc(`venues/${venueId}`).update({ productCategories: updated });
+    await syncCdRef.update({ status: 'applied' });
 
     res.json({ ok: true, added: missing });
   } catch (e: any) {
@@ -8031,8 +8067,10 @@ app.post("/categories/undo", async (req, res) => {
 
     const snap = await db.collection(`venues/${venueId}/categoryChanges`)
       .where('undone', '==', false).get();
+    // Fix 7: only act on 'applied' entries (not 'applying' which may be incomplete)
     const changes = snap.docs
       .map(d => ({ id: d.id, ...(d.data() as any) }))
+      .filter((c: any) => c.status === 'applied')
       .sort((a: any, b: any) => {
         const aMs = a.at?.toMillis ? a.at.toMillis() : 0;
         const bMs = b.at?.toMillis ? b.at.toMillis() : 0;
@@ -8054,16 +8092,84 @@ app.post("/categories/undo", async (req, res) => {
       await batch.commit();
     }
 
-    // Restore venue list
-    await db.doc(`venues/${venueId}`).update({ productCategories: latest.venueListBefore ?? [] });
-
-    // Mark as undone
-    await db.doc(`venues/${venueId}/categoryChanges/${latest.id}`).update({ undone: true });
+    // Restore venue list and mark undone in same batch (Fix 7)
+    const undoBatch = db.batch();
+    undoBatch.update(db.doc(`venues/${venueId}`), { productCategories: latest.venueListBefore ?? [] });
+    undoBatch.update(db.doc(`venues/${venueId}/categoryChanges/${latest.id}`), {
+      undone: true,
+      undoneAt: admin.firestore.FieldValue.serverTimestamp(),
+      undoneByUid: uid,
+    });
+    await undoBatch.commit();
 
     res.json({ ok: true });
   } catch (e: any) {
     console.error("[categories/undo] ERROR", e?.message);
     res.status(500).json({ ok: false, error: e?.message || "Undo failed" });
+  }
+});
+
+// ── GET /products/first-delivery ─────────────────────────────────────────────
+// Returns the earliest invoice date where a line matches productId.
+// Scans inline lines first, then subcollection lines for each invoice.
+// Members only.
+app.get("/products/first-delivery", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const venueId = req.query.venueId as string;
+    const productId = req.query.productId as string;
+    if (!venueId || !productId) {
+      res.status(400).json({ ok: false, error: "Missing venueId or productId" }); return;
+    }
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+    const invoicesSnap = await db.collection(`venues/${venueId}/invoices`).get();
+
+    let earliestDate: string | null = null;
+    let earliestInvoiceId: string | null = null;
+    let earliestSource: 'inline' | 'subcollection' = 'inline';
+
+    for (const invoiceDoc of invoicesSnap.docs) {
+      const data = invoiceDoc.data() as any;
+      const ts = data.invoiceDateTimestamp ?? data.date ?? data.createdAt;
+      const dateStr: string | null = ts?.toDate
+        ? ts.toDate().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' })
+        : null;
+      if (!dateStr) continue;
+
+      // Check inline lines
+      const rawLines: any[] = Array.isArray(data.lines) ? data.lines : [];
+      const hasInlineMatch = rawLines.some((l: any) => l.productId === productId);
+      if (hasInlineMatch) {
+        if (!earliestDate || dateStr < earliestDate) {
+          earliestDate = dateStr;
+          earliestInvoiceId = invoiceDoc.id;
+          earliestSource = 'inline';
+        }
+        continue;
+      }
+
+      // Check subcollection lines if no inline match
+      try {
+        const linesSnap = await db.collection(`venues/${venueId}/invoices/${invoiceDoc.id}/lines`).get();
+        const hasSubMatch = linesSnap.docs.some((ld: any) => ld.data()?.productId === productId);
+        if (hasSubMatch) {
+          if (!earliestDate || dateStr < earliestDate) {
+            earliestDate = dateStr;
+            earliestInvoiceId = invoiceDoc.id;
+            earliestSource = 'subcollection';
+          }
+        }
+      } catch { /* skip invoice if subcollection unreadable */ }
+    }
+
+    res.json({ ok: true, date: earliestDate, invoiceId: earliestInvoiceId, source: earliestSource });
+  } catch (e: any) {
+    console.error("[products/first-delivery] ERROR", e?.message);
+    res.status(500).json({ ok: false, error: e?.message || "Failed" });
   }
 });
 

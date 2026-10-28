@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  collection, collectionGroup, doc, getDocs, getDoc, query, where,
+  collection, doc, getDocs, getDoc,
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import {
@@ -874,47 +874,20 @@ function MappingPanel({
   }, [products, cpProductSearch])
 
   useEffect(() => {
-    if (!cpProduct) { setCpSuggestion(null); return }
+    if (!cpProduct || !venueId) { setCpSuggestion(null); return }
     let cancelled = false
     async function load() {
       try {
-        const snap = await getDocs(collection(db, 'venues', venueId, 'invoices'))
-        const lines: Array<{ date: string | null; productId: string | null }> = []
-        snap.docs.forEach(d => {
-          const data = d.data() as any
-          const ts = data.invoiceDateTimestamp ?? data.date ?? data.createdAt
-          const dateStr: string | null = ts?.toDate
-            ? ts.toDate().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' })
-            : null
-          const rawLines = Array.isArray(data.lines) ? data.lines : []
-          rawLines.forEach((l: any) => {
-            lines.push({ date: dateStr, productId: l.productId ?? null })
-          })
-        })
-        let earliest = firstDeliveryDate(lines, cpProduct!.id)
-        // Fallback: collectionGroup query on invoice lines subcollection
-        if (!earliest) {
-          try {
-            const lineSnap = await getDocs(query(collectionGroup(db, 'lines'), where('productId', '==', cpProduct!.id)))
-            const subcollLines: Array<{ date: string | null; productId: string | null }> = []
-            await Promise.all(lineSnap.docs.slice(0, 20).map(async ld => {
-              try {
-                const invoiceRef = ld.ref.parent.parent
-                if (!invoiceRef) return
-                const invSnap = await getDoc(invoiceRef)
-                if (!invSnap.exists()) return
-                const invData = invSnap.data() as any
-                const ts2 = invData.invoiceDateTimestamp ?? invData.date ?? invData.createdAt
-                const dateStr2: string | null = ts2?.toDate
-                  ? ts2.toDate().toLocaleDateString('en-CA', { timeZone: 'Pacific/Auckland' })
-                  : null
-                subcollLines.push({ date: dateStr2, productId: cpProduct!.id })
-              } catch { /* skip */ }
-            }))
-            earliest = firstDeliveryDate(subcollLines, cpProduct!.id)
-          } catch { /* collectionGroup may not have index */ }
-        }
-        if (!cancelled) setCpSuggestion(earliest)
+        const token = await auth.currentUser?.getIdToken()
+        if (!token) return
+        const resp = await fetch(
+          `${API_BASE}/products/first-delivery?venueId=${encodeURIComponent(venueId)}&productId=${encodeURIComponent(cpProduct!.id)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        if (!resp.ok) return
+        const json = await resp.json()
+        if (!cancelled && json.ok && json.date) setCpSuggestion(json.date)
+        else if (!cancelled) setCpSuggestion(null)
       } catch {
         if (!cancelled) setCpSuggestion(null)
       }
